@@ -1,0 +1,6 @@
+[submodule "projects/libcxx"]
+	path = projects/libcxx
+	url = https://github.com/llvm-mirror/libcxx
+[submodule "tools/clang"]
+	path = tools/clang
+	url = https://github.com/llvm-mirror/clang
