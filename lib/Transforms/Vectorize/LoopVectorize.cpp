@@ -369,12 +369,12 @@ public:
   InnerLoopVectorizer(Loop *OrigLoop, PredicatedScalarEvolution &PSE,
                       LoopInfo *LI, DominatorTree *DT,
                       const TargetLibraryInfo *TLI,
-                      const TargetTransformInfo *TTI,
+                      const TargetTransformInfo *TTI, AssumptionCache *AC,
                       OptimizationRemarkEmitter *ORE, unsigned VecWidth,
                       unsigned UnrollFactor, LoopVectorizationLegality *LVL,
                       LoopVectorizationCostModel *CM)
       : OrigLoop(OrigLoop), PSE(PSE), LI(LI), DT(DT), TLI(TLI), TTI(TTI),
-        ORE(ORE), VF(VecWidth), UF(UnrollFactor),
+        AC(AC), ORE(ORE), VF(VecWidth), UF(UnrollFactor),
         Builder(PSE.getSE()->getContext()), Induction(nullptr),
         OldInduction(nullptr), VectorLoopValueMap(UnrollFactor, VecWidth),
         TripCount(nullptr), VectorTripCount(nullptr), Legal(LVL), Cost(CM),
@@ -706,6 +706,8 @@ protected:
   const TargetLibraryInfo *TLI;
   /// Target Transform Info.
   const TargetTransformInfo *TTI;
+  /// Assumption Cache.
+  AssumptionCache *AC;
   /// Interface to emit optimization remarks.
   OptimizationRemarkEmitter *ORE;
 
@@ -788,11 +790,11 @@ public:
   InnerLoopUnroller(Loop *OrigLoop, PredicatedScalarEvolution &PSE,
                     LoopInfo *LI, DominatorTree *DT,
                     const TargetLibraryInfo *TLI,
-                    const TargetTransformInfo *TTI,
+                    const TargetTransformInfo *TTI, AssumptionCache *AC,
                     OptimizationRemarkEmitter *ORE, unsigned UnrollFactor,
                     LoopVectorizationLegality *LVL,
                     LoopVectorizationCostModel *CM)
-      : InnerLoopVectorizer(OrigLoop, PSE, LI, DT, TLI, TTI, ORE, 1,
+      : InnerLoopVectorizer(OrigLoop, PSE, LI, DT, TLI, TTI, AC, ORE, 1,
                             UnrollFactor, LVL, CM) {}
 
 private:
@@ -1848,10 +1850,11 @@ public:
                              LoopInfo *LI, LoopVectorizationLegality *Legal,
                              const TargetTransformInfo &TTI,
                              const TargetLibraryInfo *TLI, DemandedBits *DB,
+                             AssumptionCache *AC,
                              OptimizationRemarkEmitter *ORE, const Function *F,
                              const LoopVectorizeHints *Hints)
       : TheLoop(L), PSE(PSE), LI(LI), Legal(Legal), TTI(TTI), TLI(TLI), DB(DB),
-        ORE(ORE), TheFunction(F), Hints(Hints) {}
+        AC(AC), ORE(ORE), TheFunction(F), Hints(Hints) {}
 
   /// Information about vectorization costs
   struct VectorizationFactor {
@@ -1915,6 +1918,13 @@ public:
     assert(Scalars != InstsToScalarize.end() &&
            "VF not yet analyzed for scalarization profitability");
     return Scalars->second.count(I);
+  }
+
+  /// \returns True if instruction \p I can be truncated to a smaller bitwidth
+  /// for vectorization factor \p VF.
+  bool canTruncateToMinimalBitwidth(Instruction *I, unsigned VF) const {
+    return VF > 1 && MinBWs.count(I) && !isProfitableToScalarize(I, VF) &&
+           !Legal->isScalarAfterVectorization(I);
   }
 
 private:
@@ -1997,6 +2007,8 @@ public:
   const TargetLibraryInfo *TLI;
   /// Demanded bits analysis.
   DemandedBits *DB;
+  /// Assumption cache.
+  AssumptionCache *AC;
   /// Interface to emit optimization remarks.
   OptimizationRemarkEmitter *ORE;
 
@@ -2110,6 +2122,7 @@ struct LoopVectorize : public FunctionPass {
     auto *TLIP = getAnalysisIfAvailable<TargetLibraryInfoWrapperPass>();
     auto *TLI = TLIP ? &TLIP->getTLI() : nullptr;
     auto *AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
+    auto *AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
     auto *LAA = &getAnalysis<LoopAccessLegacyAnalysis>();
     auto *DB = &getAnalysis<DemandedBitsWrapperPass>().getDemandedBits();
     auto *ORE = &getAnalysis<OptimizationRemarkEmitterWrapperPass>().getORE();
@@ -2117,11 +2130,12 @@ struct LoopVectorize : public FunctionPass {
     std::function<const LoopAccessInfo &(Loop &)> GetLAA =
         [&](Loop &L) -> const LoopAccessInfo & { return LAA->getInfo(&L); };
 
-    return Impl.runImpl(F, *SE, *LI, *TTI, *DT, *BFI, TLI, *DB, *AA, GetLAA,
-                        *ORE);
+    return Impl.runImpl(F, *SE, *LI, *TTI, *DT, *BFI, TLI, *DB, *AA, *AC,
+                        GetLAA, *ORE);
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<AssumptionCacheTracker>();
     AU.addRequiredID(LoopSimplifyID);
     AU.addRequiredID(LCSSAID);
     AU.addRequired<BlockFrequencyInfoWrapperPass>();
@@ -3049,6 +3063,11 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr,
       // Add the cloned scalar to the scalar map entry.
       Entry[Part][Lane] = Cloned;
 
+      // If we just cloned a new assumption, add it the assumption cache.
+      if (auto *II = dyn_cast<IntrinsicInst>(Cloned))
+        if (II->getIntrinsicID() == Intrinsic::assume)
+          AC->registerAssumption(II);
+
       // End if-block.
       if (IfPredicateInstr)
         PredicatedInstructions.push_back(std::make_pair(Cloned, Cmp));
@@ -3725,6 +3744,11 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths() {
   //
   SmallPtrSet<Value *, 4> Erased;
   for (const auto &KV : Cost->getMinimalBitwidths()) {
+    // If the value wasn't vectorized, we must maintain the original scalar
+    // type. The absence of the value from VectorLoopValueMap indicates that it
+    // wasn't vectorized.
+    if (!VectorLoopValueMap.hasVector(KV.first))
+      continue;
     VectorParts &Parts = VectorLoopValueMap.getVector(KV.first);
     for (Value *&I : Parts) {
       if (Erased.count(I) || I->use_empty() || !isa<Instruction>(I))
@@ -3817,6 +3841,11 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths() {
 
   // We'll have created a bunch of ZExts that are now parentless. Clean up.
   for (const auto &KV : Cost->getMinimalBitwidths()) {
+    // If the value wasn't vectorized, we must maintain the original scalar
+    // type. The absence of the value from VectorLoopValueMap indicates that it
+    // wasn't vectorized.
+    if (!VectorLoopValueMap.hasVector(KV.first))
+      continue;
     VectorParts &Parts = VectorLoopValueMap.getVector(KV.first);
     for (Value *&I : Parts) {
       ZExtInst *Inst = dyn_cast<ZExtInst>(I);
@@ -6837,7 +6866,7 @@ unsigned LoopVectorizationCostModel::getInstructionCost(Instruction *I,
                                                         unsigned VF,
                                                         Type *&VectorTy) {
   Type *RetTy = I->getType();
-  if (VF > 1 && MinBWs.count(I))
+  if (canTruncateToMinimalBitwidth(I, VF))
     RetTy = IntegerType::get(RetTy->getContext(), MinBWs[I]);
   VectorTy = ToVectorTy(RetTy, VF);
   auto SE = PSE.getSE();
@@ -6958,9 +6987,8 @@ unsigned LoopVectorizationCostModel::getInstructionCost(Instruction *I,
   case Instruction::FCmp: {
     Type *ValTy = I->getOperand(0)->getType();
     Instruction *Op0AsInstruction = dyn_cast<Instruction>(I->getOperand(0));
-    auto It = MinBWs.find(Op0AsInstruction);
-    if (VF > 1 && It != MinBWs.end())
-      ValTy = IntegerType::get(ValTy->getContext(), It->second);
+    if (canTruncateToMinimalBitwidth(Op0AsInstruction, VF))
+      ValTy = IntegerType::get(ValTy->getContext(), MinBWs[Op0AsInstruction]);
     VectorTy = ToVectorTy(ValTy, VF);
     return TTI.getCmpSelInstrCost(I->getOpcode(), VectorTy);
   }
@@ -7108,7 +7136,7 @@ unsigned LoopVectorizationCostModel::getInstructionCost(Instruction *I,
 
     Type *SrcScalarTy = I->getOperand(0)->getType();
     Type *SrcVecTy = ToVectorTy(SrcScalarTy, VF);
-    if (VF > 1 && MinBWs.count(I)) {
+    if (canTruncateToMinimalBitwidth(I, VF)) {
       // This cast is going to be shrunk. This may remove the cast or it might
       // turn it into slightly different cast. For example, if MinBW == 16,
       // "zext i8 %1 to i32" becomes "zext i8 %1 to i16".
@@ -7152,6 +7180,7 @@ INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(BasicAAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
@@ -7180,7 +7209,7 @@ bool LoopVectorizationCostModel::isConsecutiveLoadOrStore(Instruction *Inst) {
 
 void LoopVectorizationCostModel::collectValuesToIgnore() {
   // Ignore ephemeral values.
-  CodeMetrics::collectEphemeralValues(TheLoop, ValuesToIgnore);
+  CodeMetrics::collectEphemeralValues(TheLoop, AC, ValuesToIgnore);
 
   // Ignore type-promoting instructions we identified during reduction
   // detection.
@@ -7253,6 +7282,11 @@ void InnerLoopUnroller::scalarizeInstruction(Instruction *Instr,
 
     // Add the cloned scalar to the scalar map entry.
     Entry[Part][0] = Cloned;
+
+    // If we just cloned a new assumption, add it the assumption cache.
+    if (auto *II = dyn_cast<IntrinsicInst>(Cloned))
+      if (II->getIntrinsicID() == Intrinsic::assume)
+        AC->registerAssumption(II);
 
     // End if-block.
     if (IfPredicateInstr)
@@ -7393,7 +7427,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   }
 
   // Use the cost model.
-  LoopVectorizationCostModel CM(L, PSE, LI, &LVL, *TTI, TLI, DB, ORE, F,
+  LoopVectorizationCostModel CM(L, PSE, LI, &LVL, *TTI, TLI, DB, AC, ORE, F,
                                 &Hints);
   CM.collectValuesToIgnore();
 
@@ -7529,7 +7563,8 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     assert(IC > 1 && "interleave count should not be 1 or 0");
     // If we decided that it is not legal to vectorize the loop, then
     // interleave it.
-    InnerLoopUnroller Unroller(L, PSE, LI, DT, TLI, TTI, ORE, IC, &LVL, &CM);
+    InnerLoopUnroller Unroller(L, PSE, LI, DT, TLI, TTI, AC, ORE, IC, &LVL,
+                               &CM);
     Unroller.vectorize();
 
     ORE->emit(OptimizationRemark(LV_NAME, "Interleaved", L->getStartLoc(),
@@ -7538,8 +7573,8 @@ bool LoopVectorizePass::processLoop(Loop *L) {
               << NV("InterleaveCount", IC) << ")");
   } else {
     // If we decided that it is *legal* to vectorize the loop, then do it.
-    InnerLoopVectorizer LB(L, PSE, LI, DT, TLI, TTI, ORE, VF.Width, IC, &LVL,
-                           &CM);
+    InnerLoopVectorizer LB(L, PSE, LI, DT, TLI, TTI, AC, ORE, VF.Width, IC,
+                           &LVL, &CM);
     LB.vectorize();
     ++LoopsVectorized;
 
@@ -7567,7 +7602,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
 bool LoopVectorizePass::runImpl(
     Function &F, ScalarEvolution &SE_, LoopInfo &LI_, TargetTransformInfo &TTI_,
     DominatorTree &DT_, BlockFrequencyInfo &BFI_, TargetLibraryInfo *TLI_,
-    DemandedBits &DB_, AliasAnalysis &AA_,
+    DemandedBits &DB_, AliasAnalysis &AA_, AssumptionCache &AC_,
     std::function<const LoopAccessInfo &(Loop &)> &GetLAA_,
     OptimizationRemarkEmitter &ORE_) {
 
@@ -7578,6 +7613,7 @@ bool LoopVectorizePass::runImpl(
   BFI = &BFI_;
   TLI = TLI_;
   AA = &AA_;
+  AC = &AC_;
   GetLAA = &GetLAA_;
   DB = &DB_;
   ORE = &ORE_;
@@ -7627,6 +7663,7 @@ PreservedAnalyses LoopVectorizePass::run(Function &F,
     auto &BFI = AM.getResult<BlockFrequencyAnalysis>(F);
     auto *TLI = AM.getCachedResult<TargetLibraryAnalysis>(F);
     auto &AA = AM.getResult<AAManager>(F);
+    auto &AC = AM.getResult<AssumptionAnalysis>(F);
     auto &DB = AM.getResult<DemandedBitsAnalysis>(F);
     auto &ORE = AM.getResult<OptimizationRemarkEmitterAnalysis>(F);
 
@@ -7636,7 +7673,7 @@ PreservedAnalyses LoopVectorizePass::run(Function &F,
       return LAM.getResult<LoopAccessAnalysis>(L);
     };
     bool Changed =
-        runImpl(F, SE, LI, TTI, DT, BFI, TLI, DB, AA, GetLAA, ORE);
+        runImpl(F, SE, LI, TTI, DT, BFI, TLI, DB, AA, AC, GetLAA, ORE);
     if (!Changed)
       return PreservedAnalyses::all();
     PreservedAnalyses PA;
