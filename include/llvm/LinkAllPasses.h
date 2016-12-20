@@ -203,6 +203,19 @@ namespace {
       (void) llvm::createFloat2IntPass();
       (void) llvm::createEliminateAvailableExternallyPass();
 
+      (void) llvm::createPACXXReflectionPass();
+      (void) llvm::createPACXXReflectionCleanerPass();
+      (void) llvm::createPACXXClassifyPass();
+      (void) llvm::createPACXXSpirPass();
+      (void) llvm::createPACXXNvvmPass();
+      (void) llvm::createPACXXNvvmRegPass();
+      (void) llvm::createPACXXSPIRVectorFixerPass();
+      (void) llvm::createPACXXStaticEvalPass();
+      (void) llvm::createPACXXVerifier();
+      (void) llvm::createPACXXInlinerPass();
+      (void) llvm::createPACXXDeadCodeElimPass();
+      (void) llvm::createPACXXNativeLinker(); 
+
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();
       llvm::Function::Create(nullptr, llvm::GlobalValue::ExternalLinkage)->viewCFGOnly();

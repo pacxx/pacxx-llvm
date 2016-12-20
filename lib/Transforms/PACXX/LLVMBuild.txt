@@ -1,4 +1,4 @@
-;===- ./lib/Transforms/LLVMBuild.txt ---------------------------*- Conf -*--===;
+;===- ./lib/Transforms/PACXXTransforms/LLVMBuild.txt -----------*- Conf -*--===;
 ;
 ;                     The LLVM Compiler Infrastructure
 ;
@@ -15,10 +15,9 @@
 ;
 ;===------------------------------------------------------------------------===;
 
-[common]
-subdirectories = Coroutines IPO InstCombine Instrumentation Scalar Utils Vectorize ObjCARC PACXX
-
 [component_0]
-type = Group
-name = Transforms
-parent = Libraries
+type = Library
+name = PACXX
+parent = Transforms
+library_name = PACXXTransforms
+required_libraries = Analysis Core InstCombine Support Target TransformUtils
