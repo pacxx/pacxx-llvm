@@ -351,18 +351,21 @@ Function *PACXXReflection::ReflectionHandler::createCallStub(CallInst &CI,
   // for (auto BB : deadBB)
   //  BB->eraseFromParent();
 
-  if (ConstantExpr *ce = dyn_cast<ConstantExpr>(CI.getArgOperand(1))) {
+ /* if (CI.getNumArgOperands() >= 1){ 
+    if (ConstantExpr *ce = dyn_cast<ConstantExpr>(CI.getArgOperand(1))) {
 
-    NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
-    SmallVector<Metadata *, 3> MDArgs;
-    MDArgs.push_back(llvm::ConstantAsMetadata::get(ce->getOperand(0)));
-    MDArgs.push_back(MDString::get(Ctx, "reflected"));
-    MDArgs.push_back(llvm::ConstantAsMetadata::get(
+      NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
+      SmallVector<Metadata *, 3> MDArgs;
+      MDArgs.push_back(llvm::ConstantAsMetadata::get(ce->getOperand(0)));
+      MDArgs.push_back(MDString::get(Ctx, "reflected"));
+      MDArgs.push_back(llvm::ConstantAsMetadata::get(
         ConstantInt::get(IntegerType::getInt32Ty(Ctx), c)));
-    MD->addOperand(MDNode::get(Ctx, MDArgs));
-    MDArgs.clear();
+      MD->addOperand(MDNode::get(Ctx, MDArgs));
+      MDArgs.clear();
+    }
   }
-
+*/
+  
   NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
   SmallVector<Metadata *, 3> MDArgs;
   MDArgs.push_back(llvm::ConstantAsMetadata::get(F));

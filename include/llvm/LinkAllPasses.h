@@ -48,6 +48,7 @@
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
 #include "llvm/Transforms/Vectorize.h"
+#include "llvm/Transforms/PACXXTransforms.h"
 #include "llvm/Support/Valgrind.h"
 #include <cstdlib>
 
@@ -214,7 +215,6 @@ namespace {
       (void) llvm::createPACXXVerifier();
       (void) llvm::createPACXXInlinerPass();
       (void) llvm::createPACXXDeadCodeElimPass();
-      (void) llvm::createPACXXNativeLinker(); 
 
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();
