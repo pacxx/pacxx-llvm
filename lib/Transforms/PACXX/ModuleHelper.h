@@ -49,7 +49,7 @@ inline void cleanupDeadCode(Module *M) {
   vector<Function *> deleted;
   for (auto &F : M->getFunctionList()) {
     if (F.getCallingConv() ==
-        CallingConv::SPIR_FUNC) // never delete a spir_func
+        CallingConv::SPIR_FUNC || F.getCallingConv() == CallingConv::PTX_Kernel) // never delete a spir_func
       continue;
 
     if (find(kernels.begin(), kernels.end(), &F) == kernels.end() &&

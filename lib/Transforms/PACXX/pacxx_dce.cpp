@@ -23,10 +23,8 @@ struct PACXXDeadCodeElim : public ModulePass {
       if (!I->isInlineAsm()) {
 
         if (!isa<Function>(I->getCalledValue())) {
-          //__error("Call to a function pointer in kernel code. Calls to "
-          //        "function pointers are not supported!");
-          exit(1);
-        }
+        	return;
+	}
 
         if (I->getCalledFunction()->getName().find("native8syscalls6printf") !=
             StringRef::npos) {

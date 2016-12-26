@@ -110,7 +110,6 @@ namespace
             }
 
             kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
-
             auto barrier = M.getFunction("_Z7barrierj");
             if (barrier) {
                 auto tb = M.getOrInsertFunction("tmp_barrier", barrier->getFunctionType());
@@ -125,12 +124,12 @@ namespace
                 if (!I->isInlineAsm()) {
 
                     if (!isa<Function>(I->getCalledValue())) {
-                        //__error("Call to a function pointer in kernel code. Calls to "
-                        //        "function pointers are not supported!");
-                        exit(1);
+			I->dump(); 
                     }
-                    I->setCallingConv(CallingConv::SPIR_FUNC);
-                    I->getCalledFunction()->setCallingConv(CallingConv::SPIR_FUNC);
+	            else {
+                      I->setCallingConv(CallingConv::SPIR_FUNC);
+                      I->getCalledFunction()->setCallingConv(CallingConv::SPIR_FUNC);
+                    }
                 }
             });
 

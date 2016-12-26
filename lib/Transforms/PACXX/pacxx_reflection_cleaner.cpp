@@ -71,8 +71,14 @@ bool PACXXReflectionCleaner::runOnModule(Module &M) {
   M.setDataLayout(HostMachine->createDataLayout().getStringRepresentation());
   cleanFromKerneles(M);
 
-  for (auto &F : M.getFunctionList())
+  for (auto &F : M.getFunctionList()) {
     F.setCallingConv(CallingConv::C);
+    
+    
+    F.setAttributes({});
+    //F.removeFnAttr(Attribute::NoInline);
+    F.addFnAttr(Attribute::AlwaysInline); 
+  }
 
   return modified;
 }
@@ -85,72 +91,7 @@ void PACXXReflectionCleaner::cleanFromKerneles(Module &M) {
     F->eraseFromParent();
   }
 
-  // vector<Function*> Fs;
-  // for (auto& F : M.getFunctionList()) {
-  //    //if (!F.getName().startswith("__pacxx"))
-  //    //    Fs.push_back(&F);
-  //    //else
-  //    if (F.isDeclaration())
-  //        Fs.push_back(&F);
-  //}
-
-  // for (auto F : Fs)
-  //    F->eraseFromParent();
-
-  // auto& MDs = M.getNamedMDList();
-
-  // vector<NamedMDNode*> nMDs;
-
-  // for (auto& MD : MDs)
-  //{
-  //    if (MD.getName().startswith("opencl") || MD.getName().startswith("nvvm")
-  //    || MD.getName().startswith("pacxx.kernel"))
-  //        nMDs.push_back(&MD);
-  //}
-
-  // for (auto MD : nMDs)
-  //    MD->eraseFromParent();
-
-  // auto refNode = M.getOrInsertNamedMetadata("pacxx.reflection");
-
-  // for (unsigned i = 0; i != refNode->getNumOperands(); ++i)
-  //{
-  //    if (MDNode* MD = dyn_cast<MDNode>(refNode->getOperand(i)))
-  //    {
-  //        if (MDString* MS = dyn_cast<MDString>(MD->getOperand(1)))
-  //        {
-  //            if (!MS->getString().equals("stub"))
-  //            {
-  //                MD->replaceOperandWith()
-  //            }
-  //        }
-  //    }
-  //}
 }
-
-//
-// void PACXXReflection::cleanFromReflections(Module &M) {
-//  auto reflections = pacxx::getTagedFunctions(&M, "pacxx.reflection", "");
-//
-//  for (auto F : reflections) {
-//    F->replaceAllUsesWith(UndefValue::get(F->getType()));
-//    F->eraseFromParent();
-//  }
-//
-//  auto& MDs = M.getNamedMDList();
-//
-//  vector<NamedMDNode*> nMDs;
-//
-//  for (auto& MD : MDs)
-//  {
-//      if (MD.getName().startswith("pacxx"))
-//          nMDs.push_back(&MD);
-//  }
-//
-//  for (auto MD : nMDs)
-//      MD->eraseFromParent();
-//
-//}
 
 char PACXXReflectionCleaner::ID = 0;
 static RegisterPass<PACXXReflectionCleaner>

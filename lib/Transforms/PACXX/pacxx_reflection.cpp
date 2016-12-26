@@ -400,6 +400,7 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
 
   auto BB = BasicBlock::Create(Ctx, "enter", wrapper);
 
+  size_t argBufferSize = 0; 
   SmallVector<Value *, 5> callArgs;
   auto &input = wrapper->getArgumentList().front();
   input.setName("arg0");
@@ -417,10 +418,15 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
     callArgs.push_back(input);
     auto size = M->getDataLayout().getTypeAllocSize(argument.getType());
     offset += size;
+    argBufferSize += size; 
   }
 
   auto call = CallInst::Create(F, callArgs, "call", BB);
   ReturnInst::Create(Ctx, call, BB);
+
+  wrapper->setMetadata("pacxx.reflection.argBufferSize", 
+		       MDNode::get(Ctx, llvm::ConstantAsMetadata::get(ConstantInt::get(
+                         IntegerType::getInt32Ty(Ctx), argBufferSize))));
 
   NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
   SmallVector<Metadata *, 3> MDArgs;
