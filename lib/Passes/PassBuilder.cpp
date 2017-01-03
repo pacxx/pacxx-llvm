@@ -310,12 +310,13 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
   // the other we have is `LoopInstSimplify`.
   LoopPassManager LPM1(DebugLogging), LPM2(DebugLogging);
 
+  // FIXME: Enable these when the loop pass manager can support enforcing loop
+  // simplified and LCSSA form as well as updating the loop nest after
+  // transformations and we finsih porting the loop passes.
+#if 0
   // Rotate Loop - disable header duplication at -Oz
   LPM1.addPass(LoopRotatePass(Level != Oz));
   LPM1.addPass(LICMPass());
-  // FIXME: Enable these when the loop pass manager can support updating the
-  // loop nest after transformations and we finsih porting the loop passes.
-#if 0
   LPM1.addPass(LoopUnswitchPass(/* OptimizeForSize */ Level != O3));
   LPM2.addPass(IndVarSimplifyPass());
   LPM2.addPass(LoopIdiomPass());
@@ -356,7 +357,12 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
   FPM.addPass(JumpThreadingPass());
   FPM.addPass(CorrelatedValuePropagationPass());
   FPM.addPass(DSEPass());
+  // FIXME: Enable this when the loop pass manager can support enforcing loop
+  // simplified and LCSSA form as well as updating the loop nest after
+  // transformations and we finsih porting the loop passes.
+#if 0
   FPM.addPass(createFunctionToLoopPassAdaptor(LICMPass()));
+#endif
 
   // Finally, do an expensive DCE pass to catch all the dead code exposed by
   // the simplifications and basic cleanup after all the simplifications.
@@ -484,7 +490,11 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
   // rather than on each loop in an inside-out manner, and so they are actually
   // function passes.
   OptimizePM.addPass(LoopDistributePass());
+#if 0
+  // FIXME: LoopVectorize relies on "requiring" LCSSA which isn't supported in
+  // the new PM.
   OptimizePM.addPass(LoopVectorizePass());
+#endif
   // FIXME: Need to port Loop Load Elimination and add it here.
   OptimizePM.addPass(InstCombinePass());
 
@@ -544,8 +554,46 @@ ModulePassManager PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
   return MPM;
 }
 
+AAManager PassBuilder::buildDefaultAAPipeline() {
+  AAManager AA;
+
+  // The order in which these are registered determines their priority when
+  // being queried.
+
+  // First we register the basic alias analysis that provides the majority of
+  // per-function local AA logic. This is a stateless, on-demand local set of
+  // AA techniques.
+  AA.registerFunctionAnalysis<BasicAA>();
+
+  // Next we query fast, specialized alias analyses that wrap IR-embedded
+  // information about aliasing.
+  AA.registerFunctionAnalysis<ScopedNoAliasAA>();
+  AA.registerFunctionAnalysis<TypeBasedAA>();
+
+  // Add support for querying global aliasing information when available.
+  // Because the `AAManager` is a function analysis and `GlobalsAA` is a module
+  // analysis, all that the `AAManager` can do is query for any *cached*
+  // results from `GlobalsAA` through a readonly proxy..
+#if 0
+  // FIXME: Enable once the invalidation logic supports this. Currently, the
+  // `AAManager` will hold stale references to the module analyses.
+  AA.registerModuleAnalysis<GlobalsAA>();
+#endif
+
+  return AA;
+}
+
 static Optional<int> parseRepeatPassName(StringRef Name) {
   if (!Name.consume_front("repeat<") || !Name.consume_back(">"))
+    return None;
+  int Count;
+  if (Name.getAsInteger(0, Count) || Count <= 0)
+    return None;
+  return Count;
+}
+
+static Optional<int> parseDevirtPassName(StringRef Name) {
+  if (!Name.consume_front("devirt<") || !Name.consume_back(">"))
     return None;
   int Count;
   if (Name.getAsInteger(0, Count) || Count <= 0)
@@ -590,6 +638,8 @@ static bool isCGSCCPassName(StringRef Name) {
 
   // Explicitly handle custom-parsed pass names.
   if (parseRepeatPassName(Name))
+    return true;
+  if (parseDevirtPassName(Name))
     return true;
 
 #define CGSCC_PASS(NAME, CREATE_PASS)                                          \
@@ -832,6 +882,15 @@ bool PassBuilder::parseCGSCCPass(CGSCCPassManager &CGPM,
                                   DebugLogging))
         return false;
       CGPM.addPass(createRepeatedPass(*Count, std::move(NestedCGPM)));
+      return true;
+    }
+    if (auto MaxRepetitions = parseDevirtPassName(Name)) {
+      CGSCCPassManager NestedCGPM(DebugLogging);
+      if (!parseCGSCCPassPipeline(NestedCGPM, InnerPipeline, VerifyEachPass,
+                                  DebugLogging))
+        return false;
+      CGPM.addPass(createDevirtSCCRepeatedPass(std::move(NestedCGPM),
+                                               *MaxRepetitions, DebugLogging));
       return true;
     }
     // Normal passes can't have pipelines.
@@ -1084,6 +1143,13 @@ bool PassBuilder::parsePassPipeline(ModulePassManager &MPM,
 }
 
 bool PassBuilder::parseAAPipeline(AAManager &AA, StringRef PipelineText) {
+  // If the pipeline just consists of the word 'default' just replace the AA
+  // manager with our default one.
+  if (PipelineText == "default") {
+    AA = buildDefaultAAPipeline();
+    return true;
+  }
+
   while (!PipelineText.empty()) {
     StringRef Name;
     std::tie(Name, PipelineText) = PipelineText.split(',');

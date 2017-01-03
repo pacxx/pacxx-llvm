@@ -2542,9 +2542,6 @@ bool llvm::CannotBeNegativeZero(const Value *V, const TargetLibraryInfo *TLI,
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(V))
     return !CFP->getValueAPF().isNegZero();
 
-  // FIXME: Magic number! At the least, this should be given a name because it's
-  // used similarly in CannotBeOrderedLessThanZero(). A better fix may be to
-  // expose it as a parameter, so it can be used for testing / experimenting.
   if (Depth == MaxDepth)
     return false;  // Limit search depth.
 
@@ -2589,9 +2586,6 @@ bool llvm::CannotBeOrderedLessThanZero(const Value *V,
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(V))
     return !CFP->getValueAPF().isNegative() || CFP->getValueAPF().isZero();
 
-  // FIXME: Magic number! At the least, this should be given a name because it's
-  // used similarly in CannotBeNegativeZero(). A better fix may be to
-  // expose it as a parameter, so it can be used for testing / experimenting.
   if (Depth == MaxDepth)
     return false;  // Limit search depth.
 
@@ -3368,6 +3362,8 @@ static bool isKnownNonNullFromDominatingCondition(const Value *V,
                                                   const DominatorTree *DT) {
   assert(V->getType()->isPointerTy() && "V must be pointer type");
   assert(!isa<ConstantData>(V) && "Did not expect ConstantPointerNull");
+  assert(CtxI && "Context instruction required for analysis");
+  assert(DT && "Dominator tree required for analysis");
 
   unsigned NumUsesExplored = 0;
   for (auto *U : V->users()) {
@@ -3410,7 +3406,10 @@ bool llvm::isKnownNonNullAt(const Value *V, const Instruction *CtxI,
   if (isKnownNonNull(V))
     return true;
 
-  return CtxI ? ::isKnownNonNullFromDominatingCondition(V, CtxI, DT) : false;
+  if (!CtxI || !DT)
+    return false;
+
+  return ::isKnownNonNullFromDominatingCondition(V, CtxI, DT);
 }
 
 OverflowResult llvm::computeOverflowForUnsignedMul(const Value *LHS,
@@ -3651,12 +3650,27 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
     return false;
 
   // Calls can throw, or contain an infinite loop, or kill the process.
-  if (CallSite CS = CallSite(const_cast<Instruction*>(I))) {
-    // Calls which don't write to arbitrary memory are safe.
-    // FIXME: Ignoring infinite loops without any side-effects is too aggressive,
-    // but it's consistent with other passes. See http://llvm.org/PR965 .
-    // FIXME: This isn't aggressive enough; a call which only writes to a
-    // global is guaranteed to return.
+  if (auto CS = ImmutableCallSite(I)) {
+    // Call sites that throw have implicit non-local control flow.
+    if (!CS.doesNotThrow())
+      return false;
+
+    // Non-throwing call sites can loop infinitely, call exit/pthread_exit
+    // etc. and thus not return.  However, LLVM already assumes that
+    //
+    //  - Thread exiting actions are modeled as writes to memory invisible to
+    //    the program.
+    //
+    //  - Loops that don't have side effects (side effects are volatile/atomic
+    //    stores and IO) always terminate (see http://llvm.org/PR965).
+    //    Furthermore IO itself is also modeled as writes to memory invisible to
+    //    the program.
+    //
+    // We rely on those assumptions here, and use the memory effects of the call
+    // target as a proxy for checking that it always returns.
+
+    // FIXME: This isn't aggressive enough; a call which only writes to a global
+    // is guaranteed to return.
     return CS.onlyReadsMemory() || CS.onlyAccessesArgMemory() ||
            match(I, m_Intrinsic<Intrinsic::assume>());
   }

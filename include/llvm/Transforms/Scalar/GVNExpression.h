@@ -24,6 +24,7 @@
 #include "llvm/Support/ArrayRecycler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/MemorySSA.h"
 #include <algorithm>
 
 namespace llvm {
@@ -35,6 +36,7 @@ enum ExpressionType {
   ET_Base,
   ET_Constant,
   ET_Variable,
+  ET_Unknown,
   ET_BasicStart,
   ET_Basic,
   ET_Call,
@@ -68,8 +70,7 @@ public:
     // Compare the expression type for anything but load and store.
     // For load and store we set the opcode to zero.
     // This is needed for load coercion.
-    if (getExpressionType() != ET_Load &&
-        getExpressionType() != ET_Store &&
+    if (getExpressionType() != ET_Load && getExpressionType() != ET_Store &&
         getExpressionType() != Other.getExpressionType())
       return false;
 
@@ -154,24 +155,24 @@ public:
   unsigned getNumOperands() const { return NumOperands; }
 
   typedef Value **op_iterator;
-  typedef Value *const *const_ops_iterator;
-  op_iterator ops_begin() { return Operands; }
-  op_iterator ops_end() { return Operands + NumOperands; }
-  const_ops_iterator ops_begin() const { return Operands; }
-  const_ops_iterator ops_end() const { return Operands + NumOperands; }
+  typedef Value *const *const_op_iterator;
+  op_iterator op_begin() { return Operands; }
+  op_iterator op_end() { return Operands + NumOperands; }
+  const_op_iterator op_begin() const { return Operands; }
+  const_op_iterator op_end() const { return Operands + NumOperands; }
   iterator_range<op_iterator> operands() {
-    return iterator_range<op_iterator>(ops_begin(), ops_end());
+    return iterator_range<op_iterator>(op_begin(), op_end());
   }
-  iterator_range<const_ops_iterator> operands() const {
-    return iterator_range<const_ops_iterator>(ops_begin(), ops_end());
+  iterator_range<const_op_iterator> operands() const {
+    return iterator_range<const_op_iterator>(op_begin(), op_end());
   }
 
-  void ops_push_back(Value *Arg) {
+  void op_push_back(Value *Arg) {
     assert(NumOperands < MaxOperands && "Tried to add too many operands");
     assert(Operands && "Operandss not allocated before pushing");
     Operands[NumOperands++] = Arg;
   }
-  bool ops_empty() const { return getNumOperands() == 0; }
+  bool op_empty() const { return getNumOperands() == 0; }
 
   void allocateOperands(RecyclerType &Recycler, BumpPtrAllocator &Allocator) {
     assert(!Operands && "Operands already allocated");
@@ -189,18 +190,13 @@ public:
       return false;
 
     const auto &OE = cast<BasicExpression>(Other);
-    if (getType() != OE.getType())
-      return false;
-    if (NumOperands != OE.NumOperands)
-      return false;
-    if (!std::equal(ops_begin(), ops_end(), OE.ops_begin()))
-      return false;
-    return true;
+    return getType() == OE.getType() && NumOperands == OE.NumOperands &&
+           std::equal(op_begin(), op_end(), OE.op_begin());
   }
 
   virtual hash_code getHashValue() const override {
     return hash_combine(getExpressionType(), getOpcode(), ValueType,
-                        hash_combine_range(ops_begin(), ops_end()));
+                        hash_combine_range(op_begin(), op_end()));
   }
 
   //
@@ -220,6 +216,24 @@ public:
     OS << "} ";
   }
 };
+class op_inserter
+    : public std::iterator<std::output_iterator_tag, void, void, void, void> {
+private:
+  typedef BasicExpression Container;
+  Container *BE;
+
+public:
+  explicit op_inserter(BasicExpression &E) : BE(&E) {}
+  explicit op_inserter(BasicExpression *E) : BE(E) {}
+
+  op_inserter &operator=(Value *val) {
+    BE->op_push_back(val);
+    return *this;
+  }
+  op_inserter &operator*() { return *this; }
+  op_inserter &operator++() { return *this; }
+  op_inserter &operator++(int) { return *this; }
+};
 
 class CallExpression final : public BasicExpression {
 private:
@@ -232,8 +246,7 @@ public:
   }
 
   CallExpression(unsigned NumOperands, CallInst *C, MemoryAccess *DA)
-      : BasicExpression(NumOperands, ET_Call), Call(C),
-        DefiningAccess(DA) {}
+      : BasicExpression(NumOperands, ET_Call), Call(C), DefiningAccess(DA) {}
   void operator=(const CallExpression &) = delete;
   CallExpression(const CallExpression &) = delete;
   CallExpression() = delete;
@@ -274,8 +287,8 @@ public:
 
   LoadExpression(unsigned NumOperands, LoadInst *L, MemoryAccess *DA)
       : LoadExpression(ET_Load, NumOperands, L, DA) {}
-  LoadExpression(enum ExpressionType EType, unsigned NumOperands,
-                 LoadInst *L, MemoryAccess *DA)
+  LoadExpression(enum ExpressionType EType, unsigned NumOperands, LoadInst *L,
+                 MemoryAccess *DA)
       : BasicExpression(NumOperands, EType), Load(L), DefiningAccess(DA) {
     Alignment = L ? L->getAlignment() : 0;
   }
@@ -296,7 +309,7 @@ public:
 
   virtual hash_code getHashValue() const override {
     return hash_combine(getOpcode(), getType(), DefiningAccess,
-                        hash_combine_range(ops_begin(), ops_end()));
+                        hash_combine_range(op_begin(), op_end()));
   }
 
   //
@@ -307,7 +320,7 @@ public:
       OS << "ExpressionTypeLoad, ";
     this->BasicExpression::printInternal(OS, false);
     OS << " represents Load at " << Load;
-    OS << " with DefiningAccess " << DefiningAccess;
+    OS << " with DefiningAccess " << *DefiningAccess;
   }
 };
 
@@ -322,8 +335,7 @@ public:
   }
 
   StoreExpression(unsigned NumOperands, StoreInst *S, MemoryAccess *DA)
-      : BasicExpression(NumOperands, ET_Store), Store(S),
-        DefiningAccess(DA) {}
+      : BasicExpression(NumOperands, ET_Store), Store(S), DefiningAccess(DA) {}
   void operator=(const StoreExpression &) = delete;
   StoreExpression(const StoreExpression &) = delete;
   StoreExpression() = delete;
@@ -336,7 +348,7 @@ public:
 
   virtual hash_code getHashValue() const override {
     return hash_combine(getOpcode(), getType(), DefiningAccess,
-                        hash_combine_range(ops_begin(), ops_end()));
+                        hash_combine_range(op_begin(), op_end()));
   }
 
   //
@@ -347,6 +359,7 @@ public:
       OS << "ExpressionTypeStore, ";
     this->BasicExpression::printInternal(OS, false);
     OS << " represents Store at " << Store;
+    OS << " with DefiningAccess " << *DefiningAccess;
   }
 };
 
@@ -361,8 +374,7 @@ public:
     return EB->getExpressionType() == ET_AggregateValue;
   }
 
-  AggregateValueExpression(unsigned NumOperands,
-                           unsigned NumIntOperands)
+  AggregateValueExpression(unsigned NumOperands, unsigned NumIntOperands)
       : BasicExpression(NumOperands, ET_AggregateValue),
         MaxIntOperands(NumIntOperands), NumIntOperands(0),
         IntOperands(nullptr) {}
@@ -375,15 +387,15 @@ public:
   typedef unsigned *int_arg_iterator;
   typedef const unsigned *const_int_arg_iterator;
 
-  int_arg_iterator int_ops_begin() { return IntOperands; }
-  int_arg_iterator int_ops_end() { return IntOperands + NumIntOperands; }
-  const_int_arg_iterator int_ops_begin() const { return IntOperands; }
-  const_int_arg_iterator int_ops_end() const {
+  int_arg_iterator int_op_begin() { return IntOperands; }
+  int_arg_iterator int_op_end() { return IntOperands + NumIntOperands; }
+  const_int_arg_iterator int_op_begin() const { return IntOperands; }
+  const_int_arg_iterator int_op_end() const {
     return IntOperands + NumIntOperands;
   }
-  unsigned int_ops_size() const { return NumIntOperands; }
-  bool int_ops_empty() const { return NumIntOperands == 0; }
-  void int_ops_push_back(unsigned IntOperand) {
+  unsigned int_op_size() const { return NumIntOperands; }
+  bool int_op_empty() const { return NumIntOperands == 0; }
+  void int_op_push_back(unsigned IntOperand) {
     assert(NumIntOperands < MaxIntOperands &&
            "Tried to add too many int operands");
     assert(IntOperands && "Operands not allocated before pushing");
@@ -399,16 +411,13 @@ public:
     if (!this->BasicExpression::equals(Other))
       return false;
     const AggregateValueExpression &OE = cast<AggregateValueExpression>(Other);
-    if (NumIntOperands != OE.NumIntOperands)
-      return false;
-    if (!std::equal(int_ops_begin(), int_ops_end(), OE.int_ops_begin()))
-      return false;
-    return true;
+    return NumIntOperands == OE.NumIntOperands &&
+           std::equal(int_op_begin(), int_op_end(), OE.int_op_begin());
   }
 
   virtual hash_code getHashValue() const override {
     return hash_combine(this->BasicExpression::getHashValue(),
-                        hash_combine_range(int_ops_begin(), int_ops_end()));
+                        hash_combine_range(int_op_begin(), int_op_end()));
   }
 
   //
@@ -419,11 +428,28 @@ public:
       OS << "ExpressionTypeAggregateValue, ";
     this->BasicExpression::printInternal(OS, false);
     OS << ", intoperands = {";
-    for (unsigned i = 0, e = int_ops_size(); i != e; ++i) {
+    for (unsigned i = 0, e = int_op_size(); i != e; ++i) {
       OS << "[" << i << "] = " << IntOperands[i] << "  ";
     }
     OS << "}";
   }
+};
+class int_op_inserter
+    : public std::iterator<std::output_iterator_tag, void, void, void, void> {
+private:
+  typedef AggregateValueExpression Container;
+  Container *AVE;
+
+public:
+  explicit int_op_inserter(AggregateValueExpression &E) : AVE(&E) {}
+  explicit int_op_inserter(AggregateValueExpression *E) : AVE(E) {}
+  int_op_inserter &operator=(unsigned int val) {
+    AVE->int_op_push_back(val);
+    return *this;
+  }
+  int_op_inserter &operator*() { return *this; }
+  int_op_inserter &operator++() { return *this; }
+  int_op_inserter &operator++(int) { return *this; }
 };
 
 class PHIExpression final : public BasicExpression {
@@ -446,9 +472,7 @@ public:
     if (!this->BasicExpression::equals(Other))
       return false;
     const PHIExpression &OE = cast<PHIExpression>(Other);
-    if (BB != OE.BB)
-      return false;
-    return true;
+    return BB == OE.BB;
   }
 
   virtual hash_code getHashValue() const override {
@@ -475,8 +499,7 @@ public:
     return EB->getExpressionType() == ET_Variable;
   }
 
-  VariableExpression(Value *V)
-      : Expression(ET_Variable), VariableValue(V) {}
+  VariableExpression(Value *V) : Expression(ET_Variable), VariableValue(V) {}
   void operator=(const VariableExpression &) = delete;
   VariableExpression(const VariableExpression &) = delete;
   VariableExpression() = delete;
@@ -485,9 +508,7 @@ public:
   void setVariableValue(Value *V) { VariableValue = V; }
   virtual bool equals(const Expression &Other) const override {
     const VariableExpression &OC = cast<VariableExpression>(Other);
-    if (VariableValue != OC.VariableValue)
-      return false;
-    return true;
+    return VariableValue == OC.VariableValue;
   }
 
   virtual hash_code getHashValue() const override {
@@ -515,8 +536,7 @@ public:
     return EB->getExpressionType() == ET_Constant;
   }
 
-  ConstantExpression()
-      : Expression(ET_Constant), ConstantValue(NULL) {}
+  ConstantExpression() : Expression(ET_Constant), ConstantValue(NULL) {}
   ConstantExpression(Constant *constantValue)
       : Expression(ET_Constant), ConstantValue(constantValue) {}
   void operator=(const ConstantExpression &) = delete;
@@ -543,6 +563,40 @@ public:
       OS << "ExpressionTypeConstant, ";
     this->Expression::printInternal(OS, false);
     OS << " constant = " << *ConstantValue;
+  }
+};
+
+class UnknownExpression final : public Expression {
+private:
+  Instruction *Inst;
+
+public:
+  static bool classof(const Expression *EB) {
+    return EB->getExpressionType() == ET_Unknown;
+  }
+
+  UnknownExpression(Instruction *I) : Expression(ET_Unknown), Inst(I) {}
+  void operator=(const UnknownExpression &) = delete;
+  UnknownExpression(const UnknownExpression &) = delete;
+  UnknownExpression() = delete;
+
+  Instruction *getInstruction() const { return Inst; }
+  void setInstruction(Instruction *I) { Inst = I; }
+  virtual bool equals(const Expression &Other) const override {
+    const auto &OU = cast<UnknownExpression>(Other);
+    return Inst == OU.Inst;
+  }
+  virtual hash_code getHashValue() const override {
+    return hash_combine(getExpressionType(), Inst);
+  }
+  //
+  // Debugging support
+  //
+  virtual void printInternal(raw_ostream &OS, bool PrintEType) const override {
+    if (PrintEType)
+      OS << "ExpressionTypeUnknown, ";
+    this->Expression::printInternal(OS, false);
+    OS << " inst = " << *Inst;
   }
 };
 }
