@@ -1,10 +1,10 @@
 #define PACXX_PASS_NAME "PACXXNativeLinker"
 #define USE_STANDALONE 1
 
-#include "../kronos/Log.h"
+#include "Log.h"
 
-#include "../pacxx/ModuleHelper.h"
-#include "../pacxx/FunctionCloner.h"
+#include "ModuleHelper.h"
+#include "FunctionCloner.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "../../IR/ConstantsContext.h"
 
