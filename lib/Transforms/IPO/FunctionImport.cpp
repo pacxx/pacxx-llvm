@@ -21,6 +21,7 @@
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Object/IRObjectFile.h"
@@ -696,14 +697,6 @@ Expected<bool> FunctionImporter::importFunctions(
         GlobalsToImport.insert(&GA);
       }
     }
-
-#ifndef DEBUG
-    // Note: this can't be done after `renameModuleForThinLTO` as it leaves the
-    // module in a state that does not pass the verifier (for example aliases
-    // pointing to available_externally functions).
-    if (verifyModule(*SrcModule, &errs()))
-      report_fatal_error("Invalid lazy-loaded source module for importing");
-#endif
 
     // Link in the specified functions.
     if (renameModuleForThinLTO(*SrcModule, Index, &GlobalsToImport))
