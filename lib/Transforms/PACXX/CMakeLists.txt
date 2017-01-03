@@ -1,5 +1,4 @@
 add_llvm_library(LLVMPACXXTransforms
-  pacxx_native_linker.cpp
   pacxx_static_analyser.cpp
   pacxx_reflection.cpp
   pacxx_reflection_cleaner.cpp
@@ -11,6 +10,13 @@ add_llvm_library(LLVMPACXXTransforms
   nvvm.cpp
   nvvm_reg.cpp
   spir_vector_fixer.cpp
+  pacxx_native_linker.cpp
+  pacxx_redundant_id_remover.cpp
+  pacxx_native_runtime_opt.cpp
+  pacxx_native_barrier.cpp
+  SPMDVectorizer.cpp
+  pacxx_addrspace_transform.cpp
+
   )
 
 add_dependencies(LLVMPACXXTransforms intrinsics_gen)

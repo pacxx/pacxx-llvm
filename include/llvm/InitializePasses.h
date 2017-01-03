@@ -358,6 +358,13 @@ void initializeWinEHPreparePass(PassRegistry&);
 void initializeWriteBitcodePassPass(PassRegistry &);
 void initializeWriteThinLTOBitcodePass(PassRegistry &);
 void initializeXRayInstrumentationPass(PassRegistry &);
+
+//SPMD
+void initializePACXXAddrSpaceTransformPass(PassRegistry&);
+void initializeSPMDAnalysisPass(PassRegistry&);
+void initializeSPMDVectorizerPass(PassRegistry&);
+void initializePACXXNativeBarrierPass(PassRegistry&);
+
 }
 
 #endif

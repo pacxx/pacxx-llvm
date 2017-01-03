@@ -227,6 +227,15 @@ namespace {
       llvm::AliasSetTracker X(AA);
       X.add(nullptr, 0, llvm::AAMDNodes()); // for -print-alias-sets
       (void) llvm::AreStatisticsEnabled();
+
+      //SPMD
+      (void) llvm::createSPMDVectorizer();
+      (void) llvm::createPACXXNativeBarrierPass();
+      (void) llvm::createPACXXIdRemover();
+      (void) llvm::createPACXXAddrSpaceTransform();
+      (void) llvm::createPACXXNativeRuntimeOpts("", 0, std::vector<char>());
+      (void) llvm::createPACXXNativeLinker();
+
       (void) llvm::sys::RunningOnValgrind();
     }
   } ForcePassLinking; // Force link by creating a global definition.

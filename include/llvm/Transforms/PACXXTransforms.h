@@ -21,6 +21,16 @@ Pass *createPACXXStaticEvalPass();
 Pass *createPACXXVerifier();
 Pass *createPACXXInlinerPass();
 Pass *createPACXXDeadCodeElimPass();
+
+//SPMD
+Pass *createPACXXNativeLinker();
+Pass *createPACXXAddrSpaceTransform();
+Pass *createPACXXIdRemover();
+Pass *createPACXXNativeRuntimeOpts(const std::string &name,
+                                   unsigned threadsx,
+                                   const std::vector<char> &args);
+Pass *createSPMDVectorizer();
+Pass *createPACXXNativeBarrierPass();
 }
 
 namespace pacxx {
