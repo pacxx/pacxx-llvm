@@ -69,7 +69,7 @@ WFV_API class WFVInterface {
 public:
     WFV_API WFVInterface(Module*         module,
                          LLVMContext*    context,
-                         const Function* scalarFunction,
+                         Function* scalarFunction,
                          Function*       simdFunction,
                          TargetTransformInfo* TTI,
                          const unsigned  vectorizationFactor,

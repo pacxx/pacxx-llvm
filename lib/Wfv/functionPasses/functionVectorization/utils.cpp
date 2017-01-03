@@ -1019,7 +1019,7 @@ FunctionVectorizer::generateWriteBackOperations(Instruction*   currentPos,
         BasicBlock* parentBB = useI->getParent();
         for (auto I=parentBB->begin(), IE=parentBB->end(); I!=IE; ++I)
         {
-            if (useI != I) continue;
+            if (useI != &*I) continue;
 
             ++I;
 

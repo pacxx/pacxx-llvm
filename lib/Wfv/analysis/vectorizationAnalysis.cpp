@@ -41,7 +41,7 @@ using namespace llvm;
 
 char VectorizationAnalysis::ID = 0;
 INITIALIZE_PASS_BEGIN(VectorizationAnalysis, "vectorizationAnalysis", "Vectorization Analysis", false, true)
-INITIALIZE_PASS_DEPENDENCY(PostDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(PostDominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 //INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
@@ -155,7 +155,7 @@ VectorizationAnalysis::releaseMemory()
 void
 VectorizationAnalysis::getAnalysisUsage(AnalysisUsage &AU) const
 {
-    AU.addRequired<PostDominatorTree>();
+    AU.addRequired<PostDominatorTreeWrapperPass>();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 
@@ -205,7 +205,7 @@ VectorizationAnalysis::runOnFunction(Function& F)
     }
 
     mLoopInfo    = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-    mPostDomTree = &getAnalysis<PostDominatorTree>();
+    mPostDomTree = &getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
     mDomTree     = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 
     assert (&F == mScalarFunction);
@@ -3010,7 +3010,7 @@ VectorizationAnalysis::updateUniformPhisWithDivergenceInfo(Function* scalarFn)
             Instruction* inst = &I;
 
             // We are only interested in phis.
-            if (inst == block->getFirstInsertionPt()) break;
+            if (inst == &*block->getFirstInsertionPt()) break;
             assert (isa<PHINode>(inst));
             assert (!isExitOfDivergentLoop || cast<PHINode>(inst)->getNumIncomingValues() == 1);
 
@@ -3286,7 +3286,7 @@ VectorizationAnalysis::findLoopPhiForInstruction(Instruction* inst, Loop* loop)
         for (BasicBlock::iterator I=headerBB->begin(); I!=headerBB->end(); ++I)
         {
             if (headerBB->getFirstInsertionPt() == I) break;
-            if (inst == I) return cast<PHINode>(I);
+            if (inst == &*I) return cast<PHINode>(I);
         }
     }
 
@@ -3467,7 +3467,7 @@ VectorizationAnalysis::markNestedDivergentTopLevelLoops(Loop* loop)
 void
 VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
 {
-    SmallPtrSet<Value*, 64> markedValues;
+    SmallPtrSet<Value*, 32> markedValues;
 
     // Add all instructions that were marked from outside.
     for (llvm::inst_iterator I=inst_begin(scalarFn), IE=inst_end(scalarFn); I!=IE; ++I)
@@ -3569,7 +3569,7 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
     // as starting points for a post-reversed DFS.
     //
 
-    SmallPtrSet<Instruction*, 64> workSet;
+    SmallPtrSet<Instruction*, 32> workSet;
 
     // If the function returns something, all returns are outputs :).
     // Otherwise, ignore.
@@ -3673,7 +3673,7 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
 
 void
 VectorizationAnalysis::markIndexAlignValueAndOps(Value*                   value,
-                                                 SmallPtrSet<Value*, 64>& markedValues,
+                                                 SmallPtrSet<Value*, 32>& markedValues,
                                                  const char**             indexInfo,
                                                  const char**             alignInfo)
 {
@@ -3745,7 +3745,7 @@ VectorizationAnalysis::markIndexAlignValueAndOps(Value*                   value,
         bool changed = true;
         while (changed)
         {
-            SmallPtrSet<Value*, 64> markedLoopValues(markedValues);
+            SmallPtrSet<Value*, 32> markedLoopValues(markedValues);
 
             const int preheaderIdx = phi->getBasicBlockIndex(preheaderBB);
             const int backedgeIdx = preheaderIdx == 0 ? 1 : 0;

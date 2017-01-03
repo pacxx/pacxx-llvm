@@ -18,7 +18,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "llvm/Bitcode/ReaderWriter.h" // ParseBitcodeFile
+#include "llvm/Bitcode/BitcodeReader.h" // ParseBitcodeFile
+#include "llvm/Bitcode/BitcodeWriter.h" // ParseBitcodeFile
 #include "llvm/Support/MemoryBuffer.h" // MemoryBuffer
 #include "llvm/Linker/Linker.h"               // Linker
 #include "llvm/IR/Intrinsics.h"
@@ -58,7 +59,7 @@ WFVInfo::WFVInfo()
 
 WFVInfo::WFVInfo(Module*         M,
 				 LLVMContext*    C,
-				 const Function* scalarFunction,
+				 Function* scalarFunction,
 				 Function*       simdFunction,
                  TargetTransformInfo *TTI,
 				 const unsigned  vectorizationFactor,

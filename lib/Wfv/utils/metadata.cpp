@@ -1584,7 +1584,7 @@ getRewireTargetsOfDCBlock(const BasicBlock&       divergenceCausingBlock,
 
     for (unsigned i=0, e=metaInfo->getNumOperands(); i<e; ++i)
     {
-        assert (isa<BasicBlock>(getValueForMD(metaInfo->getOpernad(i))));
+        assert (isa<BasicBlock>(getValueForMD(metaInfo->getOperand(i))));
         rewireTargets.push_back(getValueForMD(metaInfo->getOperand(i)));
     }
 }

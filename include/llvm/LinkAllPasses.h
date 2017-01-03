@@ -230,10 +230,9 @@ namespace {
 
       //SPMD
       (void) llvm::createSPMDVectorizer();
-      (void) llvm::createPACXXNativeBarrierPass();
+      //(void) llvm::createPACXXNativeBarrierPass();
       (void) llvm::createPACXXIdRemover();
       (void) llvm::createPACXXAddrSpaceTransform();
-      (void) llvm::createPACXXNativeRuntimeOpts("", 0, std::vector<char>());
       (void) llvm::createPACXXNativeLinker();
 
       (void) llvm::sys::RunningOnValgrind();

@@ -2,7 +2,7 @@
 //
 // Created by lars on 17/11/16.
 
-#include "../kronos/Log.h"
+#include "Log.h"
 #include "llvm/Pass.h"
 #include "llvm/LinkAllPasses.h"
 #include "llvm/PassSupport.h"
@@ -37,13 +37,10 @@
 #include "llvm/PassAnalysisSupport.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/SPMD/SPMDAnalysis.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "../pacxx/ModuleHelper.h"
+#include "ModuleHelper.h"
 #include "llvm/Transforms/PACXXTransforms.h"
 #include "wfv/wfvInterface.h"
-
-extern int kronos::_kronos_debug_level;
 
 using namespace llvm;
 using namespace std;
@@ -95,8 +92,6 @@ void SPMDVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 bool SPMDVectorizer::runOnModule(Module& M) {
-
-    kronos::_kronos_debug_level = 2;
 
     bool kernelsVectorized = true;
 

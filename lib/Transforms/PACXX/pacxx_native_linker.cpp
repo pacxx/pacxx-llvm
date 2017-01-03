@@ -4,11 +4,8 @@
 #include "Log.h"
 
 #include "ModuleHelper.h"
-#include "FunctionCloner.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "../../IR/ConstantsContext.h"
-
-extern int kronos::_kronos_debug_level;
 
 using namespace llvm;
 using namespace std;
@@ -36,9 +33,7 @@ namespace llvm {
 
     bool PACXXNativeLinker::runOnModule(Module &M) {
 
-      kronos::_kronos_debug_level = 2;
-
-      auto &ctx = getGlobalContext();
+      auto &ctx = M.getContext();
       auto foo = M.getFunction("foo");
       auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 

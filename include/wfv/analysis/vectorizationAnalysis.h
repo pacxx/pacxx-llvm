@@ -290,7 +290,7 @@ private:
 
     void analyzeConsecutiveAlignedInfo(Function* scalarFn);
     void markIndexAlignValueAndOps(Value*                   value,
-                                   SmallPtrSet<Value*, 64>& markedValues,
+                                   SmallPtrSet<Value*, 32>& markedValues,
                                    const char**             indexInfo,
                                    const char**             alignInfo);
     void getIndexAlignedInfo(Value*       value,

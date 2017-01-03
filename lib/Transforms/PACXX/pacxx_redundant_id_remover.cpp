@@ -1,11 +1,10 @@
 #define PACXX_PASS_NAME "PACXXIdRemover"
 #define USE_STANDALONE 1
-#include "../kronos/Log.h"
+#include "Log.h"
 
-#include "../pacxx/ModuleHelper.h"
-#include "../pacxx/FunctionCloner.h"
-#include "../pacxx/CallVisitor.h"
-#include "../pacxx/IdHelper.h"
+#include "ModuleHelper.h"
+#include "CallVisitor.h"
+#include "IdHelper.h"
 
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"

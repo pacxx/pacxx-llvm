@@ -1,13 +1,10 @@
 #define PACXX_PASS_NAME "PACXXAddrSpaceTransformer"
-#define USE_STANDALONE 1
-#include "../kronos/Log.h"
+#include "Log.h"
 
 #include <llvm/Transforms/Vectorize.h>
-#include "../kronos/Log.h"
 
-#include "../pacxx/ModuleHelper.h"
-#include "../pacxx/FunctionCloner.h"
-#include "../pacxx/CallVisitor.h"
+#include "ModuleHelper.h"
+#include "CallVisitor.h"
 
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"

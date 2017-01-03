@@ -136,7 +136,7 @@ FunctionVectorizer::runOnFunction(Function& F)
     assert (mInfo->mFailure);
     if (*mInfo->mFailure) return false;
 
-    Timer t("Function Vectorizer", *mInfo->mTimerGroup);
+    Timer t("FV", "Function Vectorizer", *mInfo->mTimerGroup);
 
     if(mInfo->mVerbose) {
         t.startTimer();

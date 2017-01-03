@@ -66,7 +66,7 @@ extern int _kronos_debug_level;
 WFV_API
 WFVInterface::WFVInterface(Module*         module,
                            LLVMContext*    context,
-                           const Function* scalarFunction,
+                           Function* scalarFunction,
                            Function*       simdFunction,
                            TargetTransformInfo *TTI,
                            const unsigned  vectorizationFactor,
@@ -76,7 +76,7 @@ WFVInterface::WFVInterface(Module*         module,
                            const bool      disableAllAnalyses,
                            const bool      pacxx,
                            const bool      verbose)
-: mTimerGroup(new TimerGroup("Whole-Function Vectorization")),
+: mTimerGroup(new TimerGroup("WFV", "Whole-Function Vectorization")),
         mInfo(new WFVInfo(module,
                           context,
                           scalarFunction,
@@ -565,7 +565,7 @@ WFVInterface::vectorizeFunction()
     assert (mInfo);
     assert (mInfo->mScalarFunction);
     assert (mInfo->mSimdFunction);
-    const Function&    scalarFunction = *mInfo->mScalarFunction;
+    Function&    scalarFunction = *mInfo->mScalarFunction;
     const Function&    simdFunction   = *mInfo->mSimdFunction;
     const std::string& scalarName     = scalarFunction.getName();
     const std::string& simdName       = simdFunction.getName();
@@ -607,7 +607,7 @@ WFVInterface::vectorizeFunction()
     {
         // Don't touch original function... clone it.
         ValueToValueMapTy valueMap;
-        tempF = CloneFunction(&scalarFunction, valueMap, false);
+        tempF = CloneFunction(&scalarFunction, valueMap);
 
         assert (tempF);
         tempF->setCallingConv(scalarFunction.getCallingConv());

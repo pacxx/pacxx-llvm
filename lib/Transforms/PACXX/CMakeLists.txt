@@ -12,11 +12,11 @@ add_llvm_library(LLVMPACXXTransforms
   spir_vector_fixer.cpp
   pacxx_native_linker.cpp
   pacxx_redundant_id_remover.cpp
-  pacxx_native_runtime_opt.cpp
-  pacxx_native_barrier.cpp
+  #pacxx_native_barrier.cpp
   SPMDVectorizer.cpp
   pacxx_addrspace_transform.cpp
-
+  Log.cpp
+  Common.cpp
   )
 
 add_dependencies(LLVMPACXXTransforms intrinsics_gen)

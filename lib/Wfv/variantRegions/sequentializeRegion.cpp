@@ -115,7 +115,7 @@ SequentializeRegion::run()
     ////////////////////////////////////////////////////////////////////////////
 
     ValueToValueMapTy valueMap;
-    Function* V = CloneFunction(mRegionFunction, valueMap, false);
+    Function* V = CloneFunction(mRegionFunction, valueMap);
     VP.mScalarVariant = V;
 
     assert (V);

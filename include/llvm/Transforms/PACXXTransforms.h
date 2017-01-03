@@ -26,11 +26,8 @@ Pass *createPACXXDeadCodeElimPass();
 Pass *createPACXXNativeLinker();
 Pass *createPACXXAddrSpaceTransform();
 Pass *createPACXXIdRemover();
-Pass *createPACXXNativeRuntimeOpts(const std::string &name,
-                                   unsigned threadsx,
-                                   const std::vector<char> &args);
 Pass *createSPMDVectorizer();
-Pass *createPACXXNativeBarrierPass();
+//Pass *createPACXXNativeBarrierPass();
 }
 
 namespace pacxx {

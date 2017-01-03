@@ -43,7 +43,7 @@ public:
     explicit WFVInfo(const WFVInfo& other);
     explicit WFVInfo(Module*         M,
                      LLVMContext*    C,
-                     const Function* scalarFunction,
+                     Function* scalarFunction,
                      Function*       simdFunction,
                      TargetTransformInfo* TTI,
                      const unsigned  vectorizationFactor,
@@ -106,7 +106,7 @@ public:
     Module*              mModule;
     LLVMContext*         mContext;
     DataLayout*          mDataLayout;
-    const Function*      mScalarFunction;
+    Function*      mScalarFunction;
     Function*            mSimdFunction;
     TargetTransformInfo *mTTI;
 
