@@ -90,7 +90,7 @@ static void pacxx_log_print(const char *file, int line, Params &&... args);
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "detail/common/Common.h"
+#include "Common.h"
 
 using namespace llvm;
 
