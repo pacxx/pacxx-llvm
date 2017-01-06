@@ -138,12 +138,12 @@ FunctionVectorizer::broadcastValue(Value*         oldVal,
             IRBuilder<> builder(insertBefore);
             newVal = CreateScalarBroadcast<float>(oldVal, newType, isConsecutive, builder, info);
 #else
-            SmallVector<unsigned, 8> offset;
+                SmallVector<uint64_t, 8> offset;
                 for (unsigned i=0, e=info.mVectorizationFactor; i<e; ++i) {
                     newVal = InsertElementInst::Create(newVal,
                                                        oldVal,
                                                        ConstantInt::get(*info.mContext,
-                                                                        APInt(32, i)),
+                                                                        APInt(64, i)),
                                                        "",
                                                        insertBefore);
                     WFV::setMetadata(cast<Instruction>(newVal), WFV::WFV_METADATA_PACK_UNPACK);
@@ -187,12 +187,12 @@ FunctionVectorizer::broadcastValue(Value*         oldVal,
 				newVal = CreateScalarBroadcast<int>(oldVal, newType, isConsecutive, builder, info);
 #else
 
-                SmallVector<unsigned, 8> offset;
+                SmallVector<uint64_t, 8> offset;
                 for (unsigned i=0, e=info.mVectorizationFactor; i<e; ++i) {
                     newVal = InsertElementInst::Create(newVal,
                                                        oldVal,
                                                        ConstantInt::get(*info.mContext,
-                                                                        APInt(32, i)),
+                                                                        APInt(64, i)),
                                                        "",
                                                        insertBefore);
                     WFV::setMetadata(cast<Instruction>(newVal), WFV::WFV_METADATA_PACK_UNPACK);
@@ -600,6 +600,7 @@ FunctionVectorizer::broadcastUniformOperand(Instruction*   inst,
         if(!newC)
             return false;
         inst->replaceUsesOfWith(operand, newC);
+        return true;
     }
 
     assert (isa<Instruction>(operand) || isa<Argument>(operand));

@@ -426,7 +426,6 @@ WFVInterface::analyzeFunction(Function* scalarFn, Function* simdFn)
                                                 mInfo->mPacxx,
                                                 mInfo->mVerbose,
                                                 mInfo->mFailure));
-        DEBUG_WFV_NO_VERBOSE( FPM.add(createVerifierPass()); );
 
         // Run second verification phase that uses analysis results.
         FPM.add(createVectorizationVerifierPass());
@@ -615,7 +614,6 @@ WFVInterface::vectorizeFunction()
         tempF->setAlignment(scalarFunction.getAlignment());
         tempF->setLinkage(GlobalValue::InternalLinkage);
         tempF->setName(scalarFunction.getName()+".wfv.tmp");
-        mInfo->mModule->getFunctionList().push_back(tempF);
 
         // Map all user-defined uniform/consecutive/aligned values
         // from the original scalar source function to the function
@@ -850,7 +848,6 @@ WFVInterface::vectorizeFunction()
         FPM.add(createLinearizationVerifierPass());
 
         FPM.add(createFunctionVectorizerPass());
-        FPM.add(createVerifierPass());
 
         FPM.run(*tempF);
     }

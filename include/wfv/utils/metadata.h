@@ -108,6 +108,7 @@ static const char* const WFV_METADATA_VARIANT_BOSCC          = "variant_boscc";
 static const char* const WFV_METADATA_ARGUMENT_INFO_FUNCTION_NAME = "wfvMetadataFn";
 
 
+
 static Function* argMetadataFn;
 static MDNode*   nullMDN;
 static LLVMContext *ctx;
@@ -131,6 +132,7 @@ void removeMetadata(Loop* loop, const char* const metaDataString);
 void setMetadata(Value* value, const char* const metaDataString);
 bool hasMetadata(const Value* value);
 bool hasWFVMetadata(const Value* value);
+bool hasPACXXMetadata(const Value* value);
 bool hasMetadata(const Value* value, const char* const metaDataString);
 void removeMetadata(Value* value, const char* const metaDataString);
 void copyMetadata(Value* target, const Value& source);

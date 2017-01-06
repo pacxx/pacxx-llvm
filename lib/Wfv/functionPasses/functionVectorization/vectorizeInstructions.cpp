@@ -105,36 +105,35 @@ FunctionVectorizer::vectorizeInstructions(Function* f)
     }
 
     // TODO: Move to separate file or into a separate pass.
-    DEBUG_WFV_NO_VERBOSE(
-        for (inst_iterator I=inst_begin(f), E=inst_end(f); I!=E; ++I)
+    for (inst_iterator I=inst_begin(f), E=inst_end(f); I!=E; ++I)
+    {
+        Instruction* inst = &*I;
+
+        if (WFV::hasMetadata(inst, WFV::WFV_METADATA_PACK_UNPACK)) continue;
+        if(WFV::hasPACXXMetadata(inst)) continue;
+
+        if (WFV::hasMetadata(inst, WFV::WFV_METADATA_RES_VECTOR))
         {
-            Instruction* inst = &*I;
-
-            if (WFV::hasMetadata(inst, WFV::WFV_METADATA_PACK_UNPACK)) continue;
-
-            if (WFV::hasMetadata(inst, WFV::WFV_METADATA_RES_VECTOR))
+            // RES_VECTOR / INDEX_CONSECUTIVE is allowed to be scalar.
+            if (!isa<ReturnInst>(inst) &&
+                !WFV::isVectorizedType(*inst->getType()) &&
+                !WFV::hasMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE))
             {
-                // RES_VECTOR / INDEX_CONSECUTIVE is allowed to be scalar.
-                if (!isa<ReturnInst>(inst) &&
-                    !WFV::isVectorizedType(*inst->getType()) &&
-                    !WFV::hasMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE))
-                {
-                    outs() << "ERROR: instruction is RES_VECTOR but has no "
-                            << "vectorized type:" << *inst << "\n";
+                outs() << "ERROR: instruction is RES_VECTOR but has no "
+                    << "vectorized type:" << *inst << "\n";
                     assert (false);
-                }
-            }
-            else
-            {
-                if (WFV::isVectorizedType(*inst->getType()))
-                {
-                    outs() << "ERROR: instruction is not RES_VECTOR but has "
-                            << "vectorized type:" << *inst << "\n";
-                    assert (false);
-                }
             }
         }
-    );
+        else
+        {
+            if (WFV::isVectorizedType(*inst->getType()))
+            {
+                outs() << "ERROR: instruction is not RES_VECTOR but has "
+                    << "vectorized type:" << *inst << "\n";
+                    assert (false);
+            }
+        }
+    }
     return true;
 }
 
@@ -243,24 +242,37 @@ FunctionVectorizer::visitLoadInst(LoadInst     &I)
 
     if(WFV::hasMetadata(&I, WFV::WFV_METADATA_OP_MASKED)) {
         if(mInfo->mVerbose) {
-            outs() << "generating maked load \n";
+            outs() << "generating masked load \n";
         }
         LoadInst *load = &I;
         Value* mask = mMaskAnalysis->getEntryMask(*load->getParent());
         Value *Ptr = load->getPointerOperand();
-        Type *DataType = cast<PointerType>(Ptr->getType())->getElementType();
+        PointerType *PtrTy = cast<PointerType>(Ptr->getType());
+        Type *DataType = PtrTy->getElementType();
         Value *PassThru = UndefValue::get(DataType);
-        Value *Ops[] = {load,
+        Value *Ops[] = {Ptr,
                         ConstantInt::get(Type::getInt32Ty(*mInfo->mContext), alignment),
                         mask,
                         PassThru};
-        Type *OverloadedTypes[] = {DataType};
+        Type *OverloadedTypes[] = {DataType, Ptr->getType()};
         Value *Fn = Intrinsic::getDeclaration(mInfo->mModule, Intrinsic::masked_load, OverloadedTypes);
 
         CallInst *CI = CallInst::Create(Fn, Ops, "masked_load", load);
-        load->replaceAllUsesWith(CI);
-        load->eraseFromParent();
+        WFV::setMetadata(CI, WFV::WFV_METADATA_RES_VECTOR);
 
+        //replace all uses of the load with the masked load
+        // needs to be done manually because llvm forbids replaces of different types
+        for(auto I = load->use_begin(), IE = load->use_end(); I != IE; ++I) {
+            Use &U = *I;
+            if (auto *C = dyn_cast<Constant>(U.getUser())) {
+                if (!isa<GlobalValue>(C)) {
+                    C->handleOperandChange(load, CI);
+                    continue;
+                }
+            }
+            U.set(CI);
+        }
+        load->eraseFromParent();
         CI->setOperand(0, pktPtrCast);
         return true;
     }
@@ -362,24 +374,38 @@ FunctionVectorizer::visitStoreInst(StoreInst   &I)
 
     if(WFV::hasMetadata(&I, WFV::WFV_METADATA_OP_MASKED)) {
         if(mInfo->mVerbose) {
-            outs() << "generating maked store\n";
+            outs() << "generating masked store\n";
         }
         StoreInst *store = &I;
         Value* mask = mMaskAnalysis->getEntryMask(*store->getParent());
         Value* value = store->getValueOperand();
         Value *Ptr = store->getPointerOperand();
+        PointerType *PtrTy = cast<PointerType>(Ptr->getType());
+        Type *DataTy = PtrTy->getElementType();
         Value *Ops[] = {value,
                         Ptr,
                         ConstantInt::get(Type::getInt32Ty(*mInfo->mContext), alignment),
                         mask};
-        Type *OverloadedTypes[] = {value->getType()};
+        Type *OverloadedTypes[] = {DataTy, PtrTy};
         Value *Fn = Intrinsic::getDeclaration(mInfo->mModule, Intrinsic::masked_store, OverloadedTypes);
 
-        CallInst *CI = CallInst::Create(Fn, Ops, "masked_load", store);
-        store->replaceAllUsesWith(CI);
+        CallInst *CI = CallInst::Create(Fn, Ops, "", store);
+
+        //replace all uses of the store with the masked load
+        // needs to be done manually because llvm forbids replaces of different types
+        for(auto I = store->use_begin(), IE = store->use_end(); I != IE; ++I) {
+            Use &U = *I;
+            if (auto *C = dyn_cast<Constant>(U.getUser())) {
+                if (!isa<GlobalValue>(C)) {
+                    C->handleOperandChange(store, CI);
+                    continue;
+                }
+            }
+            U.set(CI);
+        }
         store->eraseFromParent();
 
-        CI->setOperand(0, pktPtrCast);
+        CI->setOperand(1, pktPtrCast);
         return true;
     }
     else {

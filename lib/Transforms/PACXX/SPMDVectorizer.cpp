@@ -146,7 +146,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
     }
 
     return kernelsVectorized;
-
 }
 
 unsigned SPMDVectorizer::determineVectorWidth(Function *F, unsigned registerWidth) {
@@ -276,22 +275,28 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M, bool req
 
     CallInst* vecFunction = CallInst::Create(vecDummyCall, args, "", loopBody);
 
-    //modify use of load __x
     for (auto U : dummyFunction->users()) {
         if (CallInst* CI = dyn_cast<CallInst>(U)) {
-            if (ZExtInst* ZI = dyn_cast<ZExtInst>(CI->getArgOperand(0)))
-                if(LoadInst* LI = dyn_cast<LoadInst>(ZI->getOperand(0)))
-                    if (LI->getPointerOperand()->getName() == "__x") {
-                        LoadInst *copy = new LoadInst(LI->getPointerOperand(), "copied load", CI);
-                        ZExtInst *zext = new ZExtInst(copy, CI->getArgOperand(0)->getType(), "", CI);
-                        CI->setArgOperand(0, zext);
-                    }
+            CI->dump();
+            __verbose("num args ", CI->getNumArgOperands(), "\n");
+            for(Value *arg : CI->arg_operands()) {
+                if (ZExtInst *ZI = dyn_cast<ZExtInst>(arg))
+                    if (LoadInst *LI = dyn_cast<LoadInst>(ZI->getOperand(0)))
+                        if (LI->getPointerOperand()->getName() == "__x" ||
+                                LI->getPointerOperand()->getName() == "__y" ||
+                                LI->getPointerOperand()->getName() == "__z") {
+                            LoadInst *copy = new LoadInst(LI->getPointerOperand(), "copied load", CI);
+                            ZExtInst *zext = new ZExtInst(copy, arg->getType(), "", CI);
+                            CI->replaceUsesOfWith(arg, zext);
+                        }
+            }
         }
     }
 
     //move load of Params
-    for(auto I : instructionsToMove)
+    for(auto I : instructionsToMove) {
         I->moveBefore(vecFunction);
+    }
 
     BranchInst::Create(loopEnd, loopBody);
 

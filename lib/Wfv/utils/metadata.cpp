@@ -9,6 +9,7 @@
  * Copyright (C) 2012 Saarland University
  */
 
+#include <string>
 #include "wfv/utils/metadata.h"
 #include "wfv/wfvConfig.h"
 
@@ -17,10 +18,14 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/IR/Constants.h"
 
 #include "wfv/utils/stringUtils.h"
+#include "../../IR/LLVMContextImpl.h"
 
 namespace WFV {
+
+static unsigned id = 0;
 
 void
 setUpMetadata(Module* mod)
@@ -52,6 +57,8 @@ setUpMetadata(Module* mod)
     nullMDN = MDNode::get(mod->getContext(), nullptr);
 
     ctx = &mod->getContext();
+
+    mod->dump();
 
     assert (isMetadataSetUp());
 }
@@ -136,6 +143,20 @@ setMetadata(Instruction* inst, const char* const metaDataString)
         removeMetadata(inst, WFV_METADATA_INDEX_STRIDED);
         removeMetadata(inst, WFV_METADATA_INDEX_RANDOM);
     }
+    else if (strcmp(metaDataString, PACXX_ID_X) == 0 ||
+             strcmp(metaDataString, PACXX_ID_Y) == 0 ||
+             strcmp(metaDataString, PACXX_ID_Z) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_X) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_Y) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_Z) == 0) {
+
+        removeMetadata(inst, PACXX_ID_X);
+        removeMetadata(inst, PACXX_ID_Y);
+        removeMetadata(inst, PACXX_ID_Z);
+        removeMetadata(inst, PACXX_GLOBAL_ID_X);
+        removeMetadata(inst, PACXX_GLOBAL_ID_Y);
+        removeMetadata(inst, PACXX_GLOBAL_ID_Z);
+    }
     else
     {
         assert ((strcmp(metaDataString, WFV_METADATA_ARGUMENT_CAST) == 0 ||
@@ -147,6 +168,7 @@ setMetadata(Instruction* inst, const char* const metaDataString)
                 strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
                 "invalid metadata for instruction found!");
     }
@@ -194,6 +216,18 @@ hasWFVMetadata(const Instruction* inst)
     return false;
 }
 
+bool hasPACXXMetadata(const Value* value) {
+    if(!isa<Instruction>(value)) return false;
+
+    if(hasMetadata(value, WFV::PACXX_GLOBAL_ID_X)) return true;
+    if(hasMetadata(value, WFV::PACXX_GLOBAL_ID_Y)) return true;
+    if(hasMetadata(value, WFV::PACXX_GLOBAL_ID_Z)) return true;
+    if(hasMetadata(value, WFV::PACXX_ID_X)) return true;
+    if(hasMetadata(value, WFV::PACXX_ID_Y)) return true;
+    if(hasMetadata(value, WFV::PACXX_ID_Z)) return true;
+    return false;
+}
+
 bool
 hasMetadata(const Instruction* inst, const char* const metaDataString)
 {
@@ -207,6 +241,7 @@ hasMetadata(const Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_OP_VARYING) == 0 ||
              strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL) == 0 ||
              strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL_GUARDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
              strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
              strcmp(metaDataString, WFV_METADATA_RES_VECTOR) == 0 ||
              strcmp(metaDataString, WFV_METADATA_RES_SCALARS) == 0 ||
@@ -222,7 +257,13 @@ hasMetadata(const Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
-             strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
+             strcmp(metaDataString, WFV_METADATA_MASK) == 0 ||
+             strcmp(metaDataString, PACXX_ID_X) == 0 ||
+             strcmp(metaDataString, PACXX_ID_Y) == 0 ||
+             strcmp(metaDataString, PACXX_ID_Z) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_X) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_Y) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_Z) == 0) &&
             "invalid metadata for instruction found!");
 
     return inst->getMetadata(metaDataString);
@@ -241,6 +282,7 @@ removeMetadata(Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_OP_VARYING) == 0 ||
              strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL) == 0 ||
              strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL_GUARDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
              strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
              strcmp(metaDataString, WFV_METADATA_RES_VECTOR) == 0 ||
              strcmp(metaDataString, WFV_METADATA_RES_SCALARS) == 0 ||
@@ -256,7 +298,13 @@ removeMetadata(Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
-             strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
+             strcmp(metaDataString, WFV_METADATA_MASK) == 0 ||
+             strcmp(metaDataString, PACXX_ID_X) == 0 ||
+             strcmp(metaDataString, PACXX_ID_Y) == 0 ||
+             strcmp(metaDataString, PACXX_ID_Z) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_X) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_Y) == 0 ||
+             strcmp(metaDataString, PACXX_GLOBAL_ID_Z) == 0) &&
             "invalid metadata for instruction found!");
 
     inst->setMetadata(metaDataString, nullptr);
@@ -803,6 +851,7 @@ hasWFVMetadata(const Argument* arg)
 bool
 hasMetadata(const Argument* arg, const char* const metaDataString)
 {
+    arg->dump();
     assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
     assert (arg);
     assert ((strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
@@ -1719,8 +1768,9 @@ removeAllMetadata(Function* f)
 }
 
 Metadata *mapValueToMD(Value *value) {
-    Metadata* MD = ValueAsMetadata::get(value);
+    Metadata *MD = MDString::get(value->getContext(), std::to_string(id));
     MDValueMap[MD] = value;
+    id++;
     return MD;
 }
 

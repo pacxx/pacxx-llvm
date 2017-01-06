@@ -131,7 +131,7 @@ VectorizationAnalysis::VectorizationAnalysis(Function*                   scalarF
     assert ((!mDisableAllAnalyses ||
              (mDisableMemAccessAnalysis && mDisableControlFlowDivAnalysis)) &&
             "expecting all analyses to internally be disabled if 'disableAllAnalyses' is set!");
-    assert (scalarFn && !verifyFunction(*scalarFn) &&
+    assert (scalarFn &&
             "constructor has to be called with valid scalar function!");
     assert (simdFn && "constructor has to be called with valid simd function!");
     assert (vectorizationFactor % 4 == 0 && "vectorizationFactor must be multiple of 4!");
@@ -518,6 +518,10 @@ VectorizationAnalysis::analyzeNothing(Function* scalarFn, const bool uniformRetu
 
 //TODO refactor
 void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
+
+    if(mVerbose)
+        outs() << "analyze PACXX called \n";
+
     // iterate over all instructions
     for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
         Instruction *inst = &*II;
@@ -553,18 +557,21 @@ void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
                             ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
                             dimension = 0;
                             WFV::setMetadata(tid, WFV::PACXX_ID_X);
+                            outs() << "marking " << *tid << " as idx \n";
                             break;
                         case Intrinsic::nvvm_read_ptx_sreg_tid_y :
                             ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_y;
                             ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
                             dimension = 1;
                             WFV::setMetadata(tid, WFV::PACXX_ID_Y);
+                            outs() << "marking " << *tid << " as idy \n";
                             break;
                         case Intrinsic::nvvm_read_ptx_sreg_tid_z :
                             ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_z;
                             ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_z;
                             dimension = 2;
                             WFV::setMetadata(tid, WFV::PACXX_ID_Z);
+                            outs() << "marking " << *tid << " as idz \n";
                             break;
                         default:
                             continue;
@@ -638,7 +645,10 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
             }
         }
 
-        if(WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Y) || WFV::hasMetadata(inst, WFV::PACXX_ID_Y)) {
+        if(WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Y) ||
+                WFV::hasMetadata(inst, WFV::PACXX_ID_Y) ||
+                WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Z) ||
+                WFV::hasMetadata(inst, WFV::PACXX_ID_Z)) {
             markValueAs(inst, WFV::WFV_METADATA_OP_UNIFORM);
             markValueAs(inst, WFV::WFV_METADATA_RES_UNIFORM);
         }
@@ -3467,6 +3477,7 @@ VectorizationAnalysis::markNestedDivergentTopLevelLoops(Loop* loop)
 void
 VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
 {
+
     SmallPtrSet<Value*, 32> markedValues;
 
     // Add all instructions that were marked from outside.
@@ -3481,11 +3492,13 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
         Instruction *inst = &*II;
         if (WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_X)) {
             WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE);
+            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_TRUE);
             markedValues.insert(inst);
         }
         else if(WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Y) ||
                 WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Z)) {
             WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_SAME);
+            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_TRUE);
             markedValues.insert(inst);
         }
     }
@@ -4118,8 +4131,11 @@ VectorizationAnalysis::deriveIndexInfo(Instruction* inst,
             bool allSame = true;
             bool allConsecutive = true;
             bool allStrided = true;
+            inst->dump();
             for (unsigned i=0, e=iiVec.size(); i!=e; ++i)
             {
+
+                outs() << iiVec[i] << "\n";
                 allSame &= strcmp(iiVec[i], WFV::WFV_METADATA_INDEX_SAME) == 0;
                 allConsecutive &= strcmp(iiVec[i], WFV::WFV_METADATA_INDEX_CONSECUTIVE) == 0;
                 allStrided &= strcmp(iiVec[i], WFV::WFV_METADATA_INDEX_STRIDED) == 0;

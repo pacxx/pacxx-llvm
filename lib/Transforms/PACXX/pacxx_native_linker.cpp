@@ -58,6 +58,7 @@ namespace llvm {
         auto wrappedF =
                 Function::Create(FTy, GlobalValue::LinkageTypes::ExternalLinkage,
                                  std::string("__wrapped__") + F->getName().str(), &M);
+
         auto argIt = wrappedF->arg_begin();
         (argIt++)->setName("bidx");
         (argIt++)->setName("bidy");
@@ -70,6 +71,7 @@ namespace llvm {
         (argIt++)->setName("maxidy");
         args.push_back(&*argIt);
         (argIt++)->setName("maxidz");
+
         (argIt++)->setName("sm_size");
 
         (argIt++)->setName("args");
@@ -188,12 +190,12 @@ namespace llvm {
               if(seq_dummy)
                 CI = CallInst::Create(F,
                                       kernel_args,
-                                      "kernelCall",
+                                      "",
                                       CI);
               else
                 CI = CallInst::Create(M.getFunction("__vectorized__" + F->getName().str()),
                                       kernel_args,
-                                      "kernelCall",
+                                      "",
                                       CI);
               break;
             }
@@ -218,7 +220,7 @@ namespace llvm {
             if ((CI = dyn_cast<CallInst>(U))) {
               if (CI->getParent()->getParent() == wrappedF) {
                 remove_vec = CI;
-                CI = CallInst::Create(vec_kernel, kernel_args, "vecKernelCall", CI);
+                CI = CallInst::Create(vec_kernel, kernel_args, "", CI);
                 break;
               }
             }
@@ -290,7 +292,6 @@ namespace llvm {
           vec_F->eraseFromParent();
       }
 
-      M.dump();
       return true;
     }
 

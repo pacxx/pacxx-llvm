@@ -149,8 +149,8 @@ public:
     ConstantInt*         mConstInt32One;
     ConstantInt*         mConstInt32Two;
     ConstantInt*         mConstInt32Three;
-    Constant*            mConstBoolTrue;
-    Constant*            mConstBoolFalse;
+    ConstantInt*         mConstBoolTrue;
+    ConstantInt*         mConstBoolFalse;
     Constant*            mConstAlignmentSIMD;
 
     // Alignment information.

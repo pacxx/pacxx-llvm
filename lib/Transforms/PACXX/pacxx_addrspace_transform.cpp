@@ -85,13 +85,13 @@ namespace {
                     }
 
                     if(PtrToIntInst *ptrToInt = dyn_cast<PtrToIntInst>(AU)) {
-                       _deleteInstructions.push_back(ptrToInt);
                        for (auto PTIU : ptrToInt->users()) {
                             if (IntToPtrInst* intToPtr = dyn_cast<IntToPtrInst>(PTIU)) {
                                 intToPtr->replaceAllUsesWith(cast);
                                 _deleteInstructions.push_back(intToPtr);
                             }
                         }
+                        _deleteInstructions.push_back(ptrToInt);
                     }
                 }
             }

@@ -199,8 +199,8 @@ WFVInfo::initialize()
     mConstInt32One             = ConstantInt::get(*mContext, APInt(32,  "1", 10));
     mConstInt32Two             = ConstantInt::get(*mContext, APInt(32,  "2", 10));
     mConstInt32Three           = ConstantInt::get(*mContext, APInt(32,  "3", 10));
-    mConstBoolTrue             = Constant::getAllOnesValue(Type::getInt1Ty(*mContext));
-    mConstBoolFalse            = Constant::getNullValue(Type::getInt1Ty(*mContext));
+    mConstBoolTrue             = ConstantInt::get(*mContext, APInt(1, 1));
+    mConstBoolFalse            = ConstantInt::get(*mContext, APInt(1, 0));
 
     // Initialize "dynamic" stuff.
 
