@@ -4,37 +4,36 @@
 * Written by Michael Haidl <michael.haidl@uni-muenster.de>, 2010-2014
 */
 
-#include <vector>
-#include <cassert>
 #include <algorithm>
+#include <cassert>
+#include <vector>
 
 #define DEBUG_TYPE "pacxx_reflection"
 
-#include "llvm/Pass.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Function.h"
+#include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/Argument.h"
-#include "llvm/IR/Operator.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/IR/InstVisitor.h"
-#include "llvm/IR/InlineAsm.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
-#include "llvm/Transforms/PACXXTransforms.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetLowering.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/FileSystem.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/PACXXTransforms.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include "ModuleHelper.h"
 
@@ -71,13 +70,35 @@ bool PACXXReflectionCleaner::runOnModule(Module &M) {
   M.setDataLayout(HostMachine->createDataLayout().getStringRepresentation());
   cleanFromKerneles(M);
 
+  auto reflects = pacxx::getTagedFunctions(&M, "pacxx.reflection", "");
+  set<Function *> dead;
+  set<Instruction*> dI;
   for (auto &F : M.getFunctionList()) {
     F.setCallingConv(CallingConv::C);
-    
-    
+
     F.setAttributes({});
-    //F.removeFnAttr(Attribute::NoInline);
-    F.addFnAttr(Attribute::AlwaysInline); 
+    // F.removeFnAttr(Attribute::NoInline);
+    F.addFnAttr(Attribute::AlwaysInline);
+
+
+    if (std::find(reflects.begin(), reflects.end(), &F) == reflects.end()){
+      for (auto U : F.users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          dI.insert(CI);
+        }
+      }
+      F.replaceAllUsesWith(UndefValue::get(F.getType()));
+      dead.insert(&F);
+    }
+  }
+
+  for(auto i : dI){
+    i->replaceAllUsesWith(UndefValue::get(i->getType())); 
+    i->eraseFromParent(); 
+  }
+
+  for (auto F : dead) {
+    if (F) F->eraseFromParent();
   }
 
   return modified;
@@ -90,7 +111,6 @@ void PACXXReflectionCleaner::cleanFromKerneles(Module &M) {
     F->replaceAllUsesWith(UndefValue::get(F->getType()));
     F->eraseFromParent();
   }
-
 }
 
 char PACXXReflectionCleaner::ID = 0;
