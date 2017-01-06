@@ -114,6 +114,9 @@ bool SPMDVectorizer::runOnModule(Module& M) {
             requiresSequentialVersion = numThreads % vectorWidth != 0;
         }
 
+        //TODO REMOVE !!!!!
+        requiresSequentialVersion = false;
+
         __verbose("requires sequential version: ", requiresSequentialVersion);
 
 

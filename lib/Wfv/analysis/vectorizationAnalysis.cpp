@@ -557,21 +557,18 @@ void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
                             ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
                             dimension = 0;
                             WFV::setMetadata(tid, WFV::PACXX_ID_X);
-                            outs() << "marking " << *tid << " as idx \n";
                             break;
                         case Intrinsic::nvvm_read_ptx_sreg_tid_y :
                             ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_y;
                             ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
                             dimension = 1;
                             WFV::setMetadata(tid, WFV::PACXX_ID_Y);
-                            outs() << "marking " << *tid << " as idy \n";
                             break;
                         case Intrinsic::nvvm_read_ptx_sreg_tid_z :
                             ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_z;
                             ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_z;
                             dimension = 2;
                             WFV::setMetadata(tid, WFV::PACXX_ID_Z);
-                            outs() << "marking " << *tid << " as idz \n";
                             break;
                         default:
                             continue;
@@ -3492,13 +3489,13 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
         Instruction *inst = &*II;
         if (WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_X)) {
             WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE);
-            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_TRUE);
+            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_FALSE);
             markedValues.insert(inst);
         }
         else if(WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Y) ||
                 WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Z)) {
             WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_SAME);
-            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_TRUE);
+            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_FALSE);
             markedValues.insert(inst);
         }
     }
@@ -4131,11 +4128,8 @@ VectorizationAnalysis::deriveIndexInfo(Instruction* inst,
             bool allSame = true;
             bool allConsecutive = true;
             bool allStrided = true;
-            inst->dump();
             for (unsigned i=0, e=iiVec.size(); i!=e; ++i)
             {
-
-                outs() << iiVec[i] << "\n";
                 allSame &= strcmp(iiVec[i], WFV::WFV_METADATA_INDEX_SAME) == 0;
                 allConsecutive &= strcmp(iiVec[i], WFV::WFV_METADATA_INDEX_CONSECUTIVE) == 0;
                 allStrided &= strcmp(iiVec[i], WFV::WFV_METADATA_INDEX_STRIDED) == 0;

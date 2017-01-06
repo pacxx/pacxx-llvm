@@ -56,10 +56,6 @@ setUpMetadata(Module* mod)
 
     nullMDN = MDNode::get(mod->getContext(), nullptr);
 
-    ctx = &mod->getContext();
-
-    mod->dump();
-
     assert (isMetadataSetUp());
 }
 
@@ -851,7 +847,6 @@ hasWFVMetadata(const Argument* arg)
 bool
 hasMetadata(const Argument* arg, const char* const metaDataString)
 {
-    arg->dump();
     assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
     assert (arg);
     assert ((strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
