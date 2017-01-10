@@ -1,3 +1,5 @@
+// Created by lars
+
 #define PACXX_PASS_NAME "PACXXAddrSpaceTransformer"
 #include "Log.h"
 
@@ -113,5 +115,5 @@ namespace {
 }
 
 namespace llvm {
-    Pass *createPACXXAddrSpaceTransform() { return new PACXXAddrSpaceTransform(); }
+    Pass *createPACXXAddrSpaceTransformPass() { return new PACXXAddrSpaceTransform(); }
 }

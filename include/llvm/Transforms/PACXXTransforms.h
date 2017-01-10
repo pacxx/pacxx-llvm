@@ -22,12 +22,12 @@ Pass *createPACXXVerifier();
 Pass *createPACXXInlinerPass();
 Pass *createPACXXDeadCodeElimPass();
 
-//SPMD
-Pass *createPACXXNativeLinker();
-Pass *createPACXXAddrSpaceTransform();
-Pass *createPACXXIdRemover();
-Pass *createSPMDVectorizer();
-//Pass *createPACXXNativeBarrierPass();
+// native backend passes
+Pass *createPACXXAddrSpaceTransformPass();
+Pass *createPACXXIdRemoverPass();
+Pass *createSPMDVectorizerPass();
+Pass *createPACXXNativeBarrierPass();
+Pass *createPACXXNativeLinkerPass();
 }
 
 namespace pacxx {

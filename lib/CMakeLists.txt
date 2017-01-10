@@ -1,5 +1,9 @@
 # `Support' and `TableGen' libraries are added on the top-level CMakeLists.txt
 
+# useful to eliminate warnings
+#set_property(DIRECTORY Wfv APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall -Werror ")
+#set_property(DIRECTORY Transforms/PACXX APPEND_STRING PROPERTY COMPILE_FLAGS " -Wall -Werror ")
+
 add_subdirectory(IR)
 add_subdirectory(IRReader)
 add_subdirectory(CodeGen)

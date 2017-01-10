@@ -358,7 +358,7 @@ void initializeWriteBitcodePassPass(PassRegistry &);
 void initializeWriteThinLTOBitcodePass(PassRegistry &);
 void initializeXRayInstrumentationPass(PassRegistry &);
 
-//SPMD
+//native backend passes
 void initializePACXXAddrSpaceTransformPass(PassRegistry&);
 void initializeSPMDAnalysisPass(PassRegistry&);
 void initializeSPMDVectorizerPass(PassRegistry&);

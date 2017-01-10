@@ -228,12 +228,12 @@ namespace {
       X.add(nullptr, 0, llvm::AAMDNodes()); // for -print-alias-sets
       (void) llvm::AreStatisticsEnabled();
 
-      //SPMD
-      (void) llvm::createSPMDVectorizer();
-      //(void) llvm::createPACXXNativeBarrierPass();
-      (void) llvm::createPACXXIdRemover();
-      (void) llvm::createPACXXAddrSpaceTransform();
-      (void) llvm::createPACXXNativeLinker();
+      //native backend passes
+      (void) llvm::createPACXXAddrSpaceTransformPass();
+      (void) llvm::createPACXXIdRemoverPass();
+      (void) llvm::createSPMDVectorizerPass();
+      (void) llvm::createPACXXNativeBarrierPass();
+      (void) llvm::createPACXXNativeLinkerPass();
 
       (void) llvm::sys::RunningOnValgrind();
     }

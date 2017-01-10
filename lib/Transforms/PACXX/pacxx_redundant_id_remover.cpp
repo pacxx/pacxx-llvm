@@ -1,5 +1,6 @@
+// Created by lars
+
 #define PACXX_PASS_NAME "PACXXIdRemover"
-#define USE_STANDALONE 1
 #include "Log.h"
 
 #include "ModuleHelper.h"
@@ -111,5 +112,5 @@ char PACXXIdRemover::ID = 0;
 }
 
 namespace llvm {
-Pass *createPACXXIdRemover() { return new PACXXIdRemover(); }
+Pass *createPACXXIdRemoverPass() { return new PACXXIdRemover(); }
 }

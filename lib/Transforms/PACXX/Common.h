@@ -66,13 +66,13 @@ template <typename F, typename... Ts> auto apply(F &&f, std::tuple<Ts...> &t) {
 template <typename F, typename... Ts>
 void for_each_in_arg_pack(F &&f, Ts &&... t) {
   meta::for_each_in_tuple(std::forward<F>(f), std::forward_as_tuple(t...));
-};
+}
 
   template<typename F, typename... Ts>
   void for_first_in_arg_pack(F&& f, Ts&& ... t) {
     auto tpl = std::tie(t...);
     f(std::get<0>(tpl));
-  };
+  }
 
 // reads a environment variable
 std::string GetEnv(const std::string &var);

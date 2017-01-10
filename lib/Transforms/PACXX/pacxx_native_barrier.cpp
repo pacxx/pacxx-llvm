@@ -1,48 +1,25 @@
-// Created by lars on 28/12/16.
+// Created by lars
 
-#include "../kronos/Log.h"
+#include "Log.h"
+
 #include "llvm/Pass.h"
 #include "llvm/LinkAllPasses.h"
-#include "llvm/PassSupport.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/Type.h"
 #include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/Value.h"
-#include "llvm/IR/Operator.h"
-#include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Vectorize.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/Support/Host.h"
-#include "llvm/Transforms/PACXXTransforms.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/PassAnalysisSupport.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/SPMD/SPMDAnalysis.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SCCIterator.h"
-#include "../pacxx/ModuleHelper.h"
-#include "llvm/Transforms/PACXXTransforms.h"
-
-extern int kronos::_kronos_debug_level;
+#include "../../IR/LLVMContextImpl.h"
 
 using namespace llvm;
 using namespace std;
@@ -116,9 +93,58 @@ namespace {
             }
         };
 
+        struct Alloca3 {
+
+            Alloca3(AllocaInst *x, AllocaInst *y, AllocaInst *z) : _x(x), _y(y), _z(z) {}
+
+            ~Alloca3() {}
+
+            AllocaInst *_x;
+            AllocaInst *_y;
+            AllocaInst *_z;
+
+        };
+
+        struct CaseInfo {
+
+            CaseInfo(unsigned id,
+                     Function *foo,
+                     BasicBlock *switchBB,
+                     BasicBlock *breakBB,
+                     AllocaInst *switchParam,
+                     Alloca3 &max,
+                     pair<AllocaInst*, AllocaInst*> loadStruct,
+                     pair<AllocaInst*, AllocaInst*> nextStruct,
+                     pair<StructType*, StructType*> loadType,
+                     pair<Function*, Function*> calledFunctions)
+                    : _id(id),
+                      _foo(foo),
+                      _switchBB(switchBB),
+                      _breakBB(breakBB),
+                      _switchParam(switchParam),
+                      _max3(max),
+                      _loadStruct(loadStruct),
+                      _nextStruct(nextStruct),
+                      _loadType(loadType),
+                      _calledFunctions(calledFunctions) {}
+
+            ~CaseInfo() {}
+
+            const unsigned _id;
+            Function *_foo;
+            BasicBlock *_switchBB;
+            BasicBlock *_breakBB;
+            AllocaInst *_switchParam;
+            const Alloca3 _max3;
+            const pair<AllocaInst*, AllocaInst *> _loadStruct;
+            const pair<AllocaInst *, AllocaInst *> _nextStruct;
+            const pair<StructType*, StructType*> _loadType;
+            const pair<Function *, Function *> _calledFunctions;
+        };
+
         unsigned getVectorWidth(Function *kernel);
 
-        bool runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> infoVec, bool vecVersion = false);
+        bool runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> &infoVec, bool vecVersion = false);
 
         vector<Instruction *> findBarriers(Function *kernel);
 
@@ -148,42 +174,36 @@ namespace {
 
         void prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc);
 
-        void createSpecialFooWrapper(Module &M, Function *foo, Function *kernel,
+        void createSpecialFooWrapper(Module &M, Function *foo,
                                      SetVector<BarrierInfo *> barrierInfo,
                                      SetVector<BarrierInfo *> vecBarrierInfo);
 
-        AllocaInst *createMemForLivingValues(DataLayout &dl, BarrierInfo *info, Value *numThreads, BasicBlock *BB);
+        AllocaInst *createMemForLivingValues(const DataLayout &dl, BarrierInfo *info, Value *numThreads, BasicBlock *BB);
 
-        BasicBlock *createCase(LLVMContext &ctx, DataLayout &dl, Function *newFoo, BasicBlock *switchBB,
-                               AllocaInst *switchParam, BasicBlock *breakBB, AllocaInst *max_z, AllocaInst *max_y,
-                               AllocaInst *max_x, BarrierInfo *info, AllocaInst *livingMem, BarrierInfo *vecInfo,
-                               AllocaInst *vecLivingMem);
+        BasicBlock *createCase(Module &M, const CaseInfo &info, bool vectorized);
 
-        BasicBlock *createCase(LLVMContext &ctx, DataLayout &dl,  Function *newFoo, BasicBlock *switchBB,
-                                           BasicBlock *breakBB, AllocaInst *maxZ, AllocaInst *maxY, AllocaInst *maxX);
+        pair<BasicBlock *, BasicBlock*> createXLoop(Module &M,
+                                                    const CaseInfo &info,
+                                                    Alloca3 id,
+                                                    BasicBlock *afterBB,
+                                                    BasicBlock *falseBB,
+                                                    bool vectorized);
+        void fillLoopXBody(Module &M,
+                           const CaseInfo &info,
+                           BasicBlock *loopBody,
+                           BasicBlock *nextBB,
+                           Alloca3 &id,
+                           bool vectorized);
 
-        pair<BasicBlock *, BasicBlock> createXLoop(Module &M, BasicBlock *afterBB, BasicBlock *falseBB,
-                                                   AllocaInst *alloc_x, AllocaInst *max_x, AllocaInst *alloc_y,
-                                                   AllocaInst *alloc_z, AllocaInst *switchParam, BarrierInfo *info,
-                                                   AllocaInst *livingMem, BarrierInfo *vecInfo, AllocaInst *vecLivingMem);
-
-        BasicBlock *createXLoop(Module &M, BasicBlock *afterBB, BasicBlock * falseBB,
-                                            AllocaInst *alloc_x, AllocaInst max_x, bool vectorized);
-
-        void fillLoopXBody(Module &M, BasicBlock *loopBody, BasicBlock *nextBB, LoadInst *__x, AllocaInst*__y,
-                           AllocaInst*__z, LoadInst *max_x, LoadInst *max_y, LoadInst *max_z, AllocaInst *switchParam,
-                           BarrierInfo *info, AllocaInst *livingValuesMem, Type *nexLivingValuesType,
-                           AllocaInst *nextLivingValuesMem, bool vectorVersion);
-
-
-        LoadInst *fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
-                                         BasicBlock *trueBB, BasicBlock *falseBB);
+        void fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
+                                 BasicBlock *trueBB, BasicBlock *falseBB);
 
         void fillLoopEnd(BasicBlock *loopEnd, BasicBlock *branchBB, AllocaInst *loopValue, Type *int32_type,
                          unsigned incVal);
 
     private:
         ValueToValueMapTy _origFnValueMap;
+        vector<CallInst *> _inlineCalls;
         unsigned _vectorWidth;
     };
 }
@@ -193,8 +213,6 @@ void PACXXNativeBarrier::releaseMemory() {}
 void PACXXNativeBarrier::getAnalysisUsage(AnalysisUsage &AU) const {}
 
 bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
-
-    kronos::_kronos_debug_level = 2;
 
     auto kernels = getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
@@ -207,26 +225,31 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
         SetVector<BarrierInfo *> barrierInfo;
         SetVector<BarrierInfo *> vecBarrierInfo;
 
-        modified |= runOnFunction(M, kernel, barrierInfo);
+        bool modified_kernel = runOnFunction(M, kernel, barrierInfo);
 
-        //if we have a vectorized version of the kernel also eliminate barriers
-        auto vec_kernel = M.getFunction("__vectorized__" + kernel->getName().str());
+        if(modified_kernel) {
+            //if we have a vectorized version of the kernel also eliminate barriers
+            auto vec_kernel = M.getFunction("__vectorized__" + kernel->getName().str());
 
-        if (vec_kernel) {
-            _vectorWidth = getVectorWidth(vec_kernel);
-            runOnFunction(M, vec_kernel, vecBarrierInfo, true);
+            if (vec_kernel) {
+                _vectorWidth = getVectorWidth(vec_kernel);
+                _origFnValueMap.clear();
+                runOnFunction(M, vec_kernel, vecBarrierInfo, true);
+            }
+
+            createSpecialFooWrapper(M, foo, barrierInfo, vecBarrierInfo);
+
+            //now we can delete the original function and its vectorized version
+            kernel->dropAllReferences();
+            kernel->eraseFromParent();
+
+            if (vec_kernel) {
+                vec_kernel->dropAllReferences();
+                vec_kernel->eraseFromParent();
+            }
         }
 
-        createSpecialFooWrapper(foo, barrierInfo[0]->_func, barrierInfo, vecBarrierInfo);
-
-        //now we can delete the original function and its vectorized version
-        kernel->dropAllReferences();
-        kernel->eraseFromParent();
-
-        if(vec_kernel) {
-           vec_kernel->dropAllReferences();
-           vec_kernel->eraseFromParent();
-        }
+        modified |= modified_kernel;
     }
 
     return modified;
@@ -237,7 +260,8 @@ unsigned PACXXNativeBarrier::getVectorWidth(Function *kernel) {
     return numThreads;
 }
 
-bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, bool vecVersion, SetVector<BarrierInfo *> &infoVec) {
+bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> &infoVec,
+                                       bool vecVersion) {
 
     LLVMContext &ctx = M.getContext();
 
@@ -295,7 +319,7 @@ bool PACXXNativeBarrier::isaBarrier(const Instruction *inst) {
         auto called = CI->getCalledFunction();
         if (called && called->isIntrinsic()) {
             auto intrin_id = called->getIntrinsicID();
-            if (intrin_id == Intrinsic::cuda_syncthreads)
+            if (intrin_id == Intrinsic::nvvm_barrier0)
                 return true;
         }
     }
@@ -363,10 +387,13 @@ SetVector<const BasicBlock *> PACXXNativeBarrier::getPartsOfBarrier(Instruction 
 
 void PACXXNativeBarrier::recursivePartFinding(BasicBlock *block, SetVector<const BasicBlock *> &parts) {
     for (auto I = succ_begin(block), IE = succ_end(block); I != IE; ++I) {
-        BasicBlock* B = *I;
-        parts.insert(B);
-        if(!hasBarrier(B))
-            recursivePartFinding(B, parts);
+        BasicBlock *B = *I;
+        //if we already inserted this block ignore it
+        if(parts.count(B) == 0) {
+            parts.insert(B);
+            if (!hasBarrier(B))
+                recursivePartFinding(B, parts);
+        }
     }
 }
 
@@ -531,36 +558,51 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info) {
 void PACXXNativeBarrier::prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc) {
     __verbose("preparing function for linker \n");
 
-    LLVMContext &ctx = M.getContext();
+    LLVMContext &ctx = oldFunc->getContext();
 
     // mark first function as kernel and mark use of a barrier
     newFunc->addFnAttr("barrier");
 
     // replace old kernel in metadata with new one
-    oldFunc->replaceAllUsesWith(newFunc);
+    //this work around is needed, replaceAllUsesWith fails cause of different types
+    NamedMDNode *MD = M.getNamedMetadata("nvvm.annotations");
+
+    Metadata *MDVals[] = {ConstantAsMetadata::get(newFunc), MDString::get(ctx, "kernel"),
+                          ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(ctx), 1))};
+
+    MD->setOperand(0, MDNode::get(ctx, MDVals));
+
+
+    while (!oldFunc->use_empty()) {
+        auto &U = *oldFunc->use_begin();
+        U.set(newFunc);
+    }
 
     __verbose("finished preparing \n");
 }
 
-//TODO fix param errors and then test for other problems
-void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Function *kernel,
+void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
                                                  SetVector<BarrierInfo *> barrierInfo,
                                                  SetVector<BarrierInfo *> vecBarrierInfo) {
 
     __verbose("Creating special foo wrapper \n");
 
     LLVMContext &ctx = M.getContext();
-    DataLayout &dl = M.getDataLayout();
+    const DataLayout &dl = M.getDataLayout();
 
     Type *int32_type = Type::getInt32Ty(ctx);
 
-    SmallVector<BasicBlock *, 8> caseBlocks;
-    SmallVector<AllocaInst*, 8> livingValuesMem;
-    SmallVector<AllocaInst*, 8> vecLivingValuesMem;
+    SmallVector<pair<AllocaInst *, AllocaInst *>, 8> livingValuesMem;
+
+    bool vectorized = vecBarrierInfo.size() == 0 ? false : true;
+
+    if(vectorized)
+        assert( barrierInfo.size() == vecBarrierInfo.size() &&
+                        "number of infos for vectorized version and sequential version expected to be equal");
 
     // special foo wrapper
     Function *newFoo = Function::Create(foo->getFunctionType(), Function::ExternalLinkage,
-                                        "__barrier__foo__" + kernel->getName().str() , &M);
+                                        "__barrier__foo__" + barrierInfo[0]->_func->getName().str() , &M);
 
     BasicBlock *entry = BasicBlock::Create(ctx, "entry", newFoo);
     BasicBlock *allocBB = BasicBlock::Create(ctx, "allocBB", newFoo);
@@ -570,65 +612,90 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Funct
 
     // mem for foo params
     auto argIt = newFoo->arg_begin();
-    AllocaInst *allocMaxx = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
+    AllocaInst *allocMax_x = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
                                            "", entry);
-    new StoreInst(argIt, alloc, entry);
+    new StoreInst(&*argIt, allocMax_x, entry);
     (argIt++)->setName("__maxx");
-    AllocaInst *allocMaxy = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
+
+    AllocaInst *allocMax_y = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
                                            "", entry);
-    new StoreInst(argIt, alloc, entry);
+    new StoreInst(&*argIt, allocMax_y, entry);
     (argIt++)->setName("__maxy");
-    AllocaInst *allocMaxz = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
+
+    AllocaInst *allocMax_z = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
                                            "", entry);
-    new StoreInst(argIt, alloc, entry);
+    new StoreInst(&*argIt, allocMax_z, entry);
     (argIt++)->setName("__maxz");
+
+    Alloca3 alloc_max = Alloca3(allocMax_x, allocMax_y, allocMax_z);
 
     BranchInst::Create(allocBB, entry);
 
     AllocaInst *allocSwitchParam = new AllocaInst(int32_type, nullptr,
-                                                  dl.getPrefTypeAlignment(int32_type), "", switchBB);
-    new StoreInst(ConstantInt::get(int32_type, 0), allocSwitchParam, switchBB);
+                                                  dl.getPrefTypeAlignment(int32_type), "", allocBB);
+    new StoreInst(ConstantInt::get(int32_type, 0), allocSwitchParam, allocBB);
 
     // calc max threads
-    LoadInst *loadMaxx = new LoadInst(allocMaxx, "loadMaxx", allocBB);
-    LoadInst *loadMaxy = new LoadInst(allocMaxy, "loadMaxy", allocBB);
-    LoadInst *loadMaxz = new LoadInst(allocMaxz, "loadMaxz", allocBB);
+    LoadInst *loadMaxx = new LoadInst(allocMax_x, "loadMaxx", allocBB);
+    LoadInst *loadMaxy = new LoadInst(allocMax_y, "loadMaxy", allocBB);
+    LoadInst *loadMaxz = new LoadInst(allocMax_z, "loadMaxz", allocBB);
     BinaryOperator *mulXY = BinaryOperator::CreateMul(loadMaxx, loadMaxy, "", allocBB);
     BinaryOperator *numThreads = BinaryOperator::CreateMul(mulXY, loadMaxz, "numThreads", allocBB);
 
+    // create Memory for living values
+    for(unsigned i = 0; i < barrierInfo.size(); ++i) {
+        AllocaInst *mem = createMemForLivingValues(dl, barrierInfo[i], numThreads, allocBB);
+        AllocaInst *mem_vec = nullptr;
+        if(vectorized)
+            mem_vec =  createMemForLivingValues(dl, vecBarrierInfo[i], numThreads, allocBB);
+        livingValuesMem.push_back(make_pair(mem, mem_vec));
+    }
+
+    BranchInst::Create(switchBB, allocBB);
+
     //create switch
     LoadInst *loadSwitchParam = new LoadInst(allocSwitchParam, "loadSwitchParam", switchBB);
-    SwitchInst *switchInst = SwitchInst::Create(loadSwitchParam, lastBB, barrierInfo.size()+1, switchBB);
+    SwitchInst *switchInst = SwitchInst::Create(loadSwitchParam, lastBB, barrierInfo.size(), switchBB);
 
-    for(info : vecBarrierInfo)
-        vecLivingValuesMem.push_back(createMemForLivingValues(dl, info, numThreads, allocBB));
 
-    for(info : barrierInfo)
-        livingValuesMem.push_back(createMemForLivingValues(dl, info, numThreads, allocBB));
-
+    //create Cases
     for(unsigned i = 0; i < barrierInfo.size(); ++i) {
-        caseBlocks.push_back(createCase(ctx, dl, newFoo, switchBB, allocSwitchParam, breakBB, allocMaxz, allocMaxy, allocMaxx,
-                                        barrierInfo[i], livingValuesMem[i], vecLivingValuesMem[i], vecBarrierInfo[i]));
-    }
 
-    // add cases to switch
-    unsigned i = 0;
-    for(auto block : caseBlocks) {
-       switchInst->addCase(ConstantInt::get(int32_type, i), block);
-       i++;
-    }
+        // handle last case where we have no next mem
+        pair<AllocaInst*, AllocaInst*> nextMem;
+        if(i != barrierInfo.size() -1)
+            nextMem = livingValuesMem[i+1];
+        else
+            nextMem = make_pair(nullptr, nullptr);
 
-    // add finish case
-    switchInst->addCase(ConstantInt::getSigned(int32_type, -1), lastBB);
+        pair<Function *, Function *> calledFunctions = make_pair(barrierInfo[i]->_func,
+                                                                 vectorized ? vecBarrierInfo[i]->_func : nullptr);
+        pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
+                                                  vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
+
+        const CaseInfo info = CaseInfo(i, newFoo, switchBB, breakBB, allocSwitchParam, alloc_max,
+                                 livingValuesMem[i], nextMem, loadTypes, calledFunctions);
+        BasicBlock *caseBlock = createCase(M, info, vectorized);
+
+        //add case to switch
+        switchInst->addCase(cast<ConstantInt>(ConstantInt::get(int32_type, i)), caseBlock);
+    }
 
     //break from switch
-    BranchInst::Create(switchBB);
+    BranchInst::Create(switchBB, breakBB);
 
     // return from foo
     ReturnInst::Create(ctx, nullptr, lastBB);
+
+    //now inline all calls and remove the no longer required functions
+    for(auto call : _inlineCalls) {
+        InlineFunctionInfo IFI;
+        InlineFunction(call, IFI);
+        call->getCalledFunction()->eraseFromParent();
+    }
 }
 
-AllocaInst *PACXXNativeBarrier::createMemForLivingValues(DataLayout &dl, BarrierInfo *info, Value *numThreads,
+AllocaInst *PACXXNativeBarrier::createMemForLivingValues(const DataLayout &dl, BarrierInfo *info, Value *numThreads,
                                                          BasicBlock *BB) {
 
     if(info->_id == 0)
@@ -636,25 +703,23 @@ AllocaInst *PACXXNativeBarrier::createMemForLivingValues(DataLayout &dl, Barrier
 
     Type *type = info->_livingValuesType;
 
-    return new AllocaInst(type, numThreads, "", dl.getPrefTypeAlignment(type), BB);
+    return new AllocaInst(type, numThreads, dl.getPrefTypeAlignment(type), "", BB);
 }
 
-BasicBlock *PACXXNativeBarrier::createCase(LLVMContext &ctx, DataLayout &dl, Function *newFoo,
-                                           BasicBlock *switchBB,
-                                           AllocaInst *switchParam,
-                                           BasicBlock *breakBB,
-                                           AllocaInst *max_z,
-                                           AllocaInst *max_y,
-                                           AllocaInst *max_x,
-                                           BarrierInfo *info,
-                                           AllocaInst *livingMem,
-                                           BarrierInfo *vecInfo,
-                                           AllocaInst *vecLivingMem) {
+BasicBlock *PACXXNativeBarrier::createCase(Module &M,
+                                           const CaseInfo &info,
+                                           bool vectorized) {
+
+    LLVMContext &ctx = M.getContext();
+
+    const DataLayout dl = M.getDataLayout();
 
     Type *int32_type = Type::getInt32Ty(ctx);
 
+    Function *newFoo = info._foo;
+
     BasicBlock *caseEntry = BasicBlock::Create(ctx, "entryCase", newFoo);
-    caseEntry->moveAfter(switchBB);
+    //caseEntry->moveAfter(info._switchBB);
 
     // alloc z
     AllocaInst *alloc_z = new AllocaInst(int32_type, nullptr,
@@ -664,6 +729,8 @@ BasicBlock *PACXXNativeBarrier::createCase(LLVMContext &ctx, DataLayout &dl, Fun
     // blocks of z loop
     BasicBlock *loopHeader_z = BasicBlock::Create(ctx, "LoopHeader_Z", newFoo);
     loopHeader_z->moveAfter(caseEntry);
+
+    BranchInst::Create(loopHeader_z, caseEntry);
 
     BasicBlock *end_z = BasicBlock::Create(ctx, "End_Z", newFoo);
 
@@ -683,24 +750,15 @@ BasicBlock *PACXXNativeBarrier::createCase(LLVMContext &ctx, DataLayout &dl, Fun
                                                   dl.getPrefTypeAlignment(int32_type), "__x", loopHeader_y);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_x, loopHeader_y);
 
+    Alloca3 id = Alloca3(alloc_x, alloc_y, alloc_z);
+
     // create the x loop
-    auto p = createXLoop(M,
-                         loopHeader_y,
-                         end_y,
-                         alloc_x,
-                         max_x,
-                         alloc_y,
-                         alloc_z,
-                         switchParam,
-                         info,
-                         livingMem,
-                         vecInfo,
-                         vecLivingMem);
+    auto p = createXLoop(M, info, id, loopHeader_y, end_y, vectorized);
 
     // fill loop header blocks
-    LoadInst *load_z = fillLoopHeader(loopHeader_z, alloc_z, max_z, loopHeader_y, breakBB);
+    fillLoopHeader(loopHeader_z, alloc_z, info._max3._z, loopHeader_y, info._breakBB);
 
-    LoadInst *load_y = fillLoopHeader(loopHeader_y, alloc_y, max_y, p.first, exit_z);
+    fillLoopHeader(loopHeader_y, alloc_y, info._max3._y, p.first, end_z);
 
     //move end of y loop
     end_y->moveAfter(p.second);
@@ -712,20 +770,16 @@ BasicBlock *PACXXNativeBarrier::createCase(LLVMContext &ctx, DataLayout &dl, Fun
     fillLoopEnd(end_z, loopHeader_z, alloc_z, int32_type, 1);
 
     fillLoopEnd(end_y, loopHeader_y, alloc_y, int32_type, 1);
+
+    return caseEntry;
 }
 
-pair<BasicBlock *, BasicBlock> PACXXNativeBarrier::createXLoop(Module &M,
+pair<BasicBlock *, BasicBlock*> PACXXNativeBarrier::createXLoop(Module &M,
+                                                               const CaseInfo &info,
+                                                               Alloca3 id,
                                                                BasicBlock *afterBB,
                                                                BasicBlock *falseBB,
-                                                               AllocaInst *alloc_x,
-                                                               AllocaInst *max_x,
-                                                               AllocaInst *alloc_y,
-                                                               AllocaInst *alloc_z,
-                                                               AllocaInst *switchParam,
-                                                               BarrierInfo *info,
-                                                               AllocaInst *livingMem,
-                                                               BarrierInfo *vecInfo,
-                                                               AllocaInst *vecLivingMem) {
+                                                               bool vectorized) {
 
     __verbose("Creating the x-loop \n");
 
@@ -733,12 +787,17 @@ pair<BasicBlock *, BasicBlock> PACXXNativeBarrier::createXLoop(Module &M,
 
     Type *int32_type = Type::getInt32Ty(ctx);
 
+    Function *newFoo = info._foo;
+
     //loop header of x
     BasicBlock *loopHeader_x = BasicBlock::Create(ctx, "LoopHeader_X", newFoo);
 
     BasicBlock *firstBB = loopHeader_x;
 
-    if(vecInfo) {
+    if(vectorized) {
+
+        __verbose("Creating vectorized part of the case \n");
+
         //loop header of vectorized x
         BasicBlock *loopHeader_vecx = BasicBlock::Create(ctx, "LoopHeader_VecX", newFoo);
         loopHeader_vecx->moveAfter(afterBB);
@@ -752,35 +811,30 @@ pair<BasicBlock *, BasicBlock> PACXXNativeBarrier::createXLoop(Module &M,
         end_vecx->moveAfter(body_vecx);
 
         // loop header of vec x
-        LoadInst *load = new LoadInst(alloc_x, "load", loopHeader_vecx);
+        LoadInst *load = new LoadInst(id._x, "load", loopHeader_vecx);
 
-        LoadInst *loadMax = new LoadInst(max_x, "loadMax", loopHeader_vecx);
+        LoadInst *loadMax = new LoadInst(info._max3._x, "loadMax", loopHeader_vecx);
 
         BinaryOperator *add = BinaryOperator::CreateAdd(load, ConstantInt::get(int32_type, _vectorWidth),
                                                         "addSIMD", loopHeader_vecx);
 
-        ICmpInst *cmp = new ICmpInst(loopHeader_vecx, ICmpInst::ICMP_SLT, add, loadMax, "cmp");
+        ICmpInst *cmp = new ICmpInst(*loopHeader_vecx, ICmpInst::ICMP_SLT, add, loadMax, "cmp");
         BranchInst::Create(body_vecx, loopHeader_x, cmp, loopHeader_vecx);
 
         fillLoopXBody(M,
+                      info,
                       body_vecx,
                       end_vecx,
-                      load,
-                      alloc_y,
-                      alloc_z,
-                      max_x,
-                      max_y,
-                      max_z,
-                      switchParam,
-                      vecInfo,
-                      vecLivingMem,
+                      id,
                       true);
 
-        fillLoopEnd(end_vecx, loopHeader_vecx, alloc_x, int32_type, _vectorWidth);
+        fillLoopEnd(end_vecx, loopHeader_vecx, id._x, int32_type, _vectorWidth);
 
         afterBB = end_vecx;
         firstBB = loopHeader_vecx;
     }
+
+    __verbose("Creating sequential part of the case \n");
 
     loopHeader_x->moveAfter(afterBB);
 
@@ -792,12 +846,12 @@ pair<BasicBlock *, BasicBlock> PACXXNativeBarrier::createXLoop(Module &M,
     BasicBlock *end_x = BasicBlock::Create(ctx, "End_X", newFoo);
     end_x->moveAfter(body_x);
 
-    LoadInst *load = fillLoopHeader(loopHeader_x, alloc_x, max_x, body_x, falseBB);
+    fillLoopHeader(loopHeader_x, id._x, info._max3._x, body_x, falseBB);
 
     //fill body of x
-    fillLoopXBody(M, body_x, end_x, load, alloc_y, alloc_z, switchParam, info, livingMem);
+    fillLoopXBody(M, info, body_x, end_x, id, false);
 
-    fillLoopEnd(end_x, loopHeader_x, alloc_x, int32_type, 1);
+    fillLoopEnd(end_x, loopHeader_x, id._x, int32_type, 1);
 
     return pair<BasicBlock *, BasicBlock *>(firstBB, end_x);
 
@@ -805,98 +859,116 @@ pair<BasicBlock *, BasicBlock> PACXXNativeBarrier::createXLoop(Module &M,
 }
 
 void PACXXNativeBarrier::fillLoopXBody(Module &M,
+                                       const CaseInfo &info,
                                        BasicBlock *loopBody,
                                        BasicBlock *nextBB,
-                                       LoadInst *__x,
-                                       AllocaInst*__y,
-                                       AllocaInst*__z,
-                                       LoadInst *max_x,
-                                       LoadInst *max_y,
-                                       LoadInst *max_z,
-                                       AllocaInst *switchParam,
-                                       BarrierInfo *info,
-                                       AllocaInst *livingValuesMem,
-                                       Type *nexLivingValuesType,
-                                       AllocaInst *nextLivingValuesMem,
-                                       bool vectorVersion) {
+                                       Alloca3 &id,
+                                       bool vectorized) {
 
     __verbose("Filling body of the x-loop \n");
 
-    if(info->_id == 0) {
-        Function *dummy = nullptr;
-        if(vectorVersion)
-            dummy = M .getFunction("__vectorized__dummy_kernel");
-        else
-            dummy = M.getFunction("__dummy_kernel");
-        CallInst::Create(dummy, "", loopBody);
+    LLVMContext &ctx = M.getContext();
+
+    SmallVector<Value *, 8> args;
+
+    LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
+    CastInst *zext_x = ZExtInst::CreateZExtOrBitCast(load_x, Type::getInt64Ty(ctx), "", loopBody);
+    LoadInst *load_y = new LoadInst(id._y, "__y", loopBody);
+    CastInst *zext_y = ZExtInst::CreateZExtOrBitCast(load_y, Type::getInt64Ty(ctx), "", loopBody);
+    LoadInst *load_z = new LoadInst(id._z, "__z", loopBody);
+    CastInst *zext_z = ZExtInst::CreateZExtOrBitCast(load_z, Type::getInt64Ty(ctx), "", loopBody);
+
+    LoadInst *load_max_x = new LoadInst(info._max3._x, "maxx", loopBody);
+    LoadInst *load_max_y = new LoadInst(info._max3._y, "maxy", loopBody);
+
+    if(info._id == 0) {
+        args.push_back(zext_x);
+        args.push_back(zext_y);
+        args.push_back(zext_z);
+
+        Function *calledFunc = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
+
+        //replace return with a store, because we inline dummy later and so the return is void
+        for(auto I = calledFunc->begin(), IE = calledFunc->end(); I != IE; ++I) {
+            if (ReturnInst *RI = dyn_cast<ReturnInst>(I->getTerminator())) {
+                new StoreInst(RI->getReturnValue(), info._switchParam, loopBody);
+            }
+        }
+
+        Function *dummy = vectorized ? M.getFunction("__vectorized__dummy_kernel") : M.getFunction("__dummy_kernel");
+
+        CallInst::Create(dummy, args, "", loopBody);
+        BranchInst::Create(nextBB, loopBody);
+        __verbose("created x-loop body for first case \n");
     }
     else {
-
-        SmallVector<Value *, 8> args;
-
-        LoadInst *load_y = new LoadInst(__y, "__y", loopBody);
-        LoadInst *load_z = new LoadInst(__z, "__x", loopBody);
 
         // calc local id
         // blockIdx.x
         // + blockIdx.y * gridDim.x
         // + gridDim.x * gridDim.y * blockIdx.z;
-        BinaryOperator *IdxMulMaxx = BinaryOperator::CreateMul(__x, max_x, loopBody);
-        BinaryOperator *MaxxMulMaxy = BinaryOperator::CreateMul(max_x, max_y, loopBody);
-        BinaryOperator *mul = BinaryOperator::Create(MaxxMulMaxy, __z, loopBody);
-        BinaryOperator *add = BinaryOperator::CreateAdd(IdxMulMaxx, mul, loopBody);
-        BinaryOperator *blockId = BinaryOperator::CreateAdd(__x, add, loopBody);
+        BinaryOperator *mul_y_maxx = BinaryOperator::CreateMul(load_y, load_max_x, "", loopBody);
+        BinaryOperator *mul_maxx_maxy = BinaryOperator::CreateMul(load_max_x, load_max_y, "", loopBody);
+        BinaryOperator *mul_mulmaxxmaxy_z = BinaryOperator::CreateMul(mul_maxx_maxy, load_z, "", loopBody);
+        BinaryOperator *add = BinaryOperator::CreateAdd(mul_y_maxx, mul_mulmaxxmaxy_z, "", loopBody);
+        BinaryOperator *blockId = BinaryOperator::CreateAdd(load_x, add, "", loopBody);
 
-        Type *type = info->_livingValuesType;
-        GetElementPtrInst *array_gep = GetElementPtrInst::Create(type, livingValuesMem, blockId, "", loopBody);
-        LoadInst *load_living = new LoadInst(array_gep, "livingValues", loopBody);
+        StructType *type = vectorized ? info._loadType.second : info._loadType.first;
+        AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
 
-        for(auto value : info->_livingValues) {
+        __verbose("Setting living values args \n");
+        for(unsigned i = 0; i < type->getStructNumElements(); ++i) {
             SmallVector<Value*, 8> idx;
-            idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
-            idx.push_back(ConstantInt::get(ctx, APInt(32, i++)));
-            GetElementPtrInst *struct_gep = GetElementPtrInst::Create(nullptr, load_living, idx, "", barrier);
-            unsigned align = M.getDataLayout().getPrefTypeAlignment(value->getType());
+            idx.push_back(blockId);
+            idx.push_back(ConstantInt::get(ctx, APInt(32, i)));
+            GetElementPtrInst *struct_gep = GetElementPtrInst::Create(type, mem, idx, "", loopBody);
             LoadInst *load = new LoadInst(struct_gep, "", loopBody);
+            args.push_back(load);
         }
 
+        __verbose("Setting ptr to next struct \n");
+
         // set ptr to next struct
-        GetElementPtrInst *nextGEP = GetElementPtrInst::Create(nexLivingValuesType, nextLivingValuesMem, blockId, "" ,loopBody);
-        LoadInst loadNextMem = new LoadInst(nextGEP, "nextLivingValues", loopBody);
-        args.push_back(loadNextMem);
+        AllocaInst *nextMem = vectorized ? info._nextStruct.second : info._nextStruct.first;
+        // handle last case where we have no next memory
+        if(nextMem) {
+            GetElementPtrInst *nextGEP = GetElementPtrInst::Create(nextMem->getType(), nextMem, blockId, "", loopBody);
+            LoadInst *loadNextMem = new LoadInst(nextGEP, "nextLivingValues", loopBody);
+            args.push_back(loadNextMem);
+        }
+        else {
+            args.push_back(UndefValue::get(Type::getInt8PtrTy(ctx)));
+        }
 
-        Function *func = info->_func;
-        CallInst *call = CallInst::Create(func, args, func->getName().str(), loopBody);
-        new StoreInst(call, switchParam);
+        Function *func = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
+        CallInst *call = CallInst::Create(func, args, "", loopBody);
+        new StoreInst(call, info._switchParam, loopBody);
 
-        // inline function
-        InlineFunctionInfo IFI;
-        InlineFunction(call, IFI);
+        BranchInst::Create(nextBB, loopBody);
+
+        //save call to inline it later
+        _inlineCalls.push_back(call);
     }
-
-    BranchInst::Create(nextBB, loopBody);
 
     __verbose("Done filling x-loop body \n");
 }
 
-LoadInst *PACXXNativeBarrier::fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
+void PACXXNativeBarrier::fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
                                          BasicBlock *trueBB, BasicBlock *falseBB) {
 
     LoadInst *load = new LoadInst(loopVar, "load", loopHeader);
     LoadInst *loadMax = new LoadInst(loopMax, "loadMax", loopHeader);
 
-    ICmpInst *cmp = new ICmpInst(loopHeader, ICmpInst::ICMP_SLT, load, loadMax, "cmp");
-    BranchInst::Create(trueBB, falsBB, cmp, loopHeader);
-
-    return load;
+    ICmpInst *cmp = new ICmpInst(*loopHeader, ICmpInst::ICMP_SLT, load, loadMax, "cmp");
+    BranchInst::Create(trueBB, falseBB, cmp, loopHeader);
 }
 
 void PACXXNativeBarrier::fillLoopEnd(BasicBlock *loopEnd, BasicBlock *branchBB,
                                       AllocaInst *loopValue, Type *int32_type, unsigned incVal) {
 
-    LoadInst *load = new LoadInst(alloc, "load", loopEnd);
+    LoadInst *load = new LoadInst(loopValue, "load", loopEnd);
     BinaryOperator *inc = BinaryOperator::CreateAdd(load, ConstantInt::get(int32_type, incVal), "inc", loopEnd);
-    new StoreInst(inc, alloc, loopEnd);
+    new StoreInst(inc, loopValue, loopEnd);
     BranchInst::Create(branchBB, loopEnd);
 }
 

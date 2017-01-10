@@ -111,6 +111,10 @@ static BasicBlock::iterator findInsertPointAfter(Instruction *I,
 /// the casts.
 Value *SCEVExpander::InsertNoopCastOfTo(Value *V, Type *Ty) {
   Instruction::CastOps Op = CastInst::getCastOpcode(V, false, Ty, false);
+  if(!(Op == Instruction::BitCast || Op == Instruction::PtrToInt || Op == Instruction::IntToPtr)) {
+    V->dump();
+    Ty->dump();
+  }
   assert((Op == Instruction::BitCast ||
           Op == Instruction::PtrToInt ||
           Op == Instruction::IntToPtr) &&

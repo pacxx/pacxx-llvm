@@ -1,45 +1,22 @@
-//IMPORTANT needs to be run before any modifications are made to the wrapper function foo
-//
-// Created by lars on 17/11/16.
+// Created by lars
 
 #include "Log.h"
 #include "llvm/Pass.h"
 #include "llvm/LinkAllPasses.h"
-#include "llvm/PassSupport.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/Type.h"
 #include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/Value.h"
-#include "llvm/IR/Operator.h"
-#include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Vectorize.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/Support/Host.h"
-#include "llvm/Transforms/PACXXTransforms.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/PassAnalysisSupport.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "ModuleHelper.h"
-#include "llvm/Transforms/PACXXTransforms.h"
 #include "wfv/wfvInterface.h"
 
 using namespace llvm;
@@ -113,9 +90,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
             __verbose("number of threads: ", numThreads);
             requiresSequentialVersion = numThreads % vectorWidth != 0;
         }
-
-        //TODO REMOVE !!!!!
-        requiresSequentialVersion = false;
 
         __verbose("requires sequential version: ", requiresSequentialVersion);
 
@@ -409,7 +383,7 @@ INITIALIZE_PASS_END(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
 
 namespace llvm {
-    llvm::Pass *createSPMDVectorizer() {
+    llvm::Pass *createSPMDVectorizerPass() {
         return new SPMDVectorizer();
     }
 }
