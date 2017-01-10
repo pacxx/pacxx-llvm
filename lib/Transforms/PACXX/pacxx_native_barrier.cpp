@@ -203,6 +203,7 @@ namespace {
 
     private:
         ValueToValueMapTy _origFnValueMap;
+        DenseMap<const Instruction*, unsigned> _indexMap;
         vector<CallInst *> _inlineCalls;
         unsigned _vectorWidth;
     };
@@ -234,6 +235,7 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
             if (vec_kernel) {
                 _vectorWidth = getVectorWidth(vec_kernel);
                 _origFnValueMap.clear();
+                _indexMap.clear();
                 runOnFunction(M, vec_kernel, vecBarrierInfo, true);
             }
 
@@ -372,6 +374,8 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createBarrierInfo(LLVMConte
     auto livingValuesType = getLivingValuesType(ctx, livingValues);
     BarrierInfo *info = new BarrierInfo(id, barrier, parts[0], parts, livingValues, livingValuesType);
 
+    _indexMap[barrier] = id;
+
     __verbose("Finished creating barrier info\n");
     __verbose("Info: ", info->toString());
 
@@ -442,12 +446,13 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     LLVMContext &ctx = M.getContext();
 
+    string name = kernel->getName().str();
+    kernel->setName("old" + kernel->getName().str());
+
     SetVector<const BasicBlock *> &parts = info->_parts;
     SetVector<const Value *> &livingValues = info->_livingValues;
 
     StructType *livingValuesType = info->_livingValuesType;
-
-    string name = kernel->getName().str() + to_string(info->_id);
 
     SmallVector < Type * , 8 > params;
     params.insert(params.end(), livingValuesType->element_begin(), livingValuesType->element_end());
@@ -456,7 +461,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     FunctionType *fnType = FunctionType::get(Type::getInt32Ty(ctx), params, false);
 
-    Function *newFunc = Function::Create(fnType, Function::ExternalLinkage, kernel->getName(), &M);
+    Function *newFunc = Function::Create(fnType, Function::ExternalLinkage, name, &M);
 
     // clone corresponding basic blocks into new function
     ValueToValueMapTy &VMap = info->_VMap;
@@ -465,6 +470,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     ValueToValueMapTy &OrigVMap = _origFnValueMap;
 
     auto liveValueArg = --newFunc->arg_end();
+    liveValueArg->setName("native.struct");
     for (unsigned i = 0; i < livingValuesType->getNumElements(); ++i) {
         --liveValueArg;
     }
@@ -504,8 +510,10 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
         BasicBlock *copyBB = cast<BasicBlock>(VMap[origBB]);
         if(!hasBarrier(origBB))
             continue;
+        const Instruction* barrier = &*(--(--origBB->end()));
         copyBB->getTerminator()->eraseFromParent();
-        ReturnInst::Create(ctx, ConstantInt::get(Type::getInt32Ty(ctx), info->_id, true), copyBB);
+        const unsigned barrierIndex = _indexMap[barrier];
+        ReturnInst::Create(ctx, ConstantInt::get(Type::getInt32Ty(ctx), barrierIndex, true), copyBB);
     }
 
     __verbose("Finished creating function \n");
@@ -703,7 +711,7 @@ AllocaInst *PACXXNativeBarrier::createMemForLivingValues(const DataLayout &dl, B
 
     Type *type = info->_livingValuesType;
 
-    return new AllocaInst(type, numThreads, dl.getPrefTypeAlignment(type), "", BB);
+    return new AllocaInst(type, numThreads, dl.getPrefTypeAlignment(type), "structMem", BB);
 }
 
 BasicBlock *PACXXNativeBarrier::createCase(Module &M,
@@ -871,37 +879,43 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
     SmallVector<Value *, 8> args;
 
-    LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
-    CastInst *zext_x = ZExtInst::CreateZExtOrBitCast(load_x, Type::getInt64Ty(ctx), "", loopBody);
-    LoadInst *load_y = new LoadInst(id._y, "__y", loopBody);
-    CastInst *zext_y = ZExtInst::CreateZExtOrBitCast(load_y, Type::getInt64Ty(ctx), "", loopBody);
-    LoadInst *load_z = new LoadInst(id._z, "__z", loopBody);
-    CastInst *zext_z = ZExtInst::CreateZExtOrBitCast(load_z, Type::getInt64Ty(ctx), "", loopBody);
-
-    LoadInst *load_max_x = new LoadInst(info._max3._x, "maxx", loopBody);
-    LoadInst *load_max_y = new LoadInst(info._max3._y, "maxy", loopBody);
 
     if(info._id == 0) {
-        args.push_back(zext_x);
-        args.push_back(zext_y);
-        args.push_back(zext_z);
+        args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
+        args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
+        args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
 
         Function *calledFunc = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
 
-        //replace return with a store, because we inline dummy later and so the return is void
-        for(auto I = calledFunc->begin(), IE = calledFunc->end(); I != IE; ++I) {
-            if (ReturnInst *RI = dyn_cast<ReturnInst>(I->getTerminator())) {
-                new StoreInst(RI->getReturnValue(), info._switchParam, loopBody);
-            }
-        }
+        // create metadata so we can find the memory in the native linker
+        AllocaInst *nextMem = vectorized ? info._nextStruct.second : info._nextStruct.first;
 
         Function *dummy = vectorized ? M.getFunction("__vectorized__dummy_kernel") : M.getFunction("__dummy_kernel");
 
         CallInst::Create(dummy, args, "", loopBody);
+
+        // insert dummy load to easily find living values mem in native linker
+        new LoadInst(nextMem, "dummy", loopBody);
+
+        //replace return with a store, because we inline dummy later and so the return is void
+        for(auto I = calledFunc->begin(), IE = calledFunc->end(); I != IE; ++I) {
+            if (ReturnInst *RI = dyn_cast<ReturnInst>(I->getTerminator())) {
+                RI->getReturnValue()->dump();
+                new StoreInst(RI->getReturnValue(), info._switchParam, loopBody);
+            }
+        }
+
         BranchInst::Create(nextBB, loopBody);
         __verbose("created x-loop body for first case \n");
     }
     else {
+
+        LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
+        LoadInst *load_y = new LoadInst(id._y, "__y", loopBody);
+        LoadInst *load_z = new LoadInst(id._z, "__z", loopBody);
+
+        LoadInst *load_max_x = new LoadInst(info._max3._x, "maxx", loopBody);
+        LoadInst *load_max_y = new LoadInst(info._max3._y, "maxy", loopBody);
 
         // calc local id
         // blockIdx.x
@@ -934,7 +948,8 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
         if(nextMem) {
             GetElementPtrInst *nextGEP = GetElementPtrInst::Create(nextMem->getType(), nextMem, blockId, "", loopBody);
             LoadInst *loadNextMem = new LoadInst(nextGEP, "nextLivingValues", loopBody);
-            args.push_back(loadNextMem);
+            CastInst *cast = CastInst::Create(CastInst::BitCast, loadNextMem, Type::getInt8PtrTy(ctx), "", loopBody);
+            args.push_back(cast);
         }
         else {
             args.push_back(UndefValue::get(Type::getInt8PtrTy(ctx)));

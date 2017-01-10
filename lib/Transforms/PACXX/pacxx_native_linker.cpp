@@ -1,6 +1,6 @@
-#define PACXX_PASS_NAME "PACXXNativeLinker"
-#define USE_STANDALONE 1
+// Created by Michael Haidl and lars
 
+#define PACXX_PASS_NAME "PACXXNativeLinker"
 #include "Log.h"
 
 #include "ModuleHelper.h"
@@ -23,12 +23,18 @@ namespace llvm {
         virtual bool runOnModule(Module &M);
 
     private:
+      Instruction *createLivingValueArg(CallInst *CI ,
+                                        Value * id_x, Value *id_y, Value *id_z,
+                                        Value *max_x, Value *max_y, Value *max_z);
+      AllocaInst *findLivingValueMem(CallInst *CI);
       void createSharedMemoryBuffer(Module &M, Function * wrapper, Function *kernel, Value *sm_size);
       void createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, BasicBlock *sharedMemBB);
       void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Value *sm_size,
                                                              BasicBlock *sharedMemBB);
-      GetElementPtrInst* createSMGEP(Value *value, Type *type, GetElementPtrConstantExpr *constantGEP);
       set<GlobalVariable *> getSMGlobalsUsedByKernel(Module &M, Function *kernel, bool internal);
+
+    private:
+        bool _barrier;
     };
 
     bool PACXXNativeLinker::runOnModule(Module &M) {
@@ -39,8 +45,11 @@ namespace llvm {
 
       for (auto &F : kernels) {
 
+        _barrier = false;
+
         // if the kernel has a barrier use a special foo function
-        if(F->hasFnAttribute("barrier")) {
+        if (F->hasFnAttribute("barrier")) {
+          _barrier = true;
           foo = M.getFunction("__barrier__foo__" + F->getName().str());
         }
 
@@ -54,7 +63,8 @@ namespace llvm {
         Params.push_back(IntegerType::getInt32Ty(ctx));
         Params.push_back(PointerType::getInt8PtrTy(ctx));
 
-        FunctionType *FTy = FunctionType::get(F->getReturnType(), Params, false);
+        // we can always use void, because we work with valid cuda kernels and they need to return void
+        FunctionType *FTy = FunctionType::get(Type::getVoidTy(ctx), Params, false);
         auto wrappedF =
                 Function::Create(FTy, GlobalValue::LinkageTypes::ExternalLinkage,
                                  std::string("__wrapped__") + F->getName().str(), &M);
@@ -83,7 +93,6 @@ namespace llvm {
         auto CI = CallInst::Create(foo, args, "", term);
 
         // now that we have a call inst inline it!
-
         InlineFunctionInfo IFI;
         InlineFunction(CI, IFI);
 
@@ -92,28 +101,30 @@ namespace llvm {
         for (auto &B : *wrappedF) {
           for (auto &I : B) {
             if (auto *alloca = dyn_cast<AllocaInst>(&I)) {
-              if (alloca->getName().startswith_lower("__x"))
+              if (alloca->getName().startswith_lower("__x") && !idx)
                 idx = alloca;
-              else if (alloca->getName().startswith_lower("__y"))
+              else if (alloca->getName().startswith_lower("__y") && !idy)
                 idy = alloca;
-              else if (alloca->getName().startswith_lower("__z"))
+              else if (alloca->getName().startswith_lower("__z") && !idz)
                 idz = alloca;
             }
           }
         }
+
 
         // find the dummy kernel call and replace it with a call to the actual
         // kernel
         SmallVector<Value *, 8> kernel_args;
         Value *bidx = nullptr, *bidy = nullptr, *bidz = nullptr;
         Value *maxidx = nullptr, *maxidy = nullptr, *maxidz = nullptr;
-        Value* sm_size = nullptr;
-        Function* dummy;
-        Function* seq_dummy = M.getFunction("__dummy_kernel");
-        Function* vec_dummy = M.getFunction("__vectorized__dummy_kernel");
+        Value *sm_size = nullptr;
+        LoadInst *load_x, *load_y, *load_z;
+        Function *dummy;
+        Function *seq_dummy = M.getFunction("__dummy_kernel");
+        Function *vec_dummy = M.getFunction("__vectorized__dummy_kernel");
         // if the normal dummy call does not exist at this point we know that a sequential version is not needed
         // so we use the vectorized version
-        if(seq_dummy)
+        if (seq_dummy)
           dummy = seq_dummy;
         else
           dummy = vec_dummy;
@@ -138,31 +149,40 @@ namespace llvm {
               sm_size = &*argIt;
               ++argIt;
 
+              load_x = new LoadInst(idx, "idx", CI);
+              load_y = new LoadInst(idy, "idy", CI);
+              load_z = new LoadInst(idz, "idz", CI);
 
               // construct the kernel arguments from the char*
               BasicBlock *constructKernelArgs = BasicBlock::Create(ctx, "constructArgs", wrappedF, entry);
 
+
               auto int8ptr_type = Type::getInt8PtrTy(ctx);
               auto int8ptr_align = M.getDataLayout().getPrefTypeAlignment(int8ptr_type);
 
-              auto* alloc_args = new AllocaInst(int8ptr_type, nullptr, int8ptr_align, (&*argIt)->getName(), constructKernelArgs);
+              auto *alloc_args = new AllocaInst(int8ptr_type, nullptr, int8ptr_align, (&*argIt)->getName(),
+                                                constructKernelArgs);
               new StoreInst(&*argIt, alloc_args, false, int8ptr_align, constructKernelArgs);
-              auto* args_load = new LoadInst(alloc_args, "args", false, int8ptr_align, constructKernelArgs);
+              auto *args_load = new LoadInst(alloc_args, "args", false, int8ptr_align, constructKernelArgs);
 
               size_t offset = 0;
 
-              for(auto &A : F->getArgumentList()) {
+              for (auto &A : F->getArgumentList()) {
 
-                if(A.getName() == "idx") {
-                  kernel_args.push_back(new LoadInst(idx, "idx", CI));
+                if (A.getName() == "idx") {
+                  kernel_args.push_back(load_x);
+                  continue;
+                } else if (A.getName() == "idy") {
+                  kernel_args.push_back(load_y);
+                  continue;
+                } else if (A.getName() == "idz") {
+                  kernel_args.push_back(load_z);
                   continue;
                 }
-                else if (A.getName() == "idy") {
-                  kernel_args.push_back(new LoadInst(idy, "idy", CI));
-                  continue;
-                }
-                else if (A.getName() == "idz") {
-                  kernel_args.push_back(new LoadInst(idz, "idz", CI));
+                else if (A.getName() == "native.struct" && _barrier) {
+                  kernel_args.push_back(createLivingValueArg(CI,
+                                                             load_x, load_y, load_z,
+                                                             maxidx, maxidy, maxidz));
                   continue;
                 }
 
@@ -172,11 +192,13 @@ namespace llvm {
                 auto arg_offset = (offset + arg_alignment - 1) & ~(arg_alignment - 1);
                 // consider offset in char array
                 auto *elem_ptr = GetElementPtrInst::CreateInBounds(Type::getInt8Ty(ctx), args_load,
-                                                                   ConstantInt::get(Type::getInt64Ty(ctx), arg_offset), "", constructKernelArgs);
+                                                                   ConstantInt::get(Type::getInt64Ty(ctx), arg_offset),
+                                                                   "", constructKernelArgs);
                 // Cast to apropriate size
                 auto *casted = new BitCastInst(elem_ptr, PointerType::getUnqual(A.getType()), "", constructKernelArgs);
                 auto *casted_load = new LoadInst(casted, A.getName(), false,
-                                                 M.getDataLayout().getPrefTypeAlignment(casted->getType()), constructKernelArgs);
+                                                 M.getDataLayout().getPrefTypeAlignment(casted->getType()),
+                                                 constructKernelArgs);
 
                 kernel_args.push_back(casted_load);
 
@@ -187,7 +209,7 @@ namespace llvm {
               llvm::BranchInst::Create(entry, constructKernelArgs);
 
               remove = CI;
-              if(seq_dummy)
+              if (seq_dummy)
                 CI = CallInst::Create(F,
                                       kernel_args,
                                       "",
@@ -213,13 +235,16 @@ namespace llvm {
 
         //If a vectorized version and a sequential version of the kernel exists
         // the vectorized version also needs to be inlined
-        if(seq_dummy && vec_dummy) {
+        if (seq_dummy && vec_dummy) {
           CallInst *remove_vec = nullptr;
           Function *vec_kernel = M.getFunction("__vectorized__" + F->getName().str());
           for (auto U : vec_dummy->users()) {
             if ((CI = dyn_cast<CallInst>(U))) {
               if (CI->getParent()->getParent() == wrappedF) {
                 remove_vec = CI;
+                if(_barrier)
+                  *(kernel_args.end() -1) =
+                          createLivingValueArg(CI, load_x, load_y, load_z, maxidx, maxidy, maxidz);
                 CI = CallInst::Create(vec_kernel, kernel_args, "", CI);
                 break;
               }
@@ -261,7 +286,7 @@ namespace llvm {
                 } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_z) {
                   CI->replaceAllUsesWith(bidz);
                   dead_calls.push_back(CI);
-                }else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_x) {
+                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_x) {
                   CI->replaceAllUsesWith(maxidx);
                   dead_calls.push_back(CI);
                 } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_y) {
@@ -282,45 +307,98 @@ namespace llvm {
           I->eraseFromParent();
       }
 
+      __verbose("Cleaning up");
+
       foo->eraseFromParent();
 
       //cleanup
       for (auto F : kernels) {
-        Function* vec_F = M.getFunction("__vectorized__"+F->getName().str());
+        Function *vec_F = M.getFunction("__vectorized__" + F->getName().str());
         F->eraseFromParent();
-        if(vec_F)
+        if (vec_F)
           vec_F->eraseFromParent();
       }
+
+      // if we still have a foo function erase it at this point
+      // this can happen if we only have kernels with barriers
+      if (foo = M.getFunction("foo"))
+        foo->eraseFromParent();
+
+      M.dump();
 
       return true;
     }
 
+    Instruction *PACXXNativeLinker::createLivingValueArg(CallInst *CI,
+                                                         Value * id_x, Value *id_y, Value *id_z,
+                                                         Value *max_x, Value *max_y, Value *max_z) {
+      LLVMContext &ctx = CI->getContext();
+      AllocaInst *nextMem = findLivingValueMem(CI);
+      assert(nextMem && "cant find mem for living values");
+      // calculate blockId
+      BinaryOperator *mul_y_maxx = BinaryOperator::CreateMul(id_y, max_x, "", CI);
+      BinaryOperator *mul_maxx_maxy = BinaryOperator::CreateMul(max_x, max_y, "", CI);
+      BinaryOperator *mul_mulmaxxmaxy_z = BinaryOperator::CreateMul(mul_maxx_maxy, id_z, "", CI);
+      BinaryOperator *add = BinaryOperator::CreateAdd(mul_y_maxx, mul_mulmaxxmaxy_z, "", CI);
+      BinaryOperator *blockId = BinaryOperator::CreateAdd(id_x, add, "", CI);
+
+      GetElementPtrInst *GEP = GetElementPtrInst::Create(nullptr, nextMem, blockId, "", CI);
+      CastInst *cast = CastInst::Create(CastInst::BitCast, GEP, Type::getInt8PtrTy(ctx), "", CI);
+      return cast;
+    }
+
+    AllocaInst *PACXXNativeLinker::findLivingValueMem(CallInst *CI) {
+      BasicBlock *BB = CI->getParent();
+      for(auto I = ++CI->getIterator(), IE = BB->end(); I != IE; ++I) {
+        Instruction *inst = &*(I);
+        if (isa<LoadInst>(inst) && inst->getName().startswith_lower("dummy")) {
+          LoadInst *load = cast<LoadInst>(inst);
+          AllocaInst *alloca = dyn_cast<AllocaInst>(load->getPointerOperand());
+          load->eraseFromParent();
+          return alloca;
+        }
+      }
+      return nullptr;
+    }
+
     void PACXXNativeLinker::createSharedMemoryBuffer(Module &M, Function *wrapper, Function *kernel, Value *sm_size) {
-      auto internal_sm = getSMGlobalsUsedByKernel(M, kernel, true);
-      auto external_sm = getSMGlobalsUsedByKernel(M, kernel, false);
+      auto internal_sm = getSMGlobalsUsedByKernel(M, wrapper, true);
+      auto external_sm = getSMGlobalsUsedByKernel(M, wrapper, false);
 
       BasicBlock *entry = &wrapper->front();
-      BasicBlock *sharedMemBB = BasicBlock::Create(kernel->getContext(), "shared mem", wrapper, entry);
+      BasicBlock *sharedMemBB = BasicBlock::Create(wrapper->getContext(), "shared mem", wrapper, entry);
 
-      if(!internal_sm.empty())
+      if(!internal_sm.empty()) {
+        __verbose("internal shared memory found\n");
         createInternalSharedMemoryBuffer(M, internal_sm, sharedMemBB);
+      }
 
-      if(!external_sm.empty())
+      if(!external_sm.empty()) {
+        __verbose("external shared memory found\n");
         createExternalSharedMemoryBuffer(M, external_sm, sm_size, sharedMemBB);
+      }
 
       BranchInst::Create(entry, sharedMemBB);
+
+      __verbose("created shared memory");
     }
 
     set<GlobalVariable *> PACXXNativeLinker::getSMGlobalsUsedByKernel(Module &M, Function *kernel, bool internal) {
       set<GlobalVariable *> sm;
       for (auto &GV : M.globals()) {
         if (internal ? GV.hasInternalLinkage() : GV.hasExternalLinkage() && GV.getType()->getAddressSpace() == 3) {
-          for (User *U : GV.users()) {
-            if (Instruction *Inst = dyn_cast<Instruction>(U)) {
-              if (Inst->getParent()->getParent() == kernel) {
+          for (User *GVUsers : GV.users()) {
+            if (Instruction *Inst = dyn_cast<Instruction>(GVUsers)) {
+              if (Inst->getFunction() == kernel) {
                 sm.insert(&GV);
               }
             }
+
+            if (ConstantExpr *constExpr = dyn_cast<ConstantExpr>(GVUsers))
+              for (User *CExpUser : constExpr->users())
+                if (Instruction *Inst = dyn_cast<Instruction>(CExpUser))
+                  if (Inst->getFunction() == kernel)
+                    sm.insert(&GV);
           }
         }
       }
@@ -330,55 +408,38 @@ namespace llvm {
     void PACXXNativeLinker::createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals,
                                                              BasicBlock *sharedMemBB) {
       for (auto GV : globals) {
+        SmallVector<Instruction *, 8> remove;
         Type *sm_type = GV->getType()->getElementType();
         AllocaInst *sm_alloc = new AllocaInst(sm_type, nullptr,
-                                              M.getDataLayout().getABITypeAlignment(sm_type), "internal_sm", sharedMemBB);
+                                              M.getDataLayout().getABITypeAlignment(sm_type), "internal_sm",
+                                              sharedMemBB);
         if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
           new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
 
-        // replacing special GEP used for GlobalVariables
-        SmallVector<GetElementPtrConstantExpr *, 4> const_user;
-        SmallVector<Instruction *, 4> user;
-        for (auto *U : GV->users()) {
-          if (isa<GetElementPtrConstantExpr>(U)) {
-            const_user.push_back(cast<GetElementPtrConstantExpr>(U));
-          } else if (isa<Instruction>(U))
-            user.push_back(cast<Instruction>(U));
-        }
+        for (auto *GVUser : GV->users()) {
+          if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(GVUser)) {
+            SmallVector<Value *, 4> ValueOperands(GEP->op_begin(), GEP->op_end());
+            ArrayRef<Value *> Ops(ValueOperands);
+            GetElementPtrInst *newGEP = GEP->isInBounds() ?
+                                        GetElementPtrInst::CreateInBounds(sm_type, sm_alloc, Ops.slice(1), "", GEP) :
+                                        GetElementPtrInst::Create(sm_type, sm_alloc, Ops.slice(1), "", GEP);
 
-        SmallVector<Value *, 4> UUsers;
-        for (auto *U : const_user) {
-          UUsers.clear();
-          for (auto *UU : U->users())
-            UUsers.push_back(UU);
-          for (auto *UU : UUsers) {
-            if (Instruction *UI = dyn_cast<Instruction>(UU)) {
-              Instruction *NewU = createSMGEP(sm_alloc, sm_type, U);
-              NewU->insertBefore(UI);
-              UI->replaceUsesOfWith(U, NewU);
+            for (auto *GEPUser : GEP->users()) {
+              if (Instruction *cast = dyn_cast<AddrSpaceCastInst>(GEPUser)) {
+                cast->replaceAllUsesWith(newGEP);
+                remove.push_back(cast);
+              }
+              else
+                GEPUser->replaceUsesOfWith(GEP, newGEP);
             }
+            remove.push_back(GEP);
           }
-          U->dropAllReferences();
         }
-
-        for (auto *U: user) {
-          U->replaceUsesOfWith(GV, sm_alloc);
+        for (auto inst : remove) {
+          inst->eraseFromParent();
         }
-
         GV->eraseFromParent();
       }
-    }
-
-    GetElementPtrInst* PACXXNativeLinker::createSMGEP(Value *value, Type *type,
-                                                      GetElementPtrConstantExpr * constantGEP) {
-      SmallVector<Value *, 4> ValueOperands(constantGEP->op_begin(), constantGEP->op_end());
-      ArrayRef<Value*> Ops(ValueOperands);
-      auto *GO = cast<GEPOperator>(constantGEP);
-
-      if(GO->isInBounds())
-        return GetElementPtrInst::CreateInBounds(type, value, Ops.slice(1), "sm_gep");
-      else
-        return GetElementPtrInst::Create(type, value, Ops.slice(1), "sm_gep");
     }
 
     void PACXXNativeLinker::createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Value *sm_size,
@@ -412,5 +473,5 @@ namespace llvm {
     static RegisterPass<PACXXNativeLinker>
             X("pacxx_native", "Inlines functions into kernels", false, false);
 
-    Pass *createPACXXNativeLinker() { return new PACXXNativeLinker(); }
+    Pass *createPACXXNativeLinkerPass() { return new PACXXNativeLinker(); }
 }
