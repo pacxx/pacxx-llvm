@@ -68,6 +68,7 @@ namespace {
             SetVector<const Value *> _livingValues;
             StructType *_livingValuesType;
 
+
             Function *_func;
             ValueToValueMapTy _VMap;
 
@@ -108,6 +109,7 @@ namespace {
         struct CaseInfo {
 
             CaseInfo(unsigned id,
+                     uint64_t maxStructSize,
                      Function *foo,
                      BasicBlock *switchBB,
                      BasicBlock *breakBB,
@@ -118,6 +120,7 @@ namespace {
                      pair<StructType*, StructType*> loadType,
                      pair<Function*, Function*> calledFunctions)
                     : _id(id),
+                      _maxStructSize(maxStructSize),
                       _foo(foo),
                       _switchBB(switchBB),
                       _breakBB(breakBB),
@@ -131,6 +134,7 @@ namespace {
             ~CaseInfo() {}
 
             const unsigned _id;
+            const uint64_t _maxStructSize;
             Function *_foo;
             BasicBlock *_switchBB;
             BasicBlock *_breakBB;
@@ -178,7 +182,10 @@ namespace {
                                      SetVector<BarrierInfo *> barrierInfo,
                                      SetVector<BarrierInfo *> vecBarrierInfo);
 
-        AllocaInst *createMemForLivingValues(const DataLayout &dl, BarrierInfo *info, Value *numThreads, BasicBlock *BB);
+        uint64_t getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos);
+
+        AllocaInst *createMemForLivingValues(const DataLayout &dl, uint64_t maxStructSize,
+                                             Value *numThreads, BasicBlock *BB);
 
         BasicBlock *createCase(Module &M, const CaseInfo &info, bool vectorized);
 
@@ -455,7 +462,9 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     StructType *livingValuesType = info->_livingValuesType;
 
     SmallVector < Type * , 8 > params;
+
     params.insert(params.end(), livingValuesType->element_begin(), livingValuesType->element_end());
+
     // pointer to data where to store liveValues
     params.push_back(Type::getInt8PtrTy(ctx));
 
@@ -600,8 +609,6 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
 
     Type *int32_type = Type::getInt32Ty(ctx);
 
-    SmallVector<pair<AllocaInst *, AllocaInst *>, 8> livingValuesMem;
-
     bool vectorized = vecBarrierInfo.size() == 0 ? false : true;
 
     if(vectorized)
@@ -650,14 +657,12 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
     BinaryOperator *mulXY = BinaryOperator::CreateMul(loadMaxx, loadMaxy, "", allocBB);
     BinaryOperator *numThreads = BinaryOperator::CreateMul(mulXY, loadMaxz, "numThreads", allocBB);
 
-    // create Memory for living values
-    for(unsigned i = 0; i < barrierInfo.size(); ++i) {
-        AllocaInst *mem = createMemForLivingValues(dl, barrierInfo[i], numThreads, allocBB);
-        AllocaInst *mem_vec = nullptr;
-        if(vectorized)
-            mem_vec =  createMemForLivingValues(dl, vecBarrierInfo[i], numThreads, allocBB);
-        livingValuesMem.push_back(make_pair(mem, mem_vec));
-    }
+    // create memory for the living values
+    uint64_t maxStructSize = vectorized ? getMaxStructSize(dl, vecBarrierInfo) : getMaxStructSize(dl, barrierInfo);
+    AllocaInst *mem = createMemForLivingValues(dl, maxStructSize, numThreads, allocBB);
+    AllocaInst *mem_vec = vectorized ? createMemForLivingValues(dl, maxStructSize, numThreads, allocBB) : nullptr;
+
+    auto livingValuesMem = make_pair(mem, mem_vec);
 
     BranchInst::Create(switchBB, allocBB);
 
@@ -672,7 +677,7 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
         // handle last case where we have no next mem
         pair<AllocaInst*, AllocaInst*> nextMem;
         if(i != barrierInfo.size() -1)
-            nextMem = livingValuesMem[i+1];
+            nextMem = livingValuesMem;
         else
             nextMem = make_pair(nullptr, nullptr);
 
@@ -681,8 +686,8 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
         pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
                                                   vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
 
-        const CaseInfo info = CaseInfo(i, newFoo, switchBB, breakBB, allocSwitchParam, alloc_max,
-                                 livingValuesMem[i], nextMem, loadTypes, calledFunctions);
+        const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, switchBB, breakBB, allocSwitchParam, alloc_max,
+                                 livingValuesMem, nextMem, loadTypes, calledFunctions);
         BasicBlock *caseBlock = createCase(M, info, vectorized);
 
         //add case to switch
@@ -703,15 +708,28 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
     }
 }
 
-AllocaInst *PACXXNativeBarrier::createMemForLivingValues(const DataLayout &dl, BarrierInfo *info, Value *numThreads,
-                                                         BasicBlock *BB) {
+uint64_t PACXXNativeBarrier::getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos) {
+    uint64_t  maxStructSize = 0;
+    for(auto info : infos) {
+        if(info->_id == 0)
+            continue;
+        uint64_t size = dl.getTypeAllocSize(info->_livingValuesType);
+        maxStructSize = size > maxStructSize ? size : maxStructSize;
+    }
+    return maxStructSize;
+}
 
-    if(info->_id == 0)
-        return nullptr;
+AllocaInst *PACXXNativeBarrier::createMemForLivingValues(const DataLayout &dl, uint64_t maxStructSize,
+                                                         Value *numThreads, BasicBlock *BB) {
 
-    Type *type = info->_livingValuesType;
+    LLVMContext &ctx = BB->getContext();
 
-    return new AllocaInst(type, numThreads, dl.getPrefTypeAlignment(type), "structMem", BB);
+    Type *i8_type = Type::getInt8Ty(ctx);
+
+    Value *maxSize = ConstantInt::get(ctx, APInt(32, maxStructSize));
+    Value *allocaSize = BinaryOperator::CreateMul(maxSize, numThreads, "allocSize", BB);
+
+    return new AllocaInst(i8_type, allocaSize, dl.getPrefTypeAlignment(i8_type), "livingMem", BB);
 }
 
 BasicBlock *PACXXNativeBarrier::createCase(Module &M,
@@ -879,28 +897,63 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
     SmallVector<Value *, 8> args;
 
+    LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
+    LoadInst *load_y = new LoadInst(id._y, "__y", loopBody);
+    LoadInst *load_z = new LoadInst(id._z, "__z", loopBody);
+
+    LoadInst *load_max_x = new LoadInst(info._max3._x, "maxx", loopBody);
+    LoadInst *load_max_y = new LoadInst(info._max3._y, "maxy", loopBody);
+
+    // calc local id
+    // blockIdx.x
+    // + blockIdx.y * gridDim.x
+    // + gridDim.x * gridDim.y * blockIdx.z;
+    BinaryOperator *mul_y_maxx = BinaryOperator::CreateMul(load_y, load_max_x, "", loopBody);
+    BinaryOperator *mul_maxx_maxy = BinaryOperator::CreateMul(load_max_x, load_max_y, "", loopBody);
+    BinaryOperator *mul_mulmaxxmaxy_z = BinaryOperator::CreateMul(mul_maxx_maxy, load_z, "", loopBody);
+    BinaryOperator *add = BinaryOperator::CreateAdd(mul_y_maxx, mul_mulmaxxmaxy_z, "", loopBody);
+    BinaryOperator *blockId = BinaryOperator::CreateAdd(load_x, add, "", loopBody);
+
+    ConstantInt * jump_size = ConstantInt::get(ctx, APInt(32, info._maxStructSize));
+
+    BinaryOperator *offset = BinaryOperator::CreateMul(blockId, jump_size, "", loopBody);
 
     if(info._id == 0) {
+
+        // create call to dummy for native linker
         args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
         args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
         args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
 
         Function *calledFunc = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
 
+        StructType *type = vectorized ? info._loadType.second : info._loadType.first;
+
         // create metadata so we can find the memory in the native linker
-        AllocaInst *nextMem = vectorized ? info._nextStruct.second : info._nextStruct.first;
+        AllocaInst *mem = vectorized ? info._nextStruct.second : info._nextStruct.first;
 
         Function *dummy = vectorized ? M.getFunction("__vectorized__dummy_kernel") : M.getFunction("__dummy_kernel");
 
-        CallInst::Create(dummy, args, "", loopBody);
+        CallInst *CI = CallInst::Create(dummy, args, "", loopBody);
 
-        // insert dummy load to easily find living values mem in native linker
-        new LoadInst(nextMem, "dummy", loopBody);
+        //calculate next struct mem
+        GetElementPtrInst *mem_gep = GetElementPtrInst::Create(Type::getInt8Ty(ctx), mem, offset, "", CI);
+
+        // create the actual call
+
+        args.clear();
+
+        for(unsigned i = 0; i < type->getStructNumElements(); ++i) {
+            args.push_back(UndefValue::get(type->getElementType(i)));
+        }
+
+        args.push_back(mem_gep);
+
+        CallInst::Create(calledFunc, args, "", CI);
 
         //replace return with a store, because we inline dummy later and so the return is void
         for(auto I = calledFunc->begin(), IE = calledFunc->end(); I != IE; ++I) {
             if (ReturnInst *RI = dyn_cast<ReturnInst>(I->getTerminator())) {
-                RI->getReturnValue()->dump();
                 new StoreInst(RI->getReturnValue(), info._switchParam, loopBody);
             }
         }
@@ -910,32 +963,20 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
     }
     else {
 
-        LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
-        LoadInst *load_y = new LoadInst(id._y, "__y", loopBody);
-        LoadInst *load_z = new LoadInst(id._z, "__z", loopBody);
-
-        LoadInst *load_max_x = new LoadInst(info._max3._x, "maxx", loopBody);
-        LoadInst *load_max_y = new LoadInst(info._max3._y, "maxy", loopBody);
-
-        // calc local id
-        // blockIdx.x
-        // + blockIdx.y * gridDim.x
-        // + gridDim.x * gridDim.y * blockIdx.z;
-        BinaryOperator *mul_y_maxx = BinaryOperator::CreateMul(load_y, load_max_x, "", loopBody);
-        BinaryOperator *mul_maxx_maxy = BinaryOperator::CreateMul(load_max_x, load_max_y, "", loopBody);
-        BinaryOperator *mul_mulmaxxmaxy_z = BinaryOperator::CreateMul(mul_maxx_maxy, load_z, "", loopBody);
-        BinaryOperator *add = BinaryOperator::CreateAdd(mul_y_maxx, mul_mulmaxxmaxy_z, "", loopBody);
-        BinaryOperator *blockId = BinaryOperator::CreateAdd(load_x, add, "", loopBody);
 
         StructType *type = vectorized ? info._loadType.second : info._loadType.first;
         AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
 
+        GetElementPtrInst *mem_gep = GetElementPtrInst::Create(Type::getInt8Ty(ctx), mem, offset, "", loopBody);
+        CastInst *cast = CastInst::Create(CastInst::BitCast, mem_gep, PointerType::getUnqual(type), "", loopBody);
+
         __verbose("Setting living values args \n");
         for(unsigned i = 0; i < type->getStructNumElements(); ++i) {
             SmallVector<Value*, 8> idx;
-            idx.push_back(blockId);
+            idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
             idx.push_back(ConstantInt::get(ctx, APInt(32, i)));
-            GetElementPtrInst *struct_gep = GetElementPtrInst::Create(type, mem, idx, "", loopBody);
+            GetElementPtrInst *struct_gep = GetElementPtrInst::Create(nullptr,
+                                                                      cast, idx, "", loopBody);
             LoadInst *load = new LoadInst(struct_gep, "", loopBody);
             args.push_back(load);
         }
@@ -946,10 +987,7 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
         AllocaInst *nextMem = vectorized ? info._nextStruct.second : info._nextStruct.first;
         // handle last case where we have no next memory
         if(nextMem) {
-            GetElementPtrInst *nextGEP = GetElementPtrInst::Create(nextMem->getType(), nextMem, blockId, "", loopBody);
-            LoadInst *loadNextMem = new LoadInst(nextGEP, "nextLivingValues", loopBody);
-            CastInst *cast = CastInst::Create(CastInst::BitCast, loadNextMem, Type::getInt8PtrTy(ctx), "", loopBody);
-            args.push_back(cast);
+            args.push_back(mem_gep);
         }
         else {
             args.push_back(UndefValue::get(Type::getInt8PtrTy(ctx)));

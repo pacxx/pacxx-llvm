@@ -23,10 +23,6 @@ namespace llvm {
         virtual bool runOnModule(Module &M);
 
     private:
-      Instruction *createLivingValueArg(CallInst *CI ,
-                                        Value * id_x, Value *id_y, Value *id_z,
-                                        Value *max_x, Value *max_y, Value *max_z);
-      AllocaInst *findLivingValueMem(CallInst *CI);
       void createSharedMemoryBuffer(Module &M, Function * wrapper, Function *kernel, Value *sm_size);
       void createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, BasicBlock *sharedMemBB);
       void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Value *sm_size,
@@ -94,7 +90,7 @@ namespace llvm {
 
         // now that we have a call inst inline it!
         InlineFunctionInfo IFI;
-        InlineFunction(CI, IFI);
+        InlineFunction(CI, IFI, nullptr, false);
 
         AllocaInst *idx = nullptr, *idy = nullptr, *idz = nullptr;
 
@@ -118,7 +114,6 @@ namespace llvm {
         Value *bidx = nullptr, *bidy = nullptr, *bidz = nullptr;
         Value *maxidx = nullptr, *maxidy = nullptr, *maxidz = nullptr;
         Value *sm_size = nullptr;
-        LoadInst *load_x, *load_y, *load_z;
         Function *dummy;
         Function *seq_dummy = M.getFunction("__dummy_kernel");
         Function *vec_dummy = M.getFunction("__vectorized__dummy_kernel");
@@ -149,10 +144,6 @@ namespace llvm {
               sm_size = &*argIt;
               ++argIt;
 
-              load_x = new LoadInst(idx, "idx", CI);
-              load_y = new LoadInst(idy, "idy", CI);
-              load_z = new LoadInst(idz, "idz", CI);
-
               // construct the kernel arguments from the char*
               BasicBlock *constructKernelArgs = BasicBlock::Create(ctx, "constructArgs", wrappedF, entry);
 
@@ -170,19 +161,16 @@ namespace llvm {
               for (auto &A : F->getArgumentList()) {
 
                 if (A.getName() == "idx") {
-                  kernel_args.push_back(load_x);
+                  kernel_args.push_back(new LoadInst(idx, "idx", CI));
                   continue;
                 } else if (A.getName() == "idy") {
-                  kernel_args.push_back(load_y);
+                  kernel_args.push_back(new LoadInst(idy, "idy", CI));
                   continue;
                 } else if (A.getName() == "idz") {
-                  kernel_args.push_back(load_z);
+                  kernel_args.push_back(new LoadInst(idz, "idz", CI));
                   continue;
-                }
-                else if (A.getName() == "native.struct" && _barrier) {
-                  kernel_args.push_back(createLivingValueArg(CI,
-                                                             load_x, load_y, load_z,
-                                                             maxidx, maxidy, maxidz));
+                } else if (A.getName() == "native.struct") {
+                  //ignore next mem because we already set it in the barrier pass
                   continue;
                 }
 
@@ -209,16 +197,16 @@ namespace llvm {
               llvm::BranchInst::Create(entry, constructKernelArgs);
 
               remove = CI;
-              if (seq_dummy)
-                CI = CallInst::Create(F,
-                                      kernel_args,
-                                      "",
-                                      CI);
+              if (_barrier) {
+                CallInst *actual_call = dyn_cast<CallInst>(&*(--remove->getIterator()));
+                assert(actual_call && "cant find actual call");
+                CI = actual_call;
+                for (unsigned i = 0; i < kernel_args.size(); ++i)
+                  CI->setArgOperand(i, kernel_args[i]);
+              } else if (seq_dummy)
+                CI = CallInst::Create(F, kernel_args, "", CI);
               else
-                CI = CallInst::Create(M.getFunction("__vectorized__" + F->getName().str()),
-                                      kernel_args,
-                                      "",
-                                      CI);
+                CI = CallInst::Create(M.getFunction("__vectorized__" + F->getName().str()), kernel_args, "", CI);
               break;
             }
           }
@@ -228,7 +216,7 @@ namespace llvm {
           remove->eraseFromParent();
 
         // time to inline the original kernel into the wrapper
-        InlineFunction(CI, IFI);
+        InlineFunction(CI, IFI, nullptr, false);
 
         //create shared memory buffer
         createSharedMemoryBuffer(M, wrappedF, F, sm_size);
@@ -242,10 +230,15 @@ namespace llvm {
             if ((CI = dyn_cast<CallInst>(U))) {
               if (CI->getParent()->getParent() == wrappedF) {
                 remove_vec = CI;
-                if(_barrier)
-                  *(kernel_args.end() -1) =
-                          createLivingValueArg(CI, load_x, load_y, load_z, maxidx, maxidy, maxidz);
-                CI = CallInst::Create(vec_kernel, kernel_args, "", CI);
+                if (_barrier) {
+                  CallInst *actual_call = dyn_cast<CallInst>(&*(--remove_vec->getIterator()));
+                  assert(actual_call && "cant find actual call");
+                  CI = actual_call;
+                  for (unsigned i = 0; i < kernel_args.size(); ++i)
+                    CI->setArgOperand(i, kernel_args[i]);
+                }
+                else
+                  CI = CallInst::Create(vec_kernel, kernel_args, "", CI);
                 break;
               }
             }
@@ -254,7 +247,7 @@ namespace llvm {
           if (remove_vec)
             remove_vec->eraseFromParent();
 
-          InlineFunction(CI, IFI);
+          InlineFunction(CI, IFI, nullptr, false);
         }
 
 
@@ -324,41 +317,7 @@ namespace llvm {
       if (foo = M.getFunction("foo"))
         foo->eraseFromParent();
 
-      M.dump();
-
       return true;
-    }
-
-    Instruction *PACXXNativeLinker::createLivingValueArg(CallInst *CI,
-                                                         Value * id_x, Value *id_y, Value *id_z,
-                                                         Value *max_x, Value *max_y, Value *max_z) {
-      LLVMContext &ctx = CI->getContext();
-      AllocaInst *nextMem = findLivingValueMem(CI);
-      assert(nextMem && "cant find mem for living values");
-      // calculate blockId
-      BinaryOperator *mul_y_maxx = BinaryOperator::CreateMul(id_y, max_x, "", CI);
-      BinaryOperator *mul_maxx_maxy = BinaryOperator::CreateMul(max_x, max_y, "", CI);
-      BinaryOperator *mul_mulmaxxmaxy_z = BinaryOperator::CreateMul(mul_maxx_maxy, id_z, "", CI);
-      BinaryOperator *add = BinaryOperator::CreateAdd(mul_y_maxx, mul_mulmaxxmaxy_z, "", CI);
-      BinaryOperator *blockId = BinaryOperator::CreateAdd(id_x, add, "", CI);
-
-      GetElementPtrInst *GEP = GetElementPtrInst::Create(nullptr, nextMem, blockId, "", CI);
-      CastInst *cast = CastInst::Create(CastInst::BitCast, GEP, Type::getInt8PtrTy(ctx), "", CI);
-      return cast;
-    }
-
-    AllocaInst *PACXXNativeLinker::findLivingValueMem(CallInst *CI) {
-      BasicBlock *BB = CI->getParent();
-      for(auto I = ++CI->getIterator(), IE = BB->end(); I != IE; ++I) {
-        Instruction *inst = &*(I);
-        if (isa<LoadInst>(inst) && inst->getName().startswith_lower("dummy")) {
-          LoadInst *load = cast<LoadInst>(inst);
-          AllocaInst *alloca = dyn_cast<AllocaInst>(load->getPointerOperand());
-          load->eraseFromParent();
-          return alloca;
-        }
-      }
-      return nullptr;
     }
 
     void PACXXNativeLinker::createSharedMemoryBuffer(Module &M, Function *wrapper, Function *kernel, Value *sm_size) {
@@ -452,16 +411,32 @@ namespace llvm {
         BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
         AllocaInst *sm_alloc = new AllocaInst(sm_type, div, M.getDataLayout().getABITypeAlignment(sm_type),
                                               "external_sm", sharedMemBB);
-        SmallVector<LoadInst *,4> remove;
+
+        // handle special constExpr cast
+        SmallVector<ConstantExpr *, 4> const_user;
+        SmallVector<Instruction *, 4> user;
         for (auto *U : GV->users()) {
-          if (isa<LoadInst>(U)) {
-            remove.push_back(cast<LoadInst>(U));
-            U->replaceAllUsesWith(sm_alloc);
+          if (isa<ConstantExpr>(U)) {
+            const_user.push_back(cast<ConstantExpr>(U));
+          } else if (isa<Instruction>(U))
+            user.push_back(cast<Instruction>(U));
+        }
+
+        SmallVector<Value *, 4> UUsers;
+        for (auto *U : const_user) {
+          UUsers.clear();
+          for (auto *UU : U->users())
+            UUsers.push_back(UU);
+          for (auto *UU : UUsers) {
+            if (LoadInst *UI = dyn_cast<LoadInst>(UU)) {
+              UI->replaceAllUsesWith(sm_alloc);
+              UI->eraseFromParent();
+            }
           }
         }
 
-        for(auto load : remove) {
-          load->eraseFromParent();
+        for (auto *U: user) {
+          U->replaceUsesOfWith(GV, sm_alloc);
         }
 
         GV->eraseFromParent();
