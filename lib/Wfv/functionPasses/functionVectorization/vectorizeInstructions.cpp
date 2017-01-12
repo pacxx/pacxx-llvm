@@ -171,8 +171,7 @@ FunctionVectorizer::visitReturnInst(ReturnInst &I)
 
 	// analysis has failed or race condition, return the first vector element instead
 	Value * extractedValue = generateHorizontalExtract(retVal, ConstantInt::get(intType, 0), "extract", nullptr, &I, *mInfo);
-    if(!extractedValue)
-        return false;
+    if(!extractedValue) return false;
 	I.setOperand(0, extractedValue);
 
     return true;

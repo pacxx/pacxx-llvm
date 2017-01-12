@@ -314,7 +314,7 @@ namespace llvm {
 
       // if we still have a foo function erase it at this point
       // this can happen if we only have kernels with barriers
-      if (foo = M.getFunction("foo"))
+      if ((foo = M.getFunction("foo")))
         foo->eraseFromParent();
 
       return true;

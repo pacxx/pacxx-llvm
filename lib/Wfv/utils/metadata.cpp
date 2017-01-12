@@ -222,7 +222,7 @@ bool hasPACXXMetadata(const Value* value) {
     if(hasMetadata(value, WFV::PACXX_ID_X)) return true;
     if(hasMetadata(value, WFV::PACXX_ID_Y)) return true;
     if(hasMetadata(value, WFV::PACXX_ID_Z)) return true;
-    if(hasMetadata(value, WFV::PACXX_BARRIER))
+    if(hasMetadata(value, WFV::PACXX_BARRIER)) return true;
     return false;
 }
 

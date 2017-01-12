@@ -112,7 +112,6 @@ static const char* const WFV_METADATA_ARGUMENT_INFO_FUNCTION_NAME = "wfvMetadata
 
 static Function* argMetadataFn;
 static MDNode*   nullMDN;
-static LLVMContext *ctx;
 static DenseMap<Metadata *, Value*> MDValueMap;
 
 Metadata *mapValueToMD(Value *value);

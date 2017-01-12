@@ -322,22 +322,6 @@ verifyIncomingEdges(const Function& f)
     return true;
 }
 
-// TODO: Move to utils.
-bool
-isNestedLoop(const Loop* innerLoop, const Loop* outerLoop)
-{
-    assert (innerLoop && outerLoop);
-    if (innerLoop == outerLoop) return false;
-    const Loop* curLoop = innerLoop;
-    while (curLoop)
-    {
-        if (curLoop == outerLoop) return true;
-        curLoop = curLoop->getParentLoop();
-    }
-    return false;
-}
-
-
 } // unnamed namespace
 
 bool

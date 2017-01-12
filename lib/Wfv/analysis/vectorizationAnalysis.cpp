@@ -522,8 +522,6 @@ void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
     if(mVerbose)
         outs() << "analyze PACXX called \n";
 
-    //mark shared memory as uniform
-
     // iterate over all instructions
     for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
         Instruction *inst = &*II;
@@ -878,14 +876,6 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
     markNestedDivergentTopLevelLoops();
 }
 
-static bool
-IsDivergentEdge(const BasicBlock * src, const BasicBlock * dest) {
-	const BranchInst * inBranch = cast<const BranchInst>(src->getTerminator());
-	return !WFV::hasMetadata(inBranch, WFV::WFV_METADATA_OP_UNIFORM) ||
-	       ! WFV::hasMetadata(src, WFV::WFV_METADATA_ALWAYS_BY_ALL_OR_NONE);
-
-}
-
 // Recursively marks the instruction and all its uses as OP_VARYING / RES_VECTOR
 // except for phis and selects which require some special handling.
 // Returns true if some mark was set, false otherwise.
@@ -1137,25 +1127,6 @@ VectorizationAnalysis::markDivergentBlocks(Function* scalarFn)
     return changed;
 }
 
-namespace {
-
-void
-printPaths(const WFV::PathVecType& paths, raw_ostream& o)
-{
-    for (const auto &path : paths)
-    {
-        o << "   * ";
-        for (const auto &pathBB : *path)
-        {
-            o << pathBB->getName() << " ";
-        }
-        o << "\n";
-    }
-
-}
-
-}
-
 Loop *
 VectorizationAnalysis::getCommonLoop(const BasicBlock * A, const BasicBlock * B) const {
 	const LoopInfo & LI = *mLoopInfo;
@@ -1196,16 +1167,10 @@ VectorizationAnalysis::checkForDisjointLoopPaths(const BasicBlock*             e
 				BlockSet * divCauseBlocks) const {
 
 	NodeSet exitingNodes;
-	BasicBlock * entryBlock = &mScalarFunction->getEntryBlock();
 	SketchGraph * graph = nullptr;
-
-	const DomTreeNode * idom = GetIDom(*mDomTree, *exitBlock);
-	BasicBlock * idomBlock = idom ? idom->getBlock() : nullptr;
-
 
 // Restrict the graph search to @loop and exiting edges from @loop to @exitBlock
 	BasicBlock * loopHeader = loop->getHeader();
-	const DomTreeNode * loopDom = mDomTree->getNode(loopHeader);
 
 	graph = SketchGraph::createFromDominatorNode(*mDomTree, *loopHeader, exitingNodes);
 
@@ -1334,9 +1299,7 @@ VectorizationAnalysis::checkForDisjointPaths(const BasicBlock*             block
 		graph->eliminateDeadEnds(keepSet);
 	}
 
-	SketchNode * entryNode = graph->getNode(*entryBlock);
 	SketchNode * blockNode = graph->getNode(*block);
-
 
 // Run confluence contraction to merge any two nodes that will eventually pass through the same post-dominating node
 	SketchGraph * compactGraph = nullptr;
@@ -1882,8 +1845,8 @@ VectorizationAnalysis::isDivergentDueToDisjointPaths(const BasicBlock& block,
     const bool pathStartIsEnd = &branchParent == &pathEnd;
 
     if(mVerbose) {
-        outs() << "  looking for required back edge on path: " << pathStart.getName() << " ->
-            << pathEnd.getName() << " (blocks can be inaccurate)\n";
+        outs() << "  looking for required back edge on path: " << pathStart.getName() << " ->"
+        << pathEnd.getName() << " (blocks can be inaccurate)\n";
     }
 
     while (tmpLoop)
@@ -2585,42 +2548,6 @@ VectorizationAnalysis::getTransitiveReference(const BasicBlock* block) const
 }
 
 #endif
-namespace {
-
-bool
-isABAE(const BasicBlock*        block,
-       const BasicBlock*        entryBB,
-       const PostDominatorTree& postDomTree,
-       const LoopInfo&          loopInfo)
-{
-    assert (block && entryBB);
-    assert (block->getParent() == entryBB->getParent());
-
-    if (!postDomTree.dominates(block, entryBB)) return false;
-
-    // If the block is not part of a divergent loop, mark it ABA.
-    // NOTE: We have to check *all* loops to which this block belongs.
-    Loop* loop              = loopInfo.getLoopFor(block);
-    bool  isInDivergentLoop = false;
-
-    while (loop)
-    {
-        if (!loop->contains(block))
-        {
-            break;
-        }
-        if (WFV::hasMetadata(loop, WFV::WFV_METADATA_LOOP_DIVERGENT_TRUE))
-        {
-            isInDivergentLoop = true;
-            break;
-        }
-        loop = loop->getParentLoop();
-    }
-
-    return !isInDivergentLoop;
-}
-
-}
 
 // A block b is marked as MANDATORY if
 // 1. b is a direct successor of another block v that ends with a varying branch, or

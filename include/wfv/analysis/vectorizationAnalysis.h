@@ -112,9 +112,9 @@ private:
 
     Function*                   mScalarFunction;
     const Function*             mSimdFunction;
-    TargetTransformInfo			*mTTI;
+	const int                   mMaskPosition;
 
-    const int                   mMaskPosition;
+    TargetTransformInfo			*mTTI;
 
     const WFV::ValueInfoMap*    mValueInfoMap;
     const WFV::FunctionInfoMap* mFunctionInfoMap;

@@ -48,8 +48,6 @@ namespace {
 
         bool modifyWrapperLoop(unsigned vectorWidth, Module& M);
 
-        bool modifyIncrementationOfX(Module &M, Function *foo, Value *__x, unsigned vectorWidth);
-
         bool modifyOldLoop(Module &M);
 
         BasicBlock *determineOldLoopPreHeader(Module& M);
@@ -253,35 +251,6 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M) {
     BranchInst::Create(loopHeader, loopEnd);
 
     return true;
-}
-
-bool SPMDVectorizer::modifyIncrementationOfX(Module &M, Function *foo, Value *__x, unsigned vectorWidth) {
-
-    LoopInfo* LI = &getAnalysis<LoopInfoWrapperPass>(*foo).getLoopInfo();
-
-    // we know that there are only 3 nested loops
-    Loop* xLoop = ((*LI->begin())->getSubLoops().front())->getSubLoops().front();
-    // search in all blocks of the loop for the incrementation of x
-    for(auto *block : xLoop->getBlocks()) {
-        for(auto &inst : *block) {
-            if(inst.getOpcode() == Instruction::Add) {
-                if(isa<Constant>(inst.getOperand(1)))
-                    if(LoadInst *loadX = dyn_cast<LoadInst>(inst.getOperand(0))) {
-                        if(loadX->getPointerOperand() == __x) {
-                            BinaryOperator *incVecWidth = BinaryOperator::CreateAdd(loadX,
-                                                                                    ConstantInt::get(Type::getInt32Ty(M.getContext()),
-                                                                                                     vectorWidth),
-                                                                                    "inc",
-                                                                                    &inst);
-                            inst.replaceAllUsesWith(incVecWidth);
-                            inst.eraseFromParent();
-                            return true;
-                        }
-                    }
-            }
-        }
-    }
-    return false;
 }
 
 bool SPMDVectorizer::modifyOldLoop(Module &M) {
