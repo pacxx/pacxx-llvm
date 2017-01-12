@@ -230,6 +230,8 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
 
     for(auto kernel : kernels) {
 
+        string kernelName = kernel->getName().str();
+
         SetVector<BarrierInfo *> barrierInfo;
         SetVector<BarrierInfo *> vecBarrierInfo;
 
@@ -237,9 +239,10 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
 
         if(modified_kernel) {
             //if we have a vectorized version of the kernel also eliminate barriers
-            auto vec_kernel = M.getFunction("__vectorized__" + kernel->getName().str());
+            auto vec_kernel = M.getFunction("__vectorized__" + kernelName);
 
             if (vec_kernel) {
+                __verbose("Running for vectorized kernel");
                 _vectorWidth = getVectorWidth(vec_kernel);
                 _origFnValueMap.clear();
                 _indexMap.clear();
@@ -454,7 +457,9 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     LLVMContext &ctx = M.getContext();
 
     string name = kernel->getName().str();
-    kernel->setName("old" + kernel->getName().str());
+
+    if(info->_id == 0)
+        kernel->setName("old" + kernel->getName().str());
 
     SetVector<const BasicBlock *> &parts = info->_parts;
     SetVector<const Value *> &livingValues = info->_livingValues;
@@ -1008,28 +1013,34 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
 void PACXXNativeBarrier::fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
                                          BasicBlock *trueBB, BasicBlock *falseBB) {
+    __verbose("Filling loop header");
 
     LoadInst *load = new LoadInst(loopVar, "load", loopHeader);
     LoadInst *loadMax = new LoadInst(loopMax, "loadMax", loopHeader);
 
     ICmpInst *cmp = new ICmpInst(*loopHeader, ICmpInst::ICMP_SLT, load, loadMax, "cmp");
     BranchInst::Create(trueBB, falseBB, cmp, loopHeader);
+
+    __verbose("Finished filling loop header");
 }
 
 void PACXXNativeBarrier::fillLoopEnd(BasicBlock *loopEnd, BasicBlock *branchBB,
                                       AllocaInst *loopValue, Type *int32_type, unsigned incVal) {
+    __verbose("filling loop End");
 
     LoadInst *load = new LoadInst(loopValue, "load", loopEnd);
     BinaryOperator *inc = BinaryOperator::CreateAdd(load, ConstantInt::get(int32_type, incVal), "inc", loopEnd);
     new StoreInst(inc, loopValue, loopEnd);
     BranchInst::Create(branchBB, loopEnd);
+
+    __verbose("Finished filling loop end");
 }
 
 char PACXXNativeBarrier::ID = 0;
 
-INITIALIZE_PASS_BEGIN(PACXXNativeBarrier, "barrier",
+INITIALIZE_PASS_BEGIN(PACXXNativeBarrier, "native-barrier",
                 "Native barrier", true, true)
-INITIALIZE_PASS_END(PACXXNativeBarrier, "barrier",
+INITIALIZE_PASS_END(PACXXNativeBarrier, "native-barrier",
                 "Native barrier", true, true)
 
 namespace llvm {

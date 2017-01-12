@@ -218,9 +218,6 @@ namespace llvm {
         // time to inline the original kernel into the wrapper
         InlineFunction(CI, IFI, nullptr, false);
 
-        //create shared memory buffer
-        createSharedMemoryBuffer(M, wrappedF, F, sm_size);
-
         //If a vectorized version and a sequential version of the kernel exists
         // the vectorized version also needs to be inlined
         if (seq_dummy && vec_dummy) {
@@ -250,6 +247,9 @@ namespace llvm {
           InlineFunction(CI, IFI, nullptr, false);
         }
 
+        // At this point we inlined all kernels and can safely replace the shared mem global variable
+        //create shared memory buffer
+        createSharedMemoryBuffer(M, wrappedF, F, sm_size);
 
         vector<CallInst *> dead_calls;
         for (auto &B : *wrappedF) {

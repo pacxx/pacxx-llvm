@@ -165,6 +165,7 @@ setMetadata(Instruction* inst, const char* const metaDataString)
                 strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
+                strcmp(metaDataString, PACXX_BARRIER) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
                 "invalid metadata for instruction found!");
     }
@@ -221,6 +222,7 @@ bool hasPACXXMetadata(const Value* value) {
     if(hasMetadata(value, WFV::PACXX_ID_X)) return true;
     if(hasMetadata(value, WFV::PACXX_ID_Y)) return true;
     if(hasMetadata(value, WFV::PACXX_ID_Z)) return true;
+    if(hasMetadata(value, WFV::PACXX_BARRIER))
     return false;
 }
 
@@ -254,6 +256,7 @@ hasMetadata(const Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
              strcmp(metaDataString, WFV_METADATA_MASK) == 0 ||
+             strcmp(metaDataString, PACXX_BARRIER) == 0 ||
              strcmp(metaDataString, PACXX_ID_X) == 0 ||
              strcmp(metaDataString, PACXX_ID_Y) == 0 ||
              strcmp(metaDataString, PACXX_ID_Z) == 0 ||
@@ -295,6 +298,7 @@ removeMetadata(Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
              strcmp(metaDataString, WFV_METADATA_MASK) == 0 ||
+             strcmp(metaDataString, PACXX_BARRIER) == 0 ||
              strcmp(metaDataString, PACXX_ID_X) == 0 ||
              strcmp(metaDataString, PACXX_ID_Y) == 0 ||
              strcmp(metaDataString, PACXX_ID_Z) == 0 ||
@@ -1063,6 +1067,219 @@ copyMetadata(Argument* target, const Value& source)
 #undef WFV_COPY_METADATA
 }
 
+void
+setMetadata(GlobalVariable* GV, const char* const metaDataString)
+{
+    assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
+    assert (GV);
+
+    if (strcmp(metaDataString, WFV_METADATA_OP_UNIFORM) == 0 ||
+        strcmp(metaDataString, WFV_METADATA_OP_VARYING) == 0 ||
+        strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL) == 0 ||
+        strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL_GUARDED) == 0)
+    {
+        removeMetadata(GV, WFV_METADATA_OP_UNIFORM);
+        removeMetadata(GV, WFV_METADATA_OP_VARYING);
+        removeMetadata(GV, WFV_METADATA_OP_SEQUENTIAL);
+        removeMetadata(GV, WFV_METADATA_OP_SEQUENTIAL_GUARDED);
+    }
+    else if (strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_VECTOR) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_SCALARS) == 0)
+    {
+        removeMetadata(GV, WFV_METADATA_RES_UNIFORM);
+        removeMetadata(GV, WFV_METADATA_RES_VECTOR);
+        removeMetadata(GV, WFV_METADATA_RES_SCALARS);
+    }
+    else if (strcmp(metaDataString, WFV_METADATA_ALIGNED_TRUE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_ALIGNED_FALSE) == 0)
+    {
+        removeMetadata(GV, WFV_METADATA_ALIGNED_TRUE);
+        removeMetadata(GV, WFV_METADATA_ALIGNED_FALSE);
+    }
+    else if (strcmp(metaDataString, WFV_METADATA_INDEX_SAME) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_CONSECUTIVE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_SHUFFLE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_STRIDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_RANDOM) == 0)
+    {
+        removeMetadata(GV, WFV_METADATA_INDEX_SAME);
+        removeMetadata(GV, WFV_METADATA_INDEX_CONSECUTIVE);
+        removeMetadata(GV, WFV_METADATA_INDEX_SHUFFLE);
+        removeMetadata(GV, WFV_METADATA_INDEX_STRIDED);
+        removeMetadata(GV, WFV_METADATA_INDEX_RANDOM);
+    }
+    else
+    {
+        assert ((strcmp(metaDataString, WFV_METADATA_ARGUMENT_CAST) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_PKT_PTR_CAST) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_BLEND_INFO) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_PACK_UNPACK) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_VARIANT_START) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_VARIANT_END) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
+                strcmp(metaDataString, PACXX_BARRIER) == 0 ||
+                strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
+                "invalid metadata for instruction found!");
+    }
+
+    GV->setMetadata(metaDataString, nullMDN);
+}
+
+bool
+hasMetadata(const GlobalVariable* GV)
+{
+    assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
+    assert (GV);
+    return GV->hasMetadata();
+}
+
+bool
+hasWFVMetadata(const GlobalVariable* GV)
+{
+    assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
+    assert (GV);
+    if (hasMetadata(GV, WFV::WFV_METADATA_ARGUMENT_CAST)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_PKT_PTR_CAST)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_BLEND_INFO)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_PACK_UNPACK)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_OP_UNIFORM)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_OP_VARYING)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_OP_SEQUENTIAL)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_OP_SEQUENTIAL_GUARDED)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_RES_UNIFORM)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_RES_VECTOR)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_RES_SCALARS)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_ALIGNED_TRUE)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_ALIGNED_FALSE)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_INDEX_SAME)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_INDEX_CONSECUTIVE)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_INDEX_SHUFFLE)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_INDEX_STRIDED)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_INDEX_RANDOM)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_VARIANT_START)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_VARIANT_END)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_VARIANT_DISABLE_VECT)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_VARIANT_SEQUENTIALIZE)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_VARIANT_BOSCC)) return true;
+    if (hasMetadata(GV, WFV::WFV_METADATA_MASK)) return true;
+    return false;
+}
+
+bool
+hasMetadata(const GlobalVariable* GV, const char* const metaDataString)
+{
+    assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
+    assert (GV);
+    assert ((strcmp(metaDataString, WFV_METADATA_ARGUMENT_CAST) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_PKT_PTR_CAST) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_BLEND_INFO) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_PACK_UNPACK) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_UNIFORM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_VARYING) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL_GUARDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_VECTOR) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_SCALARS) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_ALIGNED_TRUE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_ALIGNED_FALSE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_SAME) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_CONSECUTIVE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_SHUFFLE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_STRIDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_RANDOM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_START) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_END) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
+            "invalid metadata for instruction found!");
+
+    return GV->getMetadata(metaDataString);
+}
+
+void
+removeMetadata(GlobalVariable* GV, const char* const metaDataString)
+{
+    assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
+    assert (GV && metaDataString);
+    assert ((strcmp(metaDataString, WFV_METADATA_ARGUMENT_CAST) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_PKT_PTR_CAST) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_BLEND_INFO) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_PACK_UNPACK) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_UNIFORM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_VARYING) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_SEQUENTIAL_GUARDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_UNIFORM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_VECTOR) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_RES_SCALARS) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_ALIGNED_TRUE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_ALIGNED_FALSE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_SAME) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_CONSECUTIVE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_SHUFFLE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_STRIDED) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_INDEX_RANDOM) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_START) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_END) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
+             strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
+            "invalid metadata for instruction found!");
+
+    GV->setMetadata(metaDataString, nullptr);
+}
+
+void
+copyMetadata(GlobalVariable* target, const Value& source)
+{
+    assert (isMetadataSetUp() && "metadata not initialized, call setUpMetadata() first!");
+    assert (target);
+    assert (isa<Instruction>(source) || isa<Argument>(source));
+
+#define WFV_COPY_METADATA(metaDataString) \
+    if (hasMetadata(&source, metaDataString)) \
+        setMetadata(target, metaDataString)
+
+    if (isa<GlobalVariable>(source))
+    {
+        WFV_COPY_METADATA(WFV_METADATA_OP_UNIFORM);
+        WFV_COPY_METADATA(WFV_METADATA_OP_VARYING);
+        WFV_COPY_METADATA(WFV_METADATA_OP_SEQUENTIAL);
+        WFV_COPY_METADATA(WFV_METADATA_OP_SEQUENTIAL_GUARDED);
+        WFV_COPY_METADATA(WFV_METADATA_ARGUMENT_CAST);
+        WFV_COPY_METADATA(WFV_METADATA_PKT_PTR_CAST);
+        WFV_COPY_METADATA(WFV_METADATA_BLEND_INFO);
+        WFV_COPY_METADATA(WFV_METADATA_PACK_UNPACK);
+        WFV_COPY_METADATA(WFV_METADATA_VARIANT_START);
+        WFV_COPY_METADATA(WFV_METADATA_VARIANT_END);
+        WFV_COPY_METADATA(WFV_METADATA_VARIANT_DISABLE_VECT);
+        WFV_COPY_METADATA(WFV_METADATA_VARIANT_SEQUENTIALIZE);
+        WFV_COPY_METADATA(WFV_METADATA_VARIANT_BOSCC);
+    }
+    WFV_COPY_METADATA(WFV_METADATA_RES_UNIFORM);
+    WFV_COPY_METADATA(WFV_METADATA_RES_VECTOR);
+    WFV_COPY_METADATA(WFV_METADATA_RES_SCALARS);
+    WFV_COPY_METADATA(WFV_METADATA_ALIGNED_TRUE);
+    WFV_COPY_METADATA(WFV_METADATA_ALIGNED_FALSE);
+    WFV_COPY_METADATA(WFV_METADATA_INDEX_SAME);
+    WFV_COPY_METADATA(WFV_METADATA_INDEX_CONSECUTIVE);
+    WFV_COPY_METADATA(WFV_METADATA_INDEX_SHUFFLE);
+    WFV_COPY_METADATA(WFV_METADATA_INDEX_STRIDED);
+    WFV_COPY_METADATA(WFV_METADATA_INDEX_RANDOM);
+    WFV_COPY_METADATA(WFV_METADATA_MASK);
+
+#undef WFV_COPY_METADATA
+}
 
 void
 setMetadata(Value* value, const char* const metaDataString)
@@ -1082,9 +1299,12 @@ setMetadata(Value* value, const char* const metaDataString)
     {
         setMetadata(block, metaDataString);
     }
+    else if(GlobalVariable *GV = dyn_cast<GlobalVariable>(value)) {
+        setMetadata(GV, metaDataString);
+    }
     else
     {
-        assert (false && "only arguments, instructions, and blocks can store metadata!");
+        assert (false && "only arguments, instructions, global variables and blocks can store metadata!");
     }
 }
 
@@ -1106,8 +1326,11 @@ hasMetadata(const Value* value)
     {
         return hasMetadata(block);
     }
+    else if(const GlobalVariable *GV = dyn_cast<GlobalVariable>(value)) {
+        return hasMetadata(GV);
+    }
 
-    assert (false && "only arguments, instructions, and blocks can store metadata!");
+    assert (false && "only arguments, instructions, global variables and blocks can store metadata!");
     return false;
 }
 
@@ -1129,8 +1352,11 @@ hasWFVMetadata(const Value* value)
     {
         return hasWFVMetadata(block);
     }
+    else if(const GlobalVariable *GV = dyn_cast<GlobalVariable>(value)) {
+        return hasWFVMetadata(GV);
+    }
 
-    assert (false && "only arguments, instructions, and blocks can store metadata!");
+    assert (false && "only arguments, instructions, global variables and blocks can store metadata!");
     return false;
 }
 
@@ -1152,8 +1378,11 @@ hasMetadata(const Value* value, const char* const metaDataString)
     {
         return hasMetadata(block, metaDataString);
     }
+    else if(const GlobalVariable *GV = dyn_cast<GlobalVariable>(value)) {
+        return hasMetadata(GV, metaDataString);
+    }
 
-    assert (false && "only arguments, instructions, and blocks can store metadata!");
+    assert (false && "only arguments, instructions, global variables and blocks can store metadata!");
     return false;
 }
 
@@ -1175,9 +1404,12 @@ removeMetadata(Value* value, const char* const metaDataString)
     {
         removeMetadata(block, metaDataString);
     }
+    else if(GlobalVariable *GV = dyn_cast<GlobalVariable>(value)) {
+        removeMetadata(GV, metaDataString);
+    }
     else
     {
-        assert (false && "only arguments, instructions, and blocks can store metadata!");
+        assert (false && "only arguments, instructions, global variables and blocks can store metadata!");
     }
 }
 
@@ -1200,9 +1432,12 @@ copyMetadata(Value* value, const Value& source)
         assert (isa<BasicBlock>(source));
         copyMetadata(block, cast<BasicBlock>(source));
     }
+    else if(GlobalVariable *GV = dyn_cast<GlobalVariable>(value)) {
+        copyMetadata(GV, source);
+    }
     else
     {
-        assert (false && "only arguments, instructions, and blocks can store metadata!");
+        assert (false && "only arguments, instructions, global variables and blocks can store metadata!");
     }
 }
 
@@ -1691,6 +1926,7 @@ removeAllMetadata(Instruction* inst)
     removeMetadata(inst, WFV_METADATA_VARIANT_SEQUENTIALIZE);
     removeMetadata(inst, WFV_METADATA_VARIANT_BOSCC);
     removeMetadata(inst, WFV_METADATA_MASK);
+    removeMetadata(inst, PACXX_BARRIER);
     removeMetadata(inst, PACXX_ID_X);
     removeMetadata(inst, PACXX_ID_Y);
     removeMetadata(inst, PACXX_ID_Z);

@@ -522,9 +522,21 @@ void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
     if(mVerbose)
         outs() << "analyze PACXX called \n";
 
+    //mark shared memory as uniform
+
     // iterate over all instructions
     for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
         Instruction *inst = &*II;
+
+        // mark barrier instruction
+        if (auto CI = dyn_cast<CallInst>(inst)) {
+            auto called = CI->getCalledFunction();
+            if (called && called->isIntrinsic()) {
+                auto intrin_id = called->getIntrinsicID();
+                if (intrin_id == Intrinsic::nvvm_barrier0)
+                    WFV::setMetadata(inst, WFV::PACXX_BARRIER);
+            }
+        }
 
         if (BinaryOperator * binOp = dyn_cast<BinaryOperator>(inst)) {
 
@@ -698,6 +710,7 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
     {
         Instruction* inst = &*I;
         if (!isa<BranchInst>(inst) && !isa<ReturnInst>(inst)) continue;
+        if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
 
         if (BranchInst* br = dyn_cast<BranchInst>(inst))
         {
@@ -744,6 +757,8 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
         {
             continue;
         }
+
+        if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
 
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_VARYING) ||
             WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_SEQUENTIAL) ||
@@ -3507,6 +3522,7 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
             Instruction* inst = &*I;
             if (inst->getType()->isVoidTy()) continue;
             if (mValueInfoMap->hasMapping(*inst)) continue;
+            if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
             if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_UNIFORM)) // TODO: Shouldn't this test for RES_UNIFORM?
             {
                 WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_SAME);
@@ -3611,6 +3627,8 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
 
             // Ignore our own metadata calls.
             if (WFV::isMetadataCall(&*I)) continue;
+
+            if(WFV::hasMetadata(&*I, WFV::PACXX_BARRIER)) continue;
 
             if (BranchInst* br = dyn_cast <BranchInst>(I))
             {

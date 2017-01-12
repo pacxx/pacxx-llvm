@@ -46,7 +46,7 @@ namespace {
 
         unsigned determineVectorWidth(Function *F, unsigned registerWidth);
 
-        bool modifyWrapperLoop(unsigned vectorWidth, Module& M, bool requiresSequentialVersion);
+        bool modifyWrapperLoop(unsigned vectorWidth, Module& M);
 
         bool modifyIncrementationOfX(Module &M, Function *foo, Value *__x, unsigned vectorWidth);
 
@@ -77,22 +77,12 @@ bool SPMDVectorizer::runOnModule(Module& M) {
     for (auto kernel : kernels) {
 
         bool vectorized = false;
-        bool requiresSequentialVersion = true;
 
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
         unsigned vectorWidth = determineVectorWidth(kernel, TTI->getRegisterBitWidth(true));
 
         __verbose("vectorWidth: ", vectorWidth);
-
-        if(kernel->hasFnAttribute("num-threads")) {
-            int numThreads = stoi(kernel->getFnAttribute("num-threads").getValueAsString().str());
-            __verbose("number of threads: ", numThreads);
-            requiresSequentialVersion = numThreads % vectorWidth != 0;
-        }
-
-        __verbose("requires sequential version: ", requiresSequentialVersion);
-
 
         Function *vectorizedKernel  = createVectorizedKernelHeader(&M, kernel);
 
@@ -113,7 +103,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         //vectorized = wfv.analyze();
 
         if(vectorized) {
-            modifyWrapperLoop(vectorWidth, M, requiresSequentialVersion);
+            modifyWrapperLoop(vectorWidth, M);
             vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
         }
         else
@@ -162,7 +152,7 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
     return vectorizedKernel;
 }
 
-bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M, bool requiresSequentialVersion) {
+bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M) {
 
     auto& ctx = M.getContext();
     auto int32_type = Type::getInt32Ty(ctx);
@@ -183,27 +173,6 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M, bool req
     Value* __x = determine_x(F);
     if(!__x)
         return false;
-
-    // if we dont need a sequential version just replace the call and change the loop var incrementation
-    if(!requiresSequentialVersion) {
-        modifyIncrementationOfX(M, F, __x, vectorWidth);
-        CallInst *remove = nullptr;
-        for (auto U : dummyFunction->users()) {
-            if (auto CI = dyn_cast<CallInst>(U)) {
-                if (CI->getParent()->getParent() == F) {
-                    std::vector < Value *> args;
-                    for (Value *argOperand : CI->arg_operands()) {
-                        args.push_back(argOperand);
-                    }
-                    CallInst::Create(vecDummyCall, args, "", CI);
-                    remove = CI;
-                }
-            }
-        }
-        remove->eraseFromParent();
-        dummyFunction->eraseFromParent();
-        return true;
-    }
 
     modifyOldLoop(M);
 
@@ -254,7 +223,6 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M, bool req
 
     for (auto U : dummyFunction->users()) {
         if (CallInst* CI = dyn_cast<CallInst>(U)) {
-            CI->dump();
             __verbose("num args ", CI->getNumArgOperands(), "\n");
             for(Value *arg : CI->arg_operands()) {
                 if (ZExtInst *ZI = dyn_cast<ZExtInst>(arg))

@@ -178,6 +178,8 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
                 continue;
             }
 
+            if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
+
             // ignore tidx instructions to prevent duplication of intrinsic calls
             if(WFV::hasMetadata(inst, WFV::PACXX_ID_X) || WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_X)) continue;
 

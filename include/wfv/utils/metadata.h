@@ -41,6 +41,7 @@ static const char* const PACXX_ID_Z = "idz";
 static const char* const PACXX_GLOBAL_ID_X = "global_id_x";
 static const char* const PACXX_GLOBAL_ID_Y = "global_id_y";
 static const char* const PACXX_GLOBAL_ID_Z = "global_id_z";
+static const char* const PACXX_BARRIER = "barrier";
 
 // Instruction properties
 static const char* const WFV_METADATA_ARGUMENT_CAST         = "wfv_arg_cast";

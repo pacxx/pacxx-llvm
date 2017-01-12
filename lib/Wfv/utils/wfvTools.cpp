@@ -112,6 +112,13 @@ WFV::uncheckedReplaceAllUsesWith(Value* value, Value* with)
     Type* oldType = value->getType();
     Type* newType = with->getType();
     value->mutateType(newType);
+
+    //Update phi nodes type. Otherwise the replacement can cause some errors
+    for(auto *User : value->users()) {
+        if (PHINode *PHI = dyn_cast<PHINode>(User)) {
+            PHI->mutateType(newType);
+        }
+    }
     value->replaceAllUsesWith(with);
     value->mutateType(oldType);
     assert (value->use_empty());

@@ -68,6 +68,9 @@ FunctionVectorizer::vectorizeInstructions(Function* f)
             continue;
         }
 
+        //Ignore barriers
+        if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
+
         //Ignore other instructions of the tidx calculation
         if(WFV::hasMetadata(inst, WFV::PACXX_ID_X)) continue;
 
