@@ -663,6 +663,8 @@ FunctionVectorizer::visitInsertValueInst(InsertValueInst &I)
 bool
 FunctionVectorizer::visitCallInst(CallInst &I)
 {
+    if(WFV::hasPACXXMetadata(&I)) return true;
+
     if(mInfo->mVerbose) outs() << "\nvectorizing call: " << I << "\n";
 
     assert (!WFV::isVectorizedType(*I.getType()) && "call is already vectorized!");
@@ -672,6 +674,7 @@ FunctionVectorizer::visitCallInst(CallInst &I)
 
     Function* f = I.getCalledFunction();
     assert (f);
+
 
     // We should have a 'native' vectorized function in 'nativeMethods'
     // which corresponds to 'f', generate a call to this function

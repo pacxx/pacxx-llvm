@@ -178,10 +178,8 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
                 continue;
             }
 
-            if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
-
-            // ignore tidx instructions to prevent duplication of intrinsic calls
-            if(WFV::hasMetadata(inst, WFV::PACXX_ID_X) || WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_X)) continue;
+            // ignore pacxx instructions to prevent duplication of intrinsic calls
+            if(WFV::hasPACXXMetadata(inst)) continue;
 
             // masked stores and loads are handled during vectorize instruction phase
             if(WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_MASKED)) continue;

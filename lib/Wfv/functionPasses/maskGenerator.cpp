@@ -259,6 +259,9 @@ MaskGenerator::entryMaskIsUsed(const BasicBlock& block) const
             continue;
         }
 
+        // we replace all pacxx intrinsic calls later
+        if(WFV::hasPACXXMetadata(&I)) continue;
+
         const Function* callee = cast<CallInst>(I).getCalledFunction();
         assert (callee);
 

@@ -49,7 +49,8 @@ namespace {
                         PointerType* ptrType = dyn_cast<PointerType>((*I).getType());
                         if (ptrType->getAddressSpace() != 0) {
                             AddrSpaceCastInst* cast = insertAddrSpaceCast(*I, BB);
-                            gatherAndReplaceAddrSpaceCasts(*I, cast);
+                            if(gatherAndReplaceAddrSpaceCasts(*I, cast))
+                                cast->eraseFromParent();
                         }
                     } else
                         continue;
@@ -58,12 +59,16 @@ namespace {
                 for(auto C : _deleteInstructions)
                     C->eraseFromParent();
 
-                BranchInst::Create(functionEntry, BB);
+                if(BB->getInstList().size() > 0)
+                    BranchInst::Create(functionEntry, BB);
+                else
+                    BB->eraseFromParent();
             }
 
         private:
 
-            void gatherAndReplaceAddrSpaceCasts(Argument& arg, AddrSpaceCastInst* cast) {
+            bool gatherAndReplaceAddrSpaceCasts(Argument& arg, AddrSpaceCastInst* cast) {
+                bool replaced = false;
                 for (auto AU : arg.users()) {
                     if (GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(AU)) {
                         std::vector<Value *> idx;
@@ -83,12 +88,14 @@ namespace {
                                 }
                             }
                         }
+                        replaced = true;
                         GEP->replaceAllUsesWith(newGEP);
                     }
 
                     if(PtrToIntInst *ptrToInt = dyn_cast<PtrToIntInst>(AU)) {
                        for (auto PTIU : ptrToInt->users()) {
                             if (IntToPtrInst* intToPtr = dyn_cast<IntToPtrInst>(PTIU)) {
+                                replaced = true;
                                 intToPtr->replaceAllUsesWith(cast);
                                 _deleteInstructions.push_back(intToPtr);
                             }
@@ -96,6 +103,7 @@ namespace {
                         _deleteInstructions.push_back(ptrToInt);
                     }
                 }
+                return replaced;
             }
 
             AddrSpaceCastInst* insertAddrSpaceCast(Argument& arg, BasicBlock* BB) {
@@ -106,7 +114,7 @@ namespace {
 
         private:
 
-            SmallVector<Instruction *, 8> _deleteInstructions;
+            vector<Instruction *> _deleteInstructions;
         };
     };
 

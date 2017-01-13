@@ -38,9 +38,12 @@ namespace WFV {
 static const char* const PACXX_ID_X = "idx";
 static const char* const PACXX_ID_Y = "idy";
 static const char* const PACXX_ID_Z = "idz";
-static const char* const PACXX_GLOBAL_ID_X = "global_id_x";
-static const char* const PACXX_GLOBAL_ID_Y = "global_id_y";
-static const char* const PACXX_GLOBAL_ID_Z = "global_id_z";
+static const char* const PACXX_BLOCK_ID_X = "bidx";
+static const char* const PACXX_BLOCK_ID_Y = "bidy";
+static const char* const PACXX_BLOCK_ID_Z = "bidz";
+static const char* const PACXX_BLOCK_DIM_X = "bdimx";
+static const char* const PACXX_BLOCK_DIM_Y = "bdimy";
+static const char* const PACXX_BLOCK_DIM_Z = "bdimz";
 static const char* const PACXX_BARRIER = "barrier";
 
 // Instruction properties
@@ -133,6 +136,10 @@ void setMetadata(Value* value, const char* const metaDataString);
 bool hasMetadata(const Value* value);
 bool hasWFVMetadata(const Value* value);
 bool hasPACXXMetadata(const Value* value);
+bool isThreadId(const Value *value);
+bool isBlockId(const Value *value);
+bool isBlockDim(const Value *value);
+
 bool hasMetadata(const Value* value, const char* const metaDataString);
 void removeMetadata(Value* value, const char* const metaDataString);
 void copyMetadata(Value* target, const Value& source);

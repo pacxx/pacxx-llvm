@@ -526,95 +526,54 @@ void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
     for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
         Instruction *inst = &*II;
 
-        // mark barrier instruction
+        // mark intrinsics
         if (auto CI = dyn_cast<CallInst>(inst)) {
             auto called = CI->getCalledFunction();
             if (called && called->isIntrinsic()) {
                 auto intrin_id = called->getIntrinsicID();
-                if (intrin_id == Intrinsic::nvvm_barrier0)
-                    WFV::setMetadata(inst, WFV::PACXX_BARRIER);
-            }
-        }
 
-        if (BinaryOperator * binOp = dyn_cast<BinaryOperator>(inst)) {
-
-            if (binOp->getOpcode() == BinaryOperator::Add &&
-                isa<Instruction>(binOp->getOperand(0)) &&
-                isa<Instruction>(binOp->getOperand(1))) {
-                Instruction *firstOperand = dyn_cast<Instruction>(binOp->getOperand(0));
-                Instruction *secondOperand = dyn_cast<Instruction>(binOp->getOperand(1));
-
-                IntrinsicInst *tid = nullptr;
-                BinaryOperator *mul = nullptr;
-
-                if (isa<IntrinsicInst>(firstOperand) && isa<BinaryOperator>(secondOperand)) {
-                    tid = dyn_cast<IntrinsicInst>(firstOperand);
-                    mul = dyn_cast<BinaryOperator>(secondOperand);
-                } else if (isa<IntrinsicInst>(secondOperand) && isa<BinaryOperator>(firstOperand)) {
-                    tid = dyn_cast<IntrinsicInst>(secondOperand);
-                    mul = dyn_cast<BinaryOperator>(firstOperand);
-                }
-
-                if(tid && mul && mul->getOpcode() == Instruction::Mul) {
-
-                    unsigned id = tid->getIntrinsicID();
-                    unsigned ntdi, ctadi;
-                    unsigned dimension;
-
-                    switch (id) {
-                        case Intrinsic::nvvm_read_ptx_sreg_tid_x :
-                            ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_x;
-                            ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
-                            dimension = 0;
-                            WFV::setMetadata(tid, WFV::PACXX_ID_X);
-                            break;
-                        case Intrinsic::nvvm_read_ptx_sreg_tid_y :
-                            ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_y;
-                            ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
-                            dimension = 1;
-                            WFV::setMetadata(tid, WFV::PACXX_ID_Y);
-                            break;
-                        case Intrinsic::nvvm_read_ptx_sreg_tid_z :
-                            ntdi = Intrinsic::nvvm_read_ptx_sreg_ntid_z;
-                            ctadi = Intrinsic::nvvm_read_ptx_sreg_ctaid_z;
-                            dimension = 2;
-                            WFV::setMetadata(tid, WFV::PACXX_ID_Z);
-                            break;
-                        default:
-                            continue;
+                switch (intrin_id) {
+                    case Intrinsic::nvvm_read_ptx_sreg_tid_x : {
+                       WFV::setMetadata(inst, WFV::PACXX_ID_X);
+                       break;
                     }
-
-                    // check that the operands of mul are the intrinsic calls
-                    if (IntrinsicInst * firstOperand = dyn_cast<IntrinsicInst>(mul->getOperand(0))) {
-                        if (IntrinsicInst * secondOperand = dyn_cast<IntrinsicInst>(mul->getOperand(1))) {
-                            if ((firstOperand->getIntrinsicID() == ntdi&&
-                                 secondOperand->getIntrinsicID() == ctadi)
-                                || (firstOperand->getIntrinsicID() == ctadi &&
-                                    secondOperand->getIntrinsicID() == ntdi)) {
-                                // mark the instructions according to the id
-                                switch (dimension) {
-                                    case 0:
-                                        WFV::setMetadata(binOp, WFV::PACXX_GLOBAL_ID_X);
-                                        WFV::setMetadata(mul, WFV::PACXX_ID_X);
-                                        WFV::setMetadata(firstOperand, WFV::PACXX_ID_X);
-                                        WFV::setMetadata(secondOperand, WFV::PACXX_ID_X);
-                                        break;
-                                    case 1:
-                                        WFV::setMetadata(binOp, WFV::PACXX_GLOBAL_ID_Y);
-                                        WFV::setMetadata(mul, WFV::PACXX_ID_Y);
-                                        WFV::setMetadata(firstOperand, WFV::PACXX_ID_Y);
-                                        WFV::setMetadata(secondOperand, WFV::PACXX_ID_Y);
-                                        break;
-                                    case 2:
-                                        WFV::setMetadata(binOp, WFV::PACXX_GLOBAL_ID_Z);
-                                        WFV::setMetadata(mul, WFV::PACXX_ID_Z);
-                                        WFV::setMetadata(firstOperand, WFV::PACXX_ID_Z);
-                                        WFV::setMetadata(secondOperand, WFV::PACXX_ID_Z);
-                                        break;
-                                }
-                            }
-                        }
+                    case Intrinsic::nvvm_read_ptx_sreg_tid_y : {
+                       WFV::setMetadata(inst, WFV::PACXX_ID_Y);
+                       break;
                     }
+                    case Intrinsic::nvvm_read_ptx_sreg_tid_z : {
+                       WFV::setMetadata(inst, WFV::PACXX_ID_Z);
+                       break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x : {
+                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_ID_X);
+                        break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y : {
+                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_ID_Y);
+                        break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z : {
+                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_ID_Z);
+                        break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_ntid_x : {
+                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_DIM_X);
+                        break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_ntid_y : {
+                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_DIM_Y);
+                        break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_ntid_z : {
+                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_DIM_Z);
+                        break;
+                    }
+                    case Intrinsic::nvvm_barrier0 : {
+                        WFV::setMetadata(inst, WFV::PACXX_BARRIER);
+                        break;
+                    }
+                    default: break;
                 }
             }
         }
@@ -638,24 +597,31 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
     //mark instructions of tidx calculation and users
     for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
         Instruction *inst = &*II;
-        if (WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_X) || WFV::hasMetadata(inst, WFV::PACXX_ID_X)) {
+
+        if(WFV::hasMetadata(inst, WFV::PACXX_ID_X)) {
             markValueAs(inst, WFV::WFV_METADATA_OP_VARYING);
             markValueAs(inst, WFV::WFV_METADATA_RES_VECTOR);
 
-            // if the user is a sext instruction we cast the GEP instruction later so we assume the sext as uniform here
-            for (Instruction::user_iterator I = inst->user_begin(), E = inst->user_end(); I != E; I++) {
-                Instruction *userInst = cast<Instruction>(*I);
-                if (!WFV::hasMetadata(userInst, WFV::PACXX_GLOBAL_ID_X) &&
-                    !WFV::hasMetadata(userInst, WFV::PACXX_ID_X)) {
-                    recursivelyMarkVarying(userInst, nullptr);
+            //find the global id calculation
+            Instruction *global_id;
+            for(Instruction::user_iterator I = inst->user_begin(), IE = inst->user_end(); I != IE; ++I) {
+                if(BinaryOperator *add = dyn_cast<BinaryOperator>(*I)) {
+                    if(add->getOpcode() == BinaryOperator::Add)
+                        if(BinaryOperator *mul = dyn_cast<BinaryOperator>(add->getOperand(0)))
+                            if(WFV::hasMetadata(mul->getOperand(0), WFV::PACXX_BLOCK_ID_X) &&
+                                    WFV::hasMetadata(mul->getOperand(1), WFV::PACXX_BLOCK_DIM_X))
+                                global_id = add;
                 }
             }
-        }
 
-        if(WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Y) ||
-                WFV::hasMetadata(inst, WFV::PACXX_ID_Y) ||
-                WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Z) ||
-                WFV::hasMetadata(inst, WFV::PACXX_ID_Z)) {
+            // if the user is a sext instruction we cast the GEP instruction later so we assume the sext as uniform here
+            for (Instruction::user_iterator I = global_id->user_begin(), E = global_id->user_end(); I != E; I++) {
+                Instruction *userInst = cast<Instruction>(*I);
+                if(!WFV::hasPACXXMetadata(userInst))
+                    recursivelyMarkVarying(userInst, nullptr);
+            }
+        }
+        else if(WFV::hasPACXXMetadata(inst)){
             markValueAs(inst, WFV::WFV_METADATA_OP_UNIFORM);
             markValueAs(inst, WFV::WFV_METADATA_RES_UNIFORM);
         }
@@ -756,7 +722,7 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
             continue;
         }
 
-        if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
+        if(WFV::hasPACXXMetadata(inst)) continue;
 
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_VARYING) ||
             WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_SEQUENTIAL) ||
@@ -3017,6 +2983,8 @@ VectorizationAnalysis::updateUniformSideEffectOperations(Function* scalarFn)
             // Ignore our own metadata calls.
             if (WFV::isMetadataCall(inst)) continue;
 
+            if(WFV::hasPACXXMetadata(inst)) continue;
+
             // Ignore all operations that are already marked as VARYING/SEQUENTIAL.
             if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_VARYING) ||
                 WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_SEQUENTIAL) ||
@@ -3429,13 +3397,12 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
     //mark global_id x/y/z as consecutive
     for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
         Instruction *inst = &*II;
-        if (WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_X)) {
+        if (WFV::hasMetadata(inst, WFV::PACXX_ID_X)) {
             WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE);
             WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_FALSE);
             markedValues.insert(inst);
         }
-        else if(WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Y) ||
-                WFV::hasMetadata(inst, WFV::PACXX_GLOBAL_ID_Z)) {
+        else if(WFV::hasPACXXMetadata(inst)) {
             WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_SAME);
             WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_FALSE);
             markedValues.insert(inst);
@@ -4698,6 +4665,8 @@ VectorizationAnalysis::requiresSplit(const Instruction& inst) const
     // Ignore our own metadata calls.
     if (WFV::isMetadataCall(&inst)) return false;
 
+    if(WFV::hasPACXXMetadata(&inst)) return false;
+
     if(mVerbose) outs() << "testing if instruction has to be split: " << inst << "...\n";
 
     // Ignore instructions that were marked previously.
@@ -4728,6 +4697,7 @@ VectorizationAnalysis::requiresSplit(const Instruction& inst) const
     const bool mayHaveSideEffects = WFV::mayHaveSideEffects(inst, mFunctionInfoMap);
     const bool hasSequentialOp = hasSequentialOperand(inst);
     const bool isResScalars = WFV::hasMetadata(&inst, WFV::WFV_METADATA_RES_SCALARS);
+
 
     // Uniform instructions without side effects never have to be split.
     if (isOpUniform && !mayHaveSideEffects && !hasSequentialOp)

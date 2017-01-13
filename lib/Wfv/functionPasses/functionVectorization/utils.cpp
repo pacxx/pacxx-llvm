@@ -505,6 +505,7 @@ FunctionVectorizer::generateHorizontalMerge(SmallVector<Value*, 8>& splitVals,
                                             Instruction*            insertBefore,
                                             const WFVInfo&          info)
 {
+    info.mModule->dump();
     assert (!splitVals.empty());
     assert (splitVals[0]);
     assert (targetType);

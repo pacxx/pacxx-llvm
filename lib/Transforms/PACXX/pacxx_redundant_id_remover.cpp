@@ -31,6 +31,8 @@ public:
         for (auto &F : kernels) {
             changed |= removeRedundantIdCalculations(F);
             moveIdCalculation(F);
+            _instructionsToRemove.clear();
+            changed |= removeRedundantIntrinsics(F);
         }
         return changed;
     }
@@ -47,12 +49,49 @@ private:
         BranchInst::Create(entry, BB);
     }
 
+    bool removeRedundantIntrinsics(Function *F) {
+        removeRedundantIntrinsic(F, IdHelper::X);
+        removeRedundantIntrinsic(F, IdHelper::Y);
+        removeRedundantIntrinsic(F, IdHelper::Z);
+
+        for(auto inst : _instructionsToRemove)
+            inst->eraseFromParent();
+
+        if(_instructionsToRemove.size() == 0)
+            return false;
+        return true;
+    }
+
+    void removeRedundantIntrinsic(Function *F, IdHelper::IdType id) {
+        Value *thread_id = nullptr, *block_id = nullptr, *block_dim = nullptr;
+        for (auto &B : *F) {
+            for (auto &I : B) {
+                if (CallInst *call = dyn_cast<CallInst>(&I)) {
+
+                    if(IdHelper::isThreadId(call, id) && !thread_id)
+                        thread_id = call;
+                    else
+                        _instructionsToRemove.push_back(call);
+
+                    if(IdHelper::isBlockId(call, id) && !block_id)
+                        block_id = call;
+                    else
+                        _instructionsToRemove.push_back(call);
+
+                    if(IdHelper::isBlockDim(call, id) && !block_dim)
+                        block_dim = call;
+                    else
+                        _instructionsToRemove.push_back(call);
+                }
+            }
+        }
+    }
+
+
     bool removeRedundantIdCalculations(Function *F) {
         removeRedundantIdCalculation(F, IdHelper::X);
         removeRedundantIdCalculation(F, IdHelper::Y);
         removeRedundantIdCalculation(F, IdHelper::Z);
-
-
 
         for (auto inst : _instructionsToRemove) {
             inst->eraseFromParent();

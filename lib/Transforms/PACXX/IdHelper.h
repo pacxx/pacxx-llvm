@@ -12,6 +12,66 @@ namespace pacxx {
             X, Y, Z
         };
 
+        inline bool isThreadId(CallInst *inst, IdType id) {
+            auto called = inst->getCalledFunction();
+            if (called && called->isIntrinsic()) {
+                auto intrin_id = called->getIntrinsicID();
+
+                switch (id) {
+                    case X:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_x;
+                    case Y:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_y;
+                    case Z:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_z;
+                    default:
+                        __verbose("unsupported id specified. doing nothing");
+                        return false;
+                }
+            }
+            return false;
+        }
+
+        inline bool isBlockId(CallInst *inst, IdType id) {
+            auto called = inst->getCalledFunction();
+            if (called && called->isIntrinsic()) {
+                auto intrin_id = called->getIntrinsicID();
+
+                switch (id) {
+                    case X:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
+                    case Y:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
+                    case Z:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_z;
+                    default:
+                        __verbose("unsupported id specified. doing nothing");
+                        return false;
+                }
+            }
+            return false;
+        }
+
+        inline bool isBlockDim(CallInst *inst, IdType id) {
+            auto called = inst->getCalledFunction();
+            if (called && called->isIntrinsic()) {
+                auto intrin_id = called->getIntrinsicID();
+
+                switch (id) {
+                    case X:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_x;
+                    case Y:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_y;
+                    case Z:
+                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_z;
+                    default:
+                        __verbose("unsupported id specified. doing nothing");
+                        return false;
+                }
+            }
+            return false;
+        }
+
         inline bool multiplyingIds(Instruction *inst, IdType id) {
             if (!(inst->getOpcode() == Instruction::Mul))
                 return false;
