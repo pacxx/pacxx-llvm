@@ -68,20 +68,28 @@ private:
             for (auto &I : B) {
                 if (CallInst *call = dyn_cast<CallInst>(&I)) {
 
-                    if(IdHelper::isThreadId(call, id) && !thread_id)
-                        thread_id = call;
-                    else
-                        _instructionsToRemove.push_back(call);
-
-                    if(IdHelper::isBlockId(call, id) && !block_id)
-                        block_id = call;
-                    else
-                        _instructionsToRemove.push_back(call);
-
-                    if(IdHelper::isBlockDim(call, id) && !block_dim)
-                        block_dim = call;
-                    else
-                        _instructionsToRemove.push_back(call);
+                    if (IdHelper::isThreadId(call, id)) {
+                        if (!thread_id)
+                            thread_id = call;
+                        else {
+                            call->replaceAllUsesWith(thread_id);
+                            _instructionsToRemove.push_back(call);
+                        }
+                    } else if (IdHelper::isBlockId(call, id)) {
+                        if (!block_id)
+                            block_id = call;
+                        else {
+                            call->replaceAllUsesWith(block_id);
+                            _instructionsToRemove.push_back(call);
+                        }
+                    } else if (IdHelper::isBlockDim(call, id)) {
+                        if (!block_dim)
+                            block_dim = call;
+                        else {
+                            call->replaceAllUsesWith(thread_id);
+                            _instructionsToRemove.push_back(call);
+                        }
+                    }
                 }
             }
         }

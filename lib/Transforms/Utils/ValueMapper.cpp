@@ -838,9 +838,14 @@ void Mapper::remapInstruction(Instruction *I) {
     // If we aren't ignoring missing entries, assert that something happened.
     if (V)
       Op = V;
-    else
+    else {
+      if(!(Flags & RF_IgnoreMissingLocals)) {
+        I->dump();
+        Op.get()->dump();
+      }
       assert((Flags & RF_IgnoreMissingLocals) &&
              "Referenced value not in value map!");
+    }
   }
 
   // Remap phi nodes' incoming blocks.

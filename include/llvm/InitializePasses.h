@@ -360,9 +360,9 @@ void initializeXRayInstrumentationPass(PassRegistry &);
 
 //native backend passes
 void initializePACXXAddrSpaceTransformPass(PassRegistry&);
-void initializeSPMDAnalysisPass(PassRegistry&);
 void initializeSPMDVectorizerPass(PassRegistry&);
 void initializePACXXNativeBarrierPass(PassRegistry&);
+void initializePACXXNativeLivenessAnalyzerPass(PassRegistry&);
 
 }
 

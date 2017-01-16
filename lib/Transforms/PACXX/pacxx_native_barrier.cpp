@@ -1,224 +1,206 @@
 // Created by lars
 
 #include "Log.h"
-
-#include "llvm/Pass.h"
-#include "llvm/LinkAllPasses.h"
-#include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/IR/InlineAsm.h"
-#include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetLowering.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Analysis/ValueTracking.h"
-#include "llvm/ADT/SCCIterator.h"
-#include "../../IR/LLVMContextImpl.h"
+#include "pacxx_liveness_analysis.h"
 
 using namespace llvm;
 using namespace std;
 using namespace pacxx;
 
-namespace {
 
-    class PACXXNativeBarrier : public llvm::ModulePass {
+class PACXXNativeBarrier : public llvm::ModulePass {
 
-    public:
-        static char ID;
+public:
+    static char ID;
 
-        PACXXNativeBarrier() : llvm::ModulePass(ID) { initializePACXXNativeBarrierPass(*PassRegistry::getPassRegistry()); }
+    PACXXNativeBarrier() : llvm::ModulePass(ID) { initializePACXXNativeBarrierPass(*PassRegistry::getPassRegistry()); }
 
-        virtual ~PACXXNativeBarrier() {};
+    virtual ~PACXXNativeBarrier() {};
 
-        void releaseMemory() override;
+    void releaseMemory() override;
 
-        void getAnalysisUsage(AnalysisUsage& AU) const override;
+    void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-        bool runOnModule(llvm::Module& M) override;
+    bool runOnModule(llvm::Module &M) override;
 
-    private:
+private:
 
-        struct BarrierInfo {
-            BarrierInfo(const unsigned id,
-                        const Instruction *barrier,
-                        const BasicBlock *entry,
-                        SetVector<const BasicBlock *> parts,
-                        SetVector<const Value*> livingValues,
-                        StructType *livingValuesType)
-                    : _id(id),
-                      _barrier(barrier),
-                      _entry(entry),
-                      _parts(parts),
-                      _livingValues(livingValues),
-                      _livingValuesType(livingValuesType),
-                      _func(nullptr) {}
+    struct BarrierInfo {
+        BarrierInfo(const unsigned id,
+                    const Instruction *barrier,
+                    const BasicBlock *entry,
+                    SetVector<BasicBlock *> parts,
+                    SetVector<const Value *> livingValues,
+                    StructType *livingValuesType)
+                : _id(id),
+                  _barrier(barrier),
+                  _entry(entry),
+                  _parts(parts),
+                  _livingValues(livingValues),
+                  _livingValuesType(livingValuesType),
+                  _func(nullptr) {}
 
-            ~BarrierInfo() {}
+        ~BarrierInfo() {}
 
-            const unsigned _id;
-            const Instruction *_barrier;
-            const BasicBlock *_entry;
-            SetVector<const BasicBlock *> _parts;
-            SetVector<const Value *> _livingValues;
-            StructType *_livingValuesType;
+        const unsigned _id;
+        const Instruction *_barrier;
+        const BasicBlock *_entry;
+        SetVector<BasicBlock *> _parts;
+        SetVector<const Value *> _livingValues;
+        StructType *_livingValuesType;
 
 
-            Function *_func;
-            ValueToValueMapTy _VMap;
+        Function *_func;
+        ValueToValueMapTy _VMap;
+        ValueToValueMapTy _OrigFnMap;
 
-            string toString() {
-                string text;
-                raw_string_ostream ss(text);
+        string toString() {
+            string text;
+            raw_string_ostream ss(text);
 
-                ss << "barrier with id: " << _id << "\n";
+            ss << "barrier with id: " << _id << "\n";
 
-                for(auto part : _parts) {
-                    ss << part->getName().str();
-                    ss << "\n";
-                }
-
+            for (auto part : _parts) {
+                ss << part->getName().str();
                 ss << "\n";
-                ss << "living values: \n";
-                for(auto value : _livingValues) {
-                    value->print(ss, true);
-                    ss << "\n";
-                }
-
-                return ss.str();
             }
-        };
 
-        struct Alloca3 {
+            ss << "\n";
+            ss << "living values: \n";
+            for (auto value : _livingValues) {
+                value->print(ss, true);
+                ss << "\n";
+            }
 
-            Alloca3(AllocaInst *x, AllocaInst *y, AllocaInst *z) : _x(x), _y(y), _z(z) {}
-
-            ~Alloca3() {}
-
-            AllocaInst *_x;
-            AllocaInst *_y;
-            AllocaInst *_z;
-
-        };
-
-        struct CaseInfo {
-
-            CaseInfo(unsigned id,
-                     uint64_t maxStructSize,
-                     Function *foo,
-                     BasicBlock *switchBB,
-                     BasicBlock *breakBB,
-                     AllocaInst *switchParam,
-                     Alloca3 &max,
-                     pair<AllocaInst*, AllocaInst*> loadStruct,
-                     pair<AllocaInst*, AllocaInst*> nextStruct,
-                     pair<StructType*, StructType*> loadType,
-                     pair<Function*, Function*> calledFunctions)
-                    : _id(id),
-                      _maxStructSize(maxStructSize),
-                      _foo(foo),
-                      _switchBB(switchBB),
-                      _breakBB(breakBB),
-                      _switchParam(switchParam),
-                      _max3(max),
-                      _loadStruct(loadStruct),
-                      _nextStruct(nextStruct),
-                      _loadType(loadType),
-                      _calledFunctions(calledFunctions) {}
-
-            ~CaseInfo() {}
-
-            const unsigned _id;
-            const uint64_t _maxStructSize;
-            Function *_foo;
-            BasicBlock *_switchBB;
-            BasicBlock *_breakBB;
-            AllocaInst *_switchParam;
-            const Alloca3 _max3;
-            const pair<AllocaInst*, AllocaInst *> _loadStruct;
-            const pair<AllocaInst *, AllocaInst *> _nextStruct;
-            const pair<StructType*, StructType*> _loadType;
-            const pair<Function *, Function *> _calledFunctions;
-        };
-
-        unsigned getVectorWidth(Function *kernel);
-
-        bool runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> &infoVec, bool vecVersion = false);
-
-        vector<Instruction *> findBarriers(Function *kernel);
-
-        bool isaBarrier(const Instruction *inst);
-
-        void splitAtBarriers(Module &M, vector<Instruction *> barriers);
-
-        BarrierInfo* createFirstInfo(LLVMContext &ctx, Function *kernel);
-
-        BarrierInfo* createBarrierInfo(LLVMContext &ctx, Instruction *barrier, unsigned id);
-
-        SetVector<const BasicBlock *> getPartsOfBarrier(Instruction *barrier);
-
-        void recursivePartFinding(BasicBlock *block, SetVector<const BasicBlock *> &parts);
-
-        bool hasBarrier(const BasicBlock *block);
-
-        SetVector<const Value *> getLivingValuesForBarrier(SetVector<const BasicBlock *> &parts);
-
-        bool definedInParts(SetVector<const BasicBlock *> &parts, Value * value);
-
-        StructType *getLivingValuesType(LLVMContext &ctx, SetVector<const Value *> &livingValues);
-
-        Function *createFunction(Module &M, Function *kernel, BarrierInfo *info);
-
-        void storeLiveValues(Module &M, BarrierInfo *info);
-
-        void prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc);
-
-        void createSpecialFooWrapper(Module &M, Function *foo,
-                                     SetVector<BarrierInfo *> barrierInfo,
-                                     SetVector<BarrierInfo *> vecBarrierInfo);
-
-        uint64_t getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos);
-
-        AllocaInst *createMemForLivingValues(const DataLayout &dl, uint64_t maxStructSize,
-                                             Value *numThreads, BasicBlock *BB);
-
-        BasicBlock *createCase(Module &M, const CaseInfo &info, bool vectorized);
-
-        pair<BasicBlock *, BasicBlock*> createXLoop(Module &M,
-                                                    const CaseInfo &info,
-                                                    Alloca3 id,
-                                                    BasicBlock *afterBB,
-                                                    BasicBlock *falseBB,
-                                                    bool vectorized);
-        void fillLoopXBody(Module &M,
-                           const CaseInfo &info,
-                           BasicBlock *loopBody,
-                           BasicBlock *nextBB,
-                           Alloca3 &id,
-                           bool vectorized);
-
-        void fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
-                                 BasicBlock *trueBB, BasicBlock *falseBB);
-
-        void fillLoopEnd(BasicBlock *loopEnd, BasicBlock *branchBB, AllocaInst *loopValue, Type *int32_type,
-                         unsigned incVal);
-
-    private:
-        ValueToValueMapTy _origFnValueMap;
-        DenseMap<const Instruction*, unsigned> _indexMap;
-        vector<CallInst *> _inlineCalls;
-        unsigned _vectorWidth;
+            return ss.str();
+        }
     };
-}
+
+    struct Alloca3 {
+
+        Alloca3(AllocaInst *x, AllocaInst *y, AllocaInst *z) : _x(x), _y(y), _z(z) {}
+
+        ~Alloca3() {}
+
+        AllocaInst *_x;
+        AllocaInst *_y;
+        AllocaInst *_z;
+
+    };
+
+    struct CaseInfo {
+
+        CaseInfo(unsigned id,
+                 uint64_t maxStructSize,
+                 Function *foo,
+                 BasicBlock *switchBB,
+                 BasicBlock *breakBB,
+                 AllocaInst *switchParam,
+                 Alloca3 &max,
+                 pair<AllocaInst *, AllocaInst *> loadStruct,
+                 pair<AllocaInst *, AllocaInst *> nextStruct,
+                 pair<StructType *, StructType *> loadType,
+                 pair<Function *, Function *> calledFunctions)
+                : _id(id),
+                  _maxStructSize(maxStructSize),
+                  _foo(foo),
+                  _switchBB(switchBB),
+                  _breakBB(breakBB),
+                  _switchParam(switchParam),
+                  _max3(max),
+                  _loadStruct(loadStruct),
+                  _nextStruct(nextStruct),
+                  _loadType(loadType),
+                  _calledFunctions(calledFunctions) {}
+
+        ~CaseInfo() {}
+
+        const unsigned _id;
+        const uint64_t _maxStructSize;
+        Function *_foo;
+        BasicBlock *_switchBB;
+        BasicBlock *_breakBB;
+        AllocaInst *_switchParam;
+        const Alloca3 _max3;
+        const pair<AllocaInst *, AllocaInst *> _loadStruct;
+        const pair<AllocaInst *, AllocaInst *> _nextStruct;
+        const pair<StructType *, StructType *> _loadType;
+        const pair<Function *, Function *> _calledFunctions;
+    };
+
+    unsigned getVectorWidth(Function *kernel);
+
+    bool runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> &infoVec, bool vecVersion = false);
+
+    vector<Instruction *> findBarriers(Function *kernel);
+
+    bool isaBarrier(const Instruction *inst);
+
+    void splitAtBarriers(Module &M, vector<Instruction *> barriers);
+
+    BarrierInfo *createFirstInfo(LLVMContext &ctx, Function *kernel);
+
+    BarrierInfo *createBarrierInfo(LLVMContext &ctx, Instruction *barrier, unsigned id);
+
+    SetVector<BasicBlock *> getPartsOfBarrier(Instruction *barrier);
+
+    void recursivePartFinding(BasicBlock *block, SetVector<BasicBlock *> &parts);
+
+    bool hasBarrier(const BasicBlock *block);
+
+    SetVector<const Value *> getLivingValuesForBarrier(SetVector<BasicBlock *> &parts);
+
+    StructType *getLivingValuesType(LLVMContext &ctx, SetVector<const Value *> &livingValues);
+
+    Function *createFunction(Module &M, Function *kernel, BarrierInfo *info);
+
+    void storeLiveValues(Module &M, BarrierInfo *info);
+
+    void prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc);
+
+    void createSpecialFooWrapper(Module &M, Function *foo,
+                                 SetVector<BarrierInfo *> barrierInfo,
+                                 SetVector<BarrierInfo *> vecBarrierInfo);
+
+    uint64_t getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos);
+
+    AllocaInst *createMemForLivingValues(const DataLayout &dl, uint64_t maxStructSize,
+                                         Value *numThreads, BasicBlock *BB);
+
+    BasicBlock *createCase(Module &M, const CaseInfo &info, bool vectorized);
+
+    pair<BasicBlock *, BasicBlock *> createXLoop(Module &M,
+                                                 const CaseInfo &info,
+                                                 Alloca3 id,
+                                                 BasicBlock *afterBB,
+                                                 BasicBlock *falseBB,
+                                                 bool vectorized);
+
+    void fillLoopXBody(Module &M,
+                       const CaseInfo &info,
+                       BasicBlock *loopBody,
+                       BasicBlock *nextBB,
+                       Alloca3 &id,
+                       bool vectorized);
+
+    void fillLoopHeader(BasicBlock *loopHeader, AllocaInst *loopVar, AllocaInst *loopMax,
+                        BasicBlock *trueBB, BasicBlock *falseBB);
+
+    void fillLoopEnd(BasicBlock *loopEnd, BasicBlock *branchBB, AllocaInst *loopValue, Type *int32_type,
+                     unsigned incVal);
+
+private:
+    PACXXNativeLivenessAnalyzer *_livenessAnalyzer;
+    DenseMap<const Instruction *, unsigned> _indexMap;
+    vector<CallInst *> _inlineCalls;
+    unsigned _vectorWidth;
+};
 
 void PACXXNativeBarrier::releaseMemory() {}
 
-void PACXXNativeBarrier::getAnalysisUsage(AnalysisUsage &AU) const {}
+void PACXXNativeBarrier::getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.addRequired<PACXXNativeLivenessAnalyzer>();
+}
 
 bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
 
@@ -244,7 +226,6 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
             if (vec_kernel) {
                 __verbose("Running for vectorized kernel");
                 _vectorWidth = getVectorWidth(vec_kernel);
-                _origFnValueMap.clear();
                 _indexMap.clear();
                 runOnFunction(M, vec_kernel, vecBarrierInfo, true);
             }
@@ -289,6 +270,9 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
     __verbose("Found ", numBarriers, " barriers. Modifying \n");
 
     splitAtBarriers(M, barriers);
+
+    __verbose("Getting living value analysis \n");
+    _livenessAnalyzer = &getAnalysis<PACXXNativeLivenessAnalyzer>(*kernel);
 
     infoVec.insert(createFirstInfo(ctx, kernel));
 
@@ -364,7 +348,7 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createFirstInfo(LLVMContext
 
     StructType* type = StructType::get(ctx, params, false);
 
-    SetVector<const BasicBlock *> parts;
+    SetVector<BasicBlock *> parts;
     BasicBlock *functionEntry = &kernel->getEntryBlock();
     parts.insert(functionEntry);
     recursivePartFinding(functionEntry, parts);
@@ -392,14 +376,14 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createBarrierInfo(LLVMConte
     return info;
 }
 
-SetVector<const BasicBlock *> PACXXNativeBarrier::getPartsOfBarrier(Instruction *barrier) {
-    SetVector<const BasicBlock *> parts;
+SetVector<BasicBlock *> PACXXNativeBarrier::getPartsOfBarrier(Instruction *barrier) {
+    SetVector<BasicBlock *> parts;
     BasicBlock *barrierParent = barrier->getParent();
     recursivePartFinding(barrierParent, parts);
     return parts;
 }
 
-void PACXXNativeBarrier::recursivePartFinding(BasicBlock *block, SetVector<const BasicBlock *> &parts) {
+void PACXXNativeBarrier::recursivePartFinding(BasicBlock *block, SetVector<BasicBlock *> &parts) {
     for (auto I = succ_begin(block), IE = succ_end(block); I != IE; ++I) {
         BasicBlock *B = *I;
         //if we already inserted this block ignore it
@@ -419,25 +403,10 @@ bool PACXXNativeBarrier::hasBarrier(const BasicBlock *block) {
     return false;
 }
 
-SetVector<const Value *> PACXXNativeBarrier::getLivingValuesForBarrier(SetVector<const BasicBlock *> &parts) {
+SetVector<const Value *> PACXXNativeBarrier::getLivingValuesForBarrier(SetVector<BasicBlock *> &parts) {
     __verbose("get living values for barrier \n");
-    SetVector<const Value *> livingValues;
-    for(auto block : parts) {
-        // If a used value is defined outside the region, it's an input
-        for (auto I = block->begin(), IE = block->end(); I != IE; ++I) {
-            for (auto OI = I->op_begin(), OE = I->op_end(); OI != OE; ++OI)
-                if (definedInParts(parts, *OI))
-                    livingValues.insert(*OI);
-        }
-    }
-    return livingValues;
-}
-
-bool PACXXNativeBarrier::definedInParts(SetVector<const BasicBlock *> &parts, Value * value) {
-    if (Instruction *I = dyn_cast<Instruction>(value))
-        if (!parts.count(I->getParent()))
-            return true;
-    return false;
+    auto livingValues = _livenessAnalyzer->getLivingInValuesForBlock(parts[0]);
+    return SetVector<const Value *>(livingValues.begin(), livingValues.end());
 }
 
 StructType *PACXXNativeBarrier::getLivingValuesType(LLVMContext &ctx, SetVector<const Value *> &livingValues) {
@@ -461,7 +430,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     if(info->_id == 0)
         kernel->setName("old" + kernel->getName().str());
 
-    SetVector<const BasicBlock *> &parts = info->_parts;
+    SetVector<BasicBlock *> &parts = info->_parts;
     SetVector<const Value *> &livingValues = info->_livingValues;
 
     StructType *livingValuesType = info->_livingValuesType;
@@ -481,7 +450,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     ValueToValueMapTy &VMap = info->_VMap;
 
     // map instructions of old function to new ones
-    ValueToValueMapTy &OrigVMap = _origFnValueMap;
+    ValueToValueMapTy &OrigVMap = info->_OrigFnMap;
 
     auto liveValueArg = --newFunc->arg_end();
     liveValueArg->setName("native.struct");
@@ -520,14 +489,18 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     //replace branch after barrier with return
     __verbose("replace branch after barrier \n");
     for (auto I=parts.begin(), IE=parts.end(); I != IE; ++I) {
-        const BasicBlock *origBB = *I;
+        BasicBlock *origBB = *I;
         BasicBlock *copyBB = cast<BasicBlock>(VMap[origBB]);
         if(!hasBarrier(origBB))
             continue;
-        const Instruction* barrier = &*(--(--origBB->end()));
+        Instruction* barrier = &*(--(--origBB->end()));
+
+        OrigVMap[info->_barrier] = barrier;
+
         copyBB->getTerminator()->eraseFromParent();
         const unsigned barrierIndex = _indexMap[barrier];
         ReturnInst::Create(ctx, ConstantInt::get(Type::getInt32Ty(ctx), barrierIndex, true), copyBB);
+
     }
 
     __verbose("Finished creating function \n");
@@ -548,7 +521,9 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info) {
     if(!origBarrier)
         return;
 
-    Instruction *barrier = cast<Instruction>(_origFnValueMap[origBarrier]);
+    Instruction *barrier = cast<Instruction>(info->_OrigFnMap[origBarrier]);
+
+    barrier->dump();
 
     auto livingValues = info->_livingValues;
 
@@ -562,7 +537,7 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info) {
 
     unsigned i = 0;
     for (auto origValue : livingValues) {
-        Value *value = _origFnValueMap[origValue];
+        Value *value = info->_OrigFnMap[origValue];
         SmallVector<Value*, 8> idx;
         idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
         idx.push_back(ConstantInt::get(ctx, APInt(32, i++)));
@@ -679,20 +654,13 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
     //create Cases
     for(unsigned i = 0; i < barrierInfo.size(); ++i) {
 
-        // handle last case where we have no next mem
-        pair<AllocaInst*, AllocaInst*> nextMem;
-        if(i != barrierInfo.size() -1)
-            nextMem = livingValuesMem;
-        else
-            nextMem = make_pair(nullptr, nullptr);
-
         pair<Function *, Function *> calledFunctions = make_pair(barrierInfo[i]->_func,
                                                                  vectorized ? vecBarrierInfo[i]->_func : nullptr);
         pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
                                                   vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
 
         const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, switchBB, breakBB, allocSwitchParam, alloc_max,
-                                 livingValuesMem, nextMem, loadTypes, calledFunctions);
+                                 livingValuesMem, livingValuesMem, loadTypes, calledFunctions);
         BasicBlock *caseBlock = createCase(M, info, vectorized);
 
         //add case to switch
@@ -706,6 +674,7 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
     ReturnInst::Create(ctx, nullptr, lastBB);
 
     //now inline all calls and remove the no longer required functions
+    M.dump();
     for(auto call : _inlineCalls) {
         InlineFunctionInfo IFI;
         InlineFunction(call, IFI);
@@ -1040,6 +1009,7 @@ char PACXXNativeBarrier::ID = 0;
 
 INITIALIZE_PASS_BEGIN(PACXXNativeBarrier, "native-barrier",
                 "Native barrier", true, true)
+INITIALIZE_PASS_DEPENDENCY(PACXXNativeLivenessAnalyzer)
 INITIALIZE_PASS_END(PACXXNativeBarrier, "native-barrier",
                 "Native barrier", true, true)
 

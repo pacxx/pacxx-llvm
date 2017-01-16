@@ -26,6 +26,7 @@ Pass *createPACXXDeadCodeElimPass();
 Pass *createPACXXAddrSpaceTransformPass();
 Pass *createPACXXIdRemoverPass();
 Pass *createSPMDVectorizerPass();
+Pass *createPACXXLivenessAnalyzerPass();
 Pass *createPACXXNativeBarrierPass();
 Pass *createPACXXNativeLinkerPass();
 }

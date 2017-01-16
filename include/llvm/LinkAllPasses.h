@@ -233,6 +233,7 @@ namespace {
       (void) llvm::createPACXXIdRemoverPass();
       (void) llvm::createSPMDVectorizerPass();
       (void) llvm::createPACXXNativeBarrierPass();
+      (void) llvm::createPACXXLivenessAnalyzerPass();
       (void) llvm::createPACXXNativeLinkerPass();
 
       (void) llvm::sys::RunningOnValgrind();

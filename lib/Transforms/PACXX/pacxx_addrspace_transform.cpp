@@ -49,7 +49,7 @@ namespace {
                         PointerType* ptrType = dyn_cast<PointerType>((*I).getType());
                         if (ptrType->getAddressSpace() != 0) {
                             AddrSpaceCastInst* cast = insertAddrSpaceCast(*I, BB);
-                            if(gatherAndReplaceAddrSpaceCasts(*I, cast))
+                            if(!gatherAndReplaceAddrSpaceCasts(*I, cast))
                                 cast->eraseFromParent();
                         }
                     } else
