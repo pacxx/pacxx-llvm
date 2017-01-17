@@ -29,7 +29,7 @@ private:
         BarrierInfo(const unsigned id,
                     const Instruction *barrier,
                     const BasicBlock *entry,
-                    SetVector<BasicBlock *> parts,
+                    SetVector<const BasicBlock *> parts,
                     SetVector<const Value *> livingValues,
                     StructType *livingValuesType)
                 : _id(id),
@@ -45,13 +45,12 @@ private:
         const unsigned _id;
         const Instruction *_barrier;
         const BasicBlock *_entry;
-        SetVector<BasicBlock *> _parts;
+        SetVector<const BasicBlock *> _parts;
         SetVector<const Value *> _livingValues;
         StructType *_livingValuesType;
 
 
         Function *_func;
-        ValueToValueMapTy _VMap;
         ValueToValueMapTy _OrigFnMap;
 
         string toString() {
@@ -142,19 +141,19 @@ private:
 
     BarrierInfo *createBarrierInfo(LLVMContext &ctx, Instruction *barrier, unsigned id);
 
-    SetVector<BasicBlock *> getPartsOfBarrier(Instruction *barrier);
+    SetVector<const BasicBlock *> getPartsOfBarrier(Instruction *barrier);
 
-    void recursivePartFinding(BasicBlock *block, SetVector<BasicBlock *> &parts);
+    void recursivePartFinding(BasicBlock *block, SetVector<const BasicBlock *> &parts);
 
     bool hasBarrier(const BasicBlock *block);
 
-    SetVector<const Value *> getLivingValuesForBarrier(SetVector<BasicBlock *> &parts);
+    SetVector<const Value *> getLivingValuesForBarrier(SetVector<const BasicBlock *> &parts);
 
     StructType *getLivingValuesType(LLVMContext &ctx, SetVector<const Value *> &livingValues);
 
     Function *createFunction(Module &M, Function *kernel, BarrierInfo *info);
 
-    void storeLiveValues(Module &M, BarrierInfo *info);
+    void storeLiveValues(Module &M, BarrierInfo *info, ValueToValueMapTy &origFnMap);
 
     void prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc);
 
@@ -284,11 +283,20 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
 
     for(auto info : infoVec) {
         Function *newFunc = createFunction(M, kernel, info);
-        storeLiveValues(M, info);
+        //storeLiveValues(M, info);
         if(info->_id == 0 && !vecVersion) {
             prepareFunctionForLinker(M, kernel, newFunc);
         }
     }
+
+    for(auto info : infoVec) {
+        auto origBarrier = info->_barrier;
+        for(auto lookForMap : infoVec) {
+            if (lookForMap->_OrigFnMap.count(origBarrier))
+                storeLiveValues(M, info, lookForMap->_OrigFnMap);
+        }
+    }
+
     return true;
 }
 
@@ -348,7 +356,7 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createFirstInfo(LLVMContext
 
     StructType* type = StructType::get(ctx, params, false);
 
-    SetVector<BasicBlock *> parts;
+    SetVector<const BasicBlock *> parts;
     BasicBlock *functionEntry = &kernel->getEntryBlock();
     parts.insert(functionEntry);
     recursivePartFinding(functionEntry, parts);
@@ -376,14 +384,14 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createBarrierInfo(LLVMConte
     return info;
 }
 
-SetVector<BasicBlock *> PACXXNativeBarrier::getPartsOfBarrier(Instruction *barrier) {
-    SetVector<BasicBlock *> parts;
+SetVector<const BasicBlock *> PACXXNativeBarrier::getPartsOfBarrier(Instruction *barrier) {
+    SetVector<const BasicBlock *> parts;
     BasicBlock *barrierParent = barrier->getParent();
     recursivePartFinding(barrierParent, parts);
     return parts;
 }
 
-void PACXXNativeBarrier::recursivePartFinding(BasicBlock *block, SetVector<BasicBlock *> &parts) {
+void PACXXNativeBarrier::recursivePartFinding(BasicBlock *block, SetVector<const BasicBlock *> &parts) {
     for (auto I = succ_begin(block), IE = succ_end(block); I != IE; ++I) {
         BasicBlock *B = *I;
         //if we already inserted this block ignore it
@@ -403,7 +411,7 @@ bool PACXXNativeBarrier::hasBarrier(const BasicBlock *block) {
     return false;
 }
 
-SetVector<const Value *> PACXXNativeBarrier::getLivingValuesForBarrier(SetVector<BasicBlock *> &parts) {
+SetVector<const Value *> PACXXNativeBarrier::getLivingValuesForBarrier(SetVector<const BasicBlock *> &parts) {
     __verbose("get living values for barrier \n");
     auto livingValues = _livenessAnalyzer->getLivingInValuesForBlock(parts[0]);
     return SetVector<const Value *>(livingValues.begin(), livingValues.end());
@@ -430,7 +438,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     if(info->_id == 0)
         kernel->setName("old" + kernel->getName().str());
 
-    SetVector<BasicBlock *> &parts = info->_parts;
+    SetVector<const BasicBlock *> &parts = info->_parts;
     SetVector<const Value *> &livingValues = info->_livingValues;
 
     StructType *livingValuesType = info->_livingValuesType;
@@ -447,7 +455,6 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     Function *newFunc = Function::Create(fnType, Function::ExternalLinkage, name, &M);
 
     // clone corresponding basic blocks into new function
-    ValueToValueMapTy &VMap = info->_VMap;
 
     // map instructions of old function to new ones
     ValueToValueMapTy &OrigVMap = info->_OrigFnMap;
@@ -459,14 +466,14 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     }
 
     for (auto value : livingValues) {
-        VMap[value] = &*liveValueArg;
+        OrigVMap[value] = &*liveValueArg;
         (liveValueArg++)->setName(value->getName());
     }
 
     SmallVector<BasicBlock *, 8> clonedBlocks;
     for(auto block : parts) {
-        BasicBlock * cloned = CloneBasicBlock(block, VMap, "", newFunc);
-        VMap[block] = cloned;
+        BasicBlock * cloned = CloneBasicBlock(block, OrigVMap, "", newFunc);
+        OrigVMap[block] = cloned;
         // map all instructions of cloned basic blocks
         auto CI = cloned->begin();
         for(auto I = block->begin(), IE = block->end(); I != IE; ++I, CI++) {
@@ -475,7 +482,8 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
         clonedBlocks.push_back(cloned);
     }
 
-    remapInstructionsInBlocks(clonedBlocks, VMap);
+    remapInstructionsInBlocks(clonedBlocks, OrigVMap);
+
 
     //replace all returns with return -1
     __verbose("replace returns with -1 \n");
@@ -489,19 +497,60 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     //replace branch after barrier with return
     __verbose("replace branch after barrier \n");
     for (auto I=parts.begin(), IE=parts.end(); I != IE; ++I) {
-        BasicBlock *origBB = *I;
-        BasicBlock *copyBB = cast<BasicBlock>(VMap[origBB]);
+        const BasicBlock *origBB = *I;
+        BasicBlock *copyBB = cast<BasicBlock>(OrigVMap[origBB]);
         if(!hasBarrier(origBB))
             continue;
-        Instruction* barrier = &*(--(--origBB->end()));
-
-        OrigVMap[info->_barrier] = barrier;
+        const Instruction* barrier = &*(--(--origBB->end()));
 
         copyBB->getTerminator()->eraseFromParent();
         const unsigned barrierIndex = _indexMap[barrier];
         ReturnInst::Create(ctx, ConstantInt::get(Type::getInt32Ty(ctx), barrierIndex, true), copyBB);
 
     }
+
+    //manually map living values that are not correctly mapped
+    __verbose("start manual remapping \n");
+    auto argIt = newFunc->arg_begin();
+    DominatorTree domTree = DominatorTree(*newFunc);
+    for(auto livingValue : livingValues) {
+        if (isa<Argument>(livingValue)) {
+            __verbose("is an argument \n");
+            argIt++;
+            continue;
+        }
+
+        // if all uses were already replaced above, skip this value
+        // (conditions map to the two cases where uses of instructions are replaced above)
+        if (OrigVMap.find(livingValue) == OrigVMap.end() || OrigVMap[livingValue] == &*argIt) {
+            __verbose("is already mapped \n");
+            argIt++;
+            continue;
+        }
+
+        Value* newVal = OrigVMap[livingValue];
+
+        // if the value is defined in one of the copied blocks, we must only
+        // replace those uses that are not dominated by their definition anymore
+        if (const Instruction* inst = dyn_cast<Instruction>(livingValue)) {
+            if (parts.count(inst->getParent())) {
+                Instruction* newInst = cast<Instruction>(newVal);
+                for (auto I = newInst->user_begin(), IE = newInst->user_end(); I != IE; ++I) {
+                    assert(isa<Instruction>(*I) && "not a instruction");
+                    Instruction * userInst = dyn_cast<Instruction>(*I);
+                    if(!(domTree.dominates(newInst, userInst))){
+                        __verbose("not dominated. replacing \n");
+                        userInst->replaceUsesOfWith(newInst, &*argIt);
+                    }
+                }
+            }
+        }
+
+        newVal->replaceAllUsesWith(&*argIt);
+        argIt++;
+    }
+
+    __verbose("Finished manual remapping \n");
 
     __verbose("Finished creating function \n");
 
@@ -510,7 +559,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     return newFunc;
 }
 
-void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info) {
+void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info, ValueToValueMapTy &origFnMap) {
 
     __verbose("create store for live values \n");
 
@@ -521,9 +570,7 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info) {
     if(!origBarrier)
         return;
 
-    Instruction *barrier = cast<Instruction>(info->_OrigFnMap[origBarrier]);
-
-    barrier->dump();
+    Instruction *barrier = cast<Instruction>(origFnMap[origBarrier]);
 
     auto livingValues = info->_livingValues;
 
@@ -537,7 +584,8 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info) {
 
     unsigned i = 0;
     for (auto origValue : livingValues) {
-        Value *value = info->_OrigFnMap[origValue];
+        __verbose("creating store for \n");
+        Value *value = origFnMap[origValue];
         SmallVector<Value*, 8> idx;
         idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
         idx.push_back(ConstantInt::get(ctx, APInt(32, i++)));
@@ -674,7 +722,6 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
     ReturnInst::Create(ctx, nullptr, lastBB);
 
     //now inline all calls and remove the no longer required functions
-    M.dump();
     for(auto call : _inlineCalls) {
         InlineFunctionInfo IFI;
         InlineFunction(call, IFI);
