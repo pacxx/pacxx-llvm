@@ -528,12 +528,12 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
         }
 
 
-        Value* newVal = OrigVMap[livingValue];
+        Value *newVal = OrigVMap[livingValue];
 
         // if the value is defined in one of the copied blocks, we must only
         // replace those uses that are not dominated by their definition anymore
         SetVector<Instruction *> replaceNeeded;
-        if (const Instruction* inst = dyn_cast<Instruction>(livingValue)) {
+        if (const Instruction *inst = dyn_cast<Instruction>(livingValue)) {
             if (parts.count(inst->getParent())) {
                 Instruction *newInst = cast<Instruction>(newVal);
                 for (auto user : newInst->users()) {
@@ -544,15 +544,16 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
                         replaceNeeded.insert(userInst);
                     }
                 }
-                for(auto inst : replaceNeeded) {
+                for (auto inst : replaceNeeded) {
                     inst->replaceUsesOfWith(newInst, &*argIt);
                 }
+                argIt++;
+                continue;
             }
         }
-        else {
-            newVal->replaceAllUsesWith(&*argIt);
-            argIt++;
-        }
+
+        newVal->replaceAllUsesWith(&*argIt);
+        argIt++;
     }
 
     __verbose("Finished manual remapping \n");
