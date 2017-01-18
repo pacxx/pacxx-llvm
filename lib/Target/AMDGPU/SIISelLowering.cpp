@@ -711,7 +711,8 @@ SDValue SITargetLowering::LowerParameterPtr(SelectionDAG &DAG,
 
 SDValue SITargetLowering::LowerParameter(SelectionDAG &DAG, EVT VT, EVT MemVT,
                                          const SDLoc &SL, SDValue Chain,
-                                         unsigned Offset, bool Signed) const {
+                                         unsigned Offset, bool Signed,
+                                         const ISD::InputArg *Arg) const {
   const DataLayout &DL = DAG.getDataLayout();
   Type *Ty = MemVT.getTypeForEVT(*DAG.getContext());
   PointerType *PtrTy = PointerType::get(Ty, AMDGPUAS::CONSTANT_ADDRESS);
@@ -725,20 +726,21 @@ SDValue SITargetLowering::LowerParameter(SelectionDAG &DAG, EVT VT, EVT MemVT,
                              MachineMemOperand::MODereferenceable |
                              MachineMemOperand::MOInvariant);
 
-  SDValue Val;
+  SDValue Val = Load;
+  if (Arg && (Arg->Flags.isSExt() || Arg->Flags.isZExt()) &&
+      VT.bitsLT(MemVT)) {
+    unsigned Opc = Arg->Flags.isZExt() ? ISD::AssertZext : ISD::AssertSext;
+    Val = DAG.getNode(Opc, SL, MemVT, Val, DAG.getValueType(VT));
+  }
+
   if (MemVT.isFloatingPoint())
-    Val = getFPExtOrFPTrunc(DAG, Load, SL, VT);
+    Val = getFPExtOrFPTrunc(DAG, Val, SL, VT);
   else if (Signed)
-    Val = DAG.getSExtOrTrunc(Load, SL, VT);
+    Val = DAG.getSExtOrTrunc(Val, SL, VT);
   else
-    Val = DAG.getZExtOrTrunc(Load, SL, VT);
+    Val = DAG.getZExtOrTrunc(Val, SL, VT);
 
-  SDValue Ops[] = {
-    Val,
-    Load.getValue(1)
-  };
-
-  return DAG.getMergeValues(Ops, SL);
+  return DAG.getMergeValues({ Val, Load.getValue(1) }, SL);
 }
 
 SDValue SITargetLowering::LowerFormalArguments(
@@ -911,7 +913,8 @@ SDValue SITargetLowering::LowerFormalArguments(
       // The first 36 bytes of the input buffer contains information about
       // thread group and global sizes.
       SDValue Arg = LowerParameter(DAG, VT, MemVT,  DL, Chain,
-                                   Offset, Ins[i].Flags.isSExt());
+                                   Offset, Ins[i].Flags.isSExt(),
+                                   &Ins[i]);
       Chains.push_back(Arg.getValue(1));
 
       auto *ParamTy =
@@ -1461,16 +1464,16 @@ static bool setM0ToIndexFromSGPR(const SIInstrInfo *TII,
       VGPRIndexMode::SRC0_ENABLE : VGPRIndexMode::DST_ENABLE;
     if (Offset == 0) {
       MachineInstr *SetOn =
-        BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_SET_GPR_IDX_ON))
-        .addOperand(*Idx)
-        .addImm(IdxMode);
+          BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_SET_GPR_IDX_ON))
+              .add(*Idx)
+              .addImm(IdxMode);
 
       SetOn->getOperand(3).setIsUndef();
     } else {
       unsigned Tmp = MRI.createVirtualRegister(&AMDGPU::SReg_32_XM0RegClass);
       BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_ADD_I32), Tmp)
-        .addOperand(*Idx)
-        .addImm(Offset);
+          .add(*Idx)
+          .addImm(Offset);
       MachineInstr *SetOn =
         BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_SET_GPR_IDX_ON))
         .addReg(Tmp, RegState::Kill)
@@ -1483,12 +1486,11 @@ static bool setM0ToIndexFromSGPR(const SIInstrInfo *TII,
   }
 
   if (Offset == 0) {
-    BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_MOV_B32), AMDGPU::M0)
-      .addOperand(*Idx);
+    BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_MOV_B32), AMDGPU::M0).add(*Idx);
   } else {
     BuildMI(*MBB, I, DL, TII->get(AMDGPU::S_ADD_I32), AMDGPU::M0)
-      .addOperand(*Idx)
-      .addImm(Offset);
+        .add(*Idx)
+        .addImm(Offset);
   }
 
   return true;
@@ -1625,9 +1627,9 @@ static MachineBasicBlock *emitIndirectDst(MachineInstr &MI,
     assert(Offset == 0);
 
     BuildMI(MBB, I, DL, TII->get(TargetOpcode::INSERT_SUBREG), Dst)
-      .addOperand(*SrcVec)
-      .addOperand(*Val)
-      .addImm(SubReg);
+        .add(*SrcVec)
+        .add(*Val)
+        .addImm(SubReg);
 
     MI.eraseFromParent();
     return &MBB;
@@ -1639,11 +1641,11 @@ static MachineBasicBlock *emitIndirectDst(MachineInstr &MI,
 
     if (UseGPRIdxMode) {
       BuildMI(MBB, I, DL, TII->get(AMDGPU::V_MOV_B32_indirect))
-        .addReg(SrcVec->getReg(), RegState::Undef, SubReg) // vdst
-        .addOperand(*Val)
-        .addReg(Dst, RegState::ImplicitDefine)
-        .addReg(SrcVec->getReg(), RegState::Implicit)
-        .addReg(AMDGPU::M0, RegState::Implicit);
+          .addReg(SrcVec->getReg(), RegState::Undef, SubReg) // vdst
+          .add(*Val)
+          .addReg(Dst, RegState::ImplicitDefine)
+          .addReg(SrcVec->getReg(), RegState::Implicit)
+          .addReg(AMDGPU::M0, RegState::Implicit);
 
       BuildMI(MBB, I, DL, TII->get(AMDGPU::S_SET_GPR_IDX_OFF));
     } else {
@@ -1652,7 +1654,7 @@ static MachineBasicBlock *emitIndirectDst(MachineInstr &MI,
       BuildMI(MBB, I, DL, MovRelDesc)
           .addReg(Dst, RegState::Define)
           .addReg(SrcVec->getReg())
-          .addOperand(*Val)
+          .add(*Val)
           .addImm(SubReg - AMDGPU::sub0);
     }
 
@@ -1685,18 +1687,18 @@ static MachineBasicBlock *emitIndirectDst(MachineInstr &MI,
 
   if (UseGPRIdxMode) {
     BuildMI(*LoopBB, InsPt, DL, TII->get(AMDGPU::V_MOV_B32_indirect))
-      .addReg(PhiReg, RegState::Undef, SubReg) // vdst
-      .addOperand(*Val) // src0
-      .addReg(Dst, RegState::ImplicitDefine)
-      .addReg(PhiReg, RegState::Implicit)
-      .addReg(AMDGPU::M0, RegState::Implicit);
+        .addReg(PhiReg, RegState::Undef, SubReg) // vdst
+        .add(*Val)                               // src0
+        .addReg(Dst, RegState::ImplicitDefine)
+        .addReg(PhiReg, RegState::Implicit)
+        .addReg(AMDGPU::M0, RegState::Implicit);
   } else {
     const MCInstrDesc &MovRelDesc = TII->get(getMOVRELDPseudo(VecRC));
 
     BuildMI(*LoopBB, InsPt, DL, MovRelDesc)
         .addReg(Dst, RegState::Define)
         .addReg(PhiReg)
-        .addOperand(*Val)
+        .add(*Val)
         .addImm(SubReg - AMDGPU::sub0);
   }
 
@@ -1735,15 +1737,15 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
   case AMDGPU::SI_INIT_M0: {
     BuildMI(*BB, MI.getIterator(), MI.getDebugLoc(),
             TII->get(AMDGPU::S_MOV_B32), AMDGPU::M0)
-      .addOperand(MI.getOperand(0));
+        .add(MI.getOperand(0));
     MI.eraseFromParent();
     return BB;
   }
   case AMDGPU::GET_GROUPSTATICSIZE: {
     DebugLoc DL = MI.getDebugLoc();
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::S_MOV_B32))
-      .addOperand(MI.getOperand(0))
-      .addImm(MFI->getLDSSize());
+        .add(MI.getOperand(0))
+        .addImm(MFI->getLDSSize());
     MI.eraseFromParent();
     return BB;
   }
@@ -1794,7 +1796,7 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
     const SIInstrInfo *TII = getSubtarget()->getInstrInfo();
     const DebugLoc &DL = MI.getDebugLoc();
     MachineInstr *Br = BuildMI(*BB, MI, DL, TII->get(AMDGPU::S_CBRANCH_SCC1))
-      .addOperand(MI.getOperand(0));
+                           .add(MI.getOperand(0));
     Br->getOperand(1).setIsUndef(true); // read undef SCC
     MI.eraseFromParent();
     return BB;
@@ -2210,9 +2212,10 @@ SITargetLowering::isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const {
          !shouldEmitGOTReloc(GA->getGlobal());
 }
 
-static SDValue buildPCRelGlobalAddress(SelectionDAG &DAG, const GlobalValue *GV,
-                                      SDLoc DL, unsigned Offset, EVT PtrVT,
-                                      unsigned GAFlags = SIInstrInfo::MO_NONE) {
+static SDValue
+buildPCRelGlobalAddress(SelectionDAG &DAG, const GlobalValue *GV,
+                        const SDLoc &DL, unsigned Offset, EVT PtrVT,
+                        unsigned GAFlags = SIInstrInfo::MO_NONE) {
   // In order to support pc-relative addressing, the PC_ADD_REL_OFFSET SDNode is
   // lowered to the following code sequence:
   //
@@ -2330,7 +2333,8 @@ SDValue SITargetLowering::lowerImplicitZextParam(SelectionDAG &DAG,
                      DAG.getValueType(VT));
 }
 
-static SDValue emitNonHSAIntrinsicError(SelectionDAG& DAG, SDLoc DL, EVT VT) {
+static SDValue emitNonHSAIntrinsicError(SelectionDAG &DAG, const SDLoc &DL,
+                                        EVT VT) {
   DiagnosticInfoUnsupported BadIntrin(*DAG.getMachineFunction().getFunction(),
                                       "non-hsa intrinsic with hsa target",
                                       DL.getDebugLoc());
@@ -2338,7 +2342,8 @@ static SDValue emitNonHSAIntrinsicError(SelectionDAG& DAG, SDLoc DL, EVT VT) {
   return DAG.getUNDEF(VT);
 }
 
-static SDValue emitRemovedIntrinsicError(SelectionDAG& DAG, SDLoc DL, EVT VT) {
+static SDValue emitRemovedIntrinsicError(SelectionDAG &DAG, const SDLoc &DL,
+                                         EVT VT) {
   DiagnosticInfoUnsupported BadIntrin(*DAG.getMachineFunction().getFunction(),
                                       "intrinsic not supported on subtarget",
                                       DL.getDebugLoc());

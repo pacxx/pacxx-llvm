@@ -288,7 +288,6 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
         }
     }
 
-    M.dump();
     for(auto info : infoVec) {
         auto origBarrier = info->_barrier;
         for(auto lookForMap : infoVec) {
@@ -296,7 +295,6 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
                 storeLiveValues(M, info, lookForMap->_OrigFnMap);
         }
     }
-    M.dump();
 
     return true;
 }
@@ -515,8 +513,6 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     auto argIt = newFunc->arg_begin();
     DominatorTree domTree = DominatorTree(*newFunc);
     for(auto livingValue : livingValues) {
-        __verbose("living value \n");
-        livingValue->dump();
         if (isa<Argument>(livingValue)) {
             __verbose("is an argument \n");
             argIt++;
@@ -534,9 +530,6 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
         Value* newVal = OrigVMap[livingValue];
 
-        __verbose("NewVal: \n");
-        newVal->dump();
-
         // if the value is defined in one of the copied blocks, we must only
         // replace those uses that are not dominated by their definition anymore
         SetVector<Instruction *> replaceNeeded;
@@ -546,12 +539,9 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
                 for (auto user : newInst->users()) {
                     assert(isa<Instruction>(user) && "not a instruction");
                     Instruction *userInst = dyn_cast<Instruction>(user);
-                    __verbose("userInst \n");
-                    userInst->dump();
                     if (!(domTree.dominates(newInst, userInst))) {
                         __verbose("not dominated. replacing \n");
                         replaceNeeded.insert(userInst);
-                        //userInst->replaceUsesOfWith(newInst, &*argIt);
                     }
                 }
                 for(auto inst : replaceNeeded) {
