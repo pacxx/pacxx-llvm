@@ -86,7 +86,7 @@ private:
                         if (!block_dim)
                             block_dim = call;
                         else {
-                            call->replaceAllUsesWith(thread_id);
+                            call->replaceAllUsesWith(block_dim);
                             _instructionsToRemove.push_back(call);
                         }
                     }

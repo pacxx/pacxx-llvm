@@ -283,12 +283,12 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
 
     for(auto info : infoVec) {
         Function *newFunc = createFunction(M, kernel, info);
-        //storeLiveValues(M, info);
         if(info->_id == 0 && !vecVersion) {
             prepareFunctionForLinker(M, kernel, newFunc);
         }
     }
 
+    M.dump();
     for(auto info : infoVec) {
         auto origBarrier = info->_barrier;
         for(auto lookForMap : infoVec) {
@@ -296,6 +296,7 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
                 storeLiveValues(M, info, lookForMap->_OrigFnMap);
         }
     }
+    M.dump();
 
     return true;
 }
@@ -514,6 +515,8 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     auto argIt = newFunc->arg_begin();
     DominatorTree domTree = DominatorTree(*newFunc);
     for(auto livingValue : livingValues) {
+        __verbose("living value \n");
+        livingValue->dump();
         if (isa<Argument>(livingValue)) {
             __verbose("is an argument \n");
             argIt++;
@@ -528,26 +531,38 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
             continue;
         }
 
+
         Value* newVal = OrigVMap[livingValue];
+
+        __verbose("NewVal: \n");
+        newVal->dump();
 
         // if the value is defined in one of the copied blocks, we must only
         // replace those uses that are not dominated by their definition anymore
+        SetVector<Instruction *> replaceNeeded;
         if (const Instruction* inst = dyn_cast<Instruction>(livingValue)) {
             if (parts.count(inst->getParent())) {
-                Instruction* newInst = cast<Instruction>(newVal);
-                for (auto I = newInst->user_begin(), IE = newInst->user_end(); I != IE; ++I) {
-                    assert(isa<Instruction>(*I) && "not a instruction");
-                    Instruction * userInst = dyn_cast<Instruction>(*I);
-                    if(!(domTree.dominates(newInst, userInst))){
+                Instruction *newInst = cast<Instruction>(newVal);
+                for (auto user : newInst->users()) {
+                    assert(isa<Instruction>(user) && "not a instruction");
+                    Instruction *userInst = dyn_cast<Instruction>(user);
+                    __verbose("userInst \n");
+                    userInst->dump();
+                    if (!(domTree.dominates(newInst, userInst))) {
                         __verbose("not dominated. replacing \n");
-                        userInst->replaceUsesOfWith(newInst, &*argIt);
+                        replaceNeeded.insert(userInst);
+                        //userInst->replaceUsesOfWith(newInst, &*argIt);
                     }
+                }
+                for(auto inst : replaceNeeded) {
+                    inst->replaceUsesOfWith(newInst, &*argIt);
                 }
             }
         }
-
-        newVal->replaceAllUsesWith(&*argIt);
-        argIt++;
+        else {
+            newVal->replaceAllUsesWith(&*argIt);
+            argIt++;
+        }
     }
 
     __verbose("Finished manual remapping \n");
@@ -766,7 +781,6 @@ BasicBlock *PACXXNativeBarrier::createCase(Module &M,
     Function *newFoo = info._foo;
 
     BasicBlock *caseEntry = BasicBlock::Create(ctx, "entryCase", newFoo);
-    //caseEntry->moveAfter(info._switchBB);
 
     // alloc z
     AllocaInst *alloc_z = new AllocaInst(int32_type, nullptr,

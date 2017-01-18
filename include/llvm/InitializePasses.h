@@ -363,6 +363,7 @@ void initializePACXXAddrSpaceTransformPass(PassRegistry&);
 void initializeSPMDVectorizerPass(PassRegistry&);
 void initializePACXXNativeBarrierPass(PassRegistry&);
 void initializePACXXNativeLivenessAnalyzerPass(PassRegistry&);
+void initializePACXXNativeSMTransformerPass(PassRegistry&);
 
 }
 

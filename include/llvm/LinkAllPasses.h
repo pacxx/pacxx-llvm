@@ -235,6 +235,7 @@ namespace {
       (void) llvm::createPACXXNativeBarrierPass();
       (void) llvm::createPACXXLivenessAnalyzerPass();
       (void) llvm::createPACXXNativeLinkerPass();
+      (void) llvm::createPACXXNativeSMPass();
 
       (void) llvm::sys::RunningOnValgrind();
     }
