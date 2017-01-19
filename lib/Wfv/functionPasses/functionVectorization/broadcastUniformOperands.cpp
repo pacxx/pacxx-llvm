@@ -132,39 +132,18 @@ FunctionVectorizer::broadcastValue(Value*         oldVal,
         case Type::FP128TyID:
         case Type::PPC_FP128TyID:
         {
-            Value* newVal = UndefValue::get(newType);
+            Value* newVal;
 
-#ifdef WFV_USE_SHUFFLE_BROADCAST
             IRBuilder<> builder(insertBefore);
             newVal = CreateScalarBroadcast<float>(oldVal, newType, isConsecutive, builder, info);
-#else
-                SmallVector<uint64_t, 8> offset;
-                for (unsigned i=0, e=info.mVectorizationFactor; i<e; ++i) {
-                    newVal = InsertElementInst::Create(newVal,
-                                                       oldVal,
-                                                       ConstantInt::get(*info.mContext,
-                                                                        APInt(64, i)),
-                                                       "",
-                                                       insertBefore);
-                    WFV::setMetadata(cast<Instruction>(newVal), WFV::WFV_METADATA_PACK_UNPACK);
 
-                    if (isConsecutive)
-                        offset.push_back(i);
-                }
-
-                if (isConsecutive) {
-                    Constant *offsetVec = ConstantDataVector::get(*mInfo->mContext, offset);
-                    newVal = BinaryOperator::CreateAdd(newVal, offsetVec, "bcCons", insertBefore);
-                    WFV::setMetadata(cast<Instruction>(oldVal), WFV::WFV_METADATA_PACK_UNPACK);
-                }
-#endif
             if(info.mVerbose) outs() << "      new value: " << *newVal << "\n";
             return newVal;
         }
 
         case Type::IntegerTyID:
         {
-            Value* newVal = UndefValue::get(newType);
+            Value* newVal;
 
             // If oldVal is a boolean, we have to generate a vector with elements -1 or 0.
             if (oldVal->getType()->isIntegerTy(1))
@@ -182,31 +161,9 @@ FunctionVectorizer::broadcastValue(Value*         oldVal,
             else
             {
 
-#ifdef WFV_USE_SHUFFLE_BROADCAST
 				IRBuilder<> builder(insertBefore);
 				newVal = CreateScalarBroadcast<int>(oldVal, newType, isConsecutive, builder, info);
-#else
 
-                SmallVector<uint64_t, 8> offset;
-                for (unsigned i=0, e=info.mVectorizationFactor; i<e; ++i) {
-                    newVal = InsertElementInst::Create(newVal,
-                                                       oldVal,
-                                                       ConstantInt::get(*info.mContext,
-                                                                        APInt(64, i)),
-                                                       "",
-                                                       insertBefore);
-                    WFV::setMetadata(cast<Instruction>(newVal), WFV::WFV_METADATA_PACK_UNPACK);
-
-                    if (isConsecutive)
-                        offset.push_back(i);
-                }
-
-                if (isConsecutive) {
-                    Constant *offsetVec = ConstantDataVector::get(*mInfo->mContext, offset);
-                    newVal = BinaryOperator::CreateAdd(newVal, offsetVec, "bcCons", insertBefore);
-                    WFV::setMetadata(cast<Instruction>(oldVal), WFV::WFV_METADATA_PACK_UNPACK);
-                }
-#endif
             }
             if(mInfo->mVerbose) outs() << "      new value: " << *newVal << "\n";
             return newVal;

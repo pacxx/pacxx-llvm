@@ -248,15 +248,14 @@ FunctionVectorizer::visitLoadInst(LoadInst     &I)
         }
         LoadInst *load = &I;
         Value* mask = mMaskAnalysis->getEntryMask(*load->getParent());
-        Value *Ptr = load->getPointerOperand();
-        PointerType *PtrTy = cast<PointerType>(Ptr->getType());
+        PointerType *PtrTy = cast<PointerType>(pktPtrCast->getType());
         Type *DataType = PtrTy->getElementType();
         Value *PassThru = UndefValue::get(DataType);
-        Value *Ops[] = {Ptr,
+        Value *Ops[] = {pktPtrCast,
                         ConstantInt::get(Type::getInt32Ty(*mInfo->mContext), alignment),
                         mask,
                         PassThru};
-        Type *OverloadedTypes[] = {DataType, Ptr->getType()};
+        Type *OverloadedTypes[] = {DataType, pktPtrCast->getType()};
         Value *Fn = Intrinsic::getDeclaration(mInfo->mModule, Intrinsic::masked_load, OverloadedTypes);
 
         CallInst *CI = CallInst::Create(Fn, Ops, "masked_load", load);
@@ -275,7 +274,6 @@ FunctionVectorizer::visitLoadInst(LoadInst     &I)
             U.set(CI);
         }
         load->eraseFromParent();
-        CI->setOperand(0, pktPtrCast);
         return true;
     }
     else {
@@ -381,11 +379,10 @@ FunctionVectorizer::visitStoreInst(StoreInst   &I)
         StoreInst *store = &I;
         Value* mask = mMaskAnalysis->getEntryMask(*store->getParent());
         Value* value = store->getValueOperand();
-        Value *Ptr = store->getPointerOperand();
-        PointerType *PtrTy = cast<PointerType>(Ptr->getType());
+        PointerType *PtrTy = cast<PointerType>(pktPtrCast->getType());
         Type *DataTy = PtrTy->getElementType();
         Value *Ops[] = {value,
-                        Ptr,
+                        pktPtrCast,
                         ConstantInt::get(Type::getInt32Ty(*mInfo->mContext), alignment),
                         mask};
         Type *OverloadedTypes[] = {DataTy, PtrTy};
@@ -407,7 +404,6 @@ FunctionVectorizer::visitStoreInst(StoreInst   &I)
         }
         store->eraseFromParent();
 
-        CI->setOperand(1, pktPtrCast);
         return true;
     }
     else {

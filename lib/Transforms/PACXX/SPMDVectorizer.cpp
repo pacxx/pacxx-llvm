@@ -1,5 +1,6 @@
 // Created by lars
 
+#include <stdlib.h>
 #include "Log.h"
 #include "llvm/Pass.h"
 #include "llvm/LinkAllPasses.h"
@@ -74,7 +75,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
     for (auto kernel : kernels) {
 
-        bool vectorized = false;
 
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
@@ -97,7 +97,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
                                        true,
                                        false);
 
-        vectorized = wfv.run();
+        bool vectorized = wfv.run();
         //vectorized = wfv.analyze();
 
         if(vectorized) {

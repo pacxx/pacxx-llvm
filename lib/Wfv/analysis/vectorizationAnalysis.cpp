@@ -515,8 +515,6 @@ VectorizationAnalysis::analyzeNothing(Function* scalarFn, const bool uniformRetu
     markNestedDivergentTopLevelLoops();
 }
 
-
-//TODO refactor
 void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
 
     if(mVerbose)
@@ -602,23 +600,10 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
             markValueAs(inst, WFV::WFV_METADATA_OP_VARYING);
             markValueAs(inst, WFV::WFV_METADATA_RES_VECTOR);
 
-            //find the global id calculation
-            Instruction *global_id;
-            for(Instruction::user_iterator I = inst->user_begin(), IE = inst->user_end(); I != IE; ++I) {
-                if(BinaryOperator *add = dyn_cast<BinaryOperator>(*I)) {
-                    if(add->getOpcode() == BinaryOperator::Add)
-                        if(BinaryOperator *mul = dyn_cast<BinaryOperator>(add->getOperand(0)))
-                            if(WFV::hasMetadata(mul->getOperand(0), WFV::PACXX_BLOCK_ID_X) &&
-                                    WFV::hasMetadata(mul->getOperand(1), WFV::PACXX_BLOCK_DIM_X))
-                                global_id = add;
-                }
-            }
-
-            // if the user is a sext instruction we cast the GEP instruction later so we assume the sext as uniform here
-            for (Instruction::user_iterator I = global_id->user_begin(), E = global_id->user_end(); I != E; I++) {
-                Instruction *userInst = cast<Instruction>(*I);
-                if(!WFV::hasPACXXMetadata(userInst))
-                    recursivelyMarkVarying(userInst, nullptr);
+            for(auto user : inst->users()) {
+                assert(isa<Instruction>(user) && "user of tidx is not an instruction");
+                Instruction *userInst = cast<Instruction>(user);
+                recursivelyMarkVarying(userInst, nullptr);
             }
         }
         else if(WFV::hasPACXXMetadata(inst)){
