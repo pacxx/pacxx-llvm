@@ -30,6 +30,12 @@ namespace llvm {
                                             BasicBlock *sharedMemBB);
       void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Function *wrapper,
                                             Value *sm_size, BasicBlock *sharedMemBB);
+      void handleExternalPtr(Module &M, Function *wrapper, GlobalVariable *GV,
+                             Value *sm_size, BasicBlock *sharedMemBB);
+      void handleExternalArray(Module &M, Function *wrapper,
+                               GlobalVariable *GV, Value *sm_size, BasicBlock *sharedMemBB);
+
+
       set<GlobalVariable *> getSMGlobalsUsedByKernel(Module &M, Function *kernel, bool internal);
 
     private:
@@ -39,13 +45,18 @@ namespace llvm {
     bool PACXXNativeLinker::runOnModule(Module &M) {
 
       auto &ctx = M.getContext();
-      auto foo = M.getFunction("foo");
+      auto origFoo = M.getFunction("foo");
+      auto foo = origFoo;
       auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
       for (auto &F : kernels) {
 
         _barrier = false;
 
+        // if the kernel has been vectorized
+        if(F->hasFnAttribute("vectorized")) {
+          foo = M.getFunction("__vectorized__foo__" + F->getName().str());
+        }
         // if the kernel has a barrier use a special foo function
         if (F->hasFnAttribute("barrier")) {
           _barrier = true;
@@ -53,13 +64,25 @@ namespace llvm {
         }
 
         SmallVector<Type *, 8> Params;
+        //block id
         Params.push_back(IntegerType::getInt32Ty(ctx));
         Params.push_back(IntegerType::getInt32Ty(ctx));
         Params.push_back(IntegerType::getInt32Ty(ctx));
+
+        // max blocks
         Params.push_back(IntegerType::getInt32Ty(ctx));
         Params.push_back(IntegerType::getInt32Ty(ctx));
         Params.push_back(IntegerType::getInt32Ty(ctx));
+
+        // max threads
         Params.push_back(IntegerType::getInt32Ty(ctx));
+        Params.push_back(IntegerType::getInt32Ty(ctx));
+        Params.push_back(IntegerType::getInt32Ty(ctx));
+
+        //shared memory
+        Params.push_back(IntegerType::getInt32Ty(ctx));
+
+        //arguments
         Params.push_back(PointerType::getInt8PtrTy(ctx));
 
         // we can always use void, because we work with valid cuda kernels and they need to return void
@@ -72,6 +95,10 @@ namespace llvm {
         (argIt++)->setName("bidx");
         (argIt++)->setName("bidy");
         (argIt++)->setName("bidz");
+
+        (argIt++)->setName("maxblockx");
+        (argIt++)->setName("maxblocky");
+        (argIt++)->setName("maxblockz");
 
         SmallVector<Value *, 1> args;
         args.push_back(&*argIt);
@@ -116,6 +143,7 @@ namespace llvm {
         SmallVector<Value *, 8> kernel_args;
         Value *bidx = nullptr, *bidy = nullptr, *bidz = nullptr;
         Value *maxidx = nullptr, *maxidy = nullptr, *maxidz = nullptr;
+        Value *maxblockx = nullptr, *maxblocky = nullptr, *maxblockz = nullptr;
         Value *sm_size = nullptr;
         Function *dummy;
         Function *seq_dummy = M.getFunction("__dummy_kernel");
@@ -132,18 +160,28 @@ namespace llvm {
           if ((CI = dyn_cast<CallInst>(U))) {
             if (CI->getParent()->getParent() == wrappedF) {
               auto argIt = wrappedF->getArgumentList().begin();
+              //blockids
               bidx = &*argIt;
               ++argIt;
               bidy = &*argIt;
               ++argIt;
               bidz = &*argIt;
               ++argIt;
+              // max blocks
+              maxblockx = &*argIt;
+              ++argIt;
+              maxblocky = &*argIt;
+              ++argIt;
+              maxblockz = &*argIt;
+              ++argIt;
+              //max threads
               maxidx = &*argIt;
               ++argIt;
               maxidy = &*argIt;
               ++argIt;
               maxidz = &*argIt;
               ++argIt;
+              //shared memory
               sm_size = &*argIt;
               ++argIt;
 
@@ -219,6 +257,7 @@ namespace llvm {
           remove->eraseFromParent();
 
         // time to inline the original kernel into the wrapper
+        __verbose("Inline kernel \n");
         InlineFunction(CI, IFI, nullptr, false);
 
         //If a vectorized version and a sequential version of the kernel exists
@@ -282,6 +321,15 @@ namespace llvm {
                 } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_z) {
                   CI->replaceAllUsesWith(bidz);
                   dead_calls.push_back(CI);
+                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_x) {
+                    CI->replaceAllUsesWith(maxblockx);
+                    dead_calls.push_back(CI);
+                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_y) {
+                  CI->replaceAllUsesWith(maxblocky);
+                  dead_calls.push_back(CI);
+                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_z) {
+                  CI->replaceAllUsesWith(maxblockz);
+                  dead_calls.push_back(CI);
                 } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_x) {
                   CI->replaceAllUsesWith(maxidx);
                   dead_calls.push_back(CI);
@@ -299,12 +347,12 @@ namespace llvm {
 
         for (auto I : dead_calls)
           I->eraseFromParent();
+
+        if(foo != origFoo)
+          foo->eraseFromParent();
       }
 
       __verbose("Cleaning up");
-
-      foo->eraseFromParent();
-
       //cleanup
       for (auto F : kernels) {
         Function *vec_F = M.getFunction("__vectorized__" + F->getName().str());
@@ -313,14 +361,12 @@ namespace llvm {
           vec_F->eraseFromParent();
       }
 
-      // if we still have a foo function erase it at this point
-      // this can happen if we only have kernels with barriers
-      if ((foo = M.getFunction("foo")))
-        foo->eraseFromParent();
+      origFoo->eraseFromParent();
 
       return true;
     }
 
+    //TODO refactor
     void PACXXNativeLinker::createSharedMemoryBuffer(Module &M, Function *wrapper, Value *sm_size) {
 
       // remove constExpr so it is easier to replace the global shared memory
@@ -479,47 +525,140 @@ namespace llvm {
     void PACXXNativeLinker::createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Function *wrapper,
                                                              Value *sm_size, BasicBlock *sharedMemBB) {
       for (auto GV : globals) {
-        Type *sm_type = GV->getType()->getElementType()->getPointerElementType();
-        Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
-                                           M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
-        //calc number of elements
-        BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
-        AllocaInst *sm_alloc = new AllocaInst(sm_type, div, M.getDataLayout().getABITypeAlignment(sm_type),
-                                              "external_sm", sharedMemBB);
-        AllocaInst *ptrTosm = new AllocaInst(PointerType::get(sm_type, 0), nullptr, "ptrToSM", sharedMemBB);
-        new StoreInst(sm_alloc, ptrTosm, sharedMemBB);
+        Type *GVType = GV->getType()->getElementType();
 
-        for(auto user : GV->users()) {
-          if(Instruction *userInst = dyn_cast<Instruction>(user)) {
-            if(!(userInst->getParent()->getParent() == wrapper)) continue;
-            //addrspace cast are not nessecary
-            if(isa<AddrSpaceCastInst>(userInst)) {
-              userInst->replaceAllUsesWith(ptrTosm);
-              userInst->eraseFromParent();
-            }
+        if (isa<PointerType>(GVType))
+          handleExternalPtr(M, wrapper, GV, sm_size, sharedMemBB);
+        else
+          handleExternalArray(M, wrapper, GV, sm_size, sharedMemBB);
+      }
+    }
+
+    void PACXXNativeLinker::handleExternalPtr(Module &M, Function *wrapper, GlobalVariable *GV,
+                                              Value *sm_size, BasicBlock *sharedMemBB) {
+
+      Type *sm_type = GV->getType()->getElementType()->getPointerElementType();
+      Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
+                                         M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
+      //calc number of elements
+      BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
+      AllocaInst *sm_alloc = new AllocaInst(sm_type, div, M.getDataLayout().getABITypeAlignment(sm_type),
+                                            "external_sm", sharedMemBB);
+      AllocaInst *ptrTosm = new AllocaInst(PointerType::get(sm_type, 0), nullptr, "ptrToSM", sharedMemBB);
+      new StoreInst(sm_alloc, ptrTosm, sharedMemBB);
+
+      for (auto user : GV->users()) {
+        if (Instruction *userInst = dyn_cast<Instruction>(user)) {
+          if (!(userInst->getParent()->getParent() == wrapper)) continue;
+          //addrspace cast are not nessecary
+          if (isa<AddrSpaceCastInst>(userInst)) {
+            userInst->replaceAllUsesWith(ptrTosm);
+            userInst->eraseFromParent();
+          }
             // need to handle casts because of addrspace
-            else if(CastInst *cast = dyn_cast<CastInst>(userInst)) {
-              Type * destType = cast->getDestTy();
-              if(PointerType * ptrType = dyn_cast<PointerType>(destType)) {
-                destType = PointerType::get(ptrType->getElementType(), 0);
-              }
-              CastInst *newCast = CastInst::Create(cast->getOpcode(), ptrTosm, destType, "", cast);
-              // unsafe, but currently i dont know another way to remove the addrspace
-              cast->mutateType(destType);
-              cast->replaceAllUsesWith(newCast);
-              cast->eraseFromParent();
-              // remove addrspace casts, because we are already in addrspace 0
-              for(auto user : newCast->users()) {
-                if (AddrSpaceCastInst *addrSpaceCast = dyn_cast<AddrSpaceCastInst>(user)) {
-                  addrSpaceCast->replaceAllUsesWith(newCast);
-                  addrSpaceCast->eraseFromParent();
-                }
+          else if (CastInst *cast = dyn_cast<CastInst>(userInst)) {
+            Type *destType = cast->getDestTy();
+            if (PointerType *ptrType = dyn_cast<PointerType>(destType)) {
+              destType = PointerType::get(ptrType->getElementType(), 0);
+            }
+            CastInst *newCast = CastInst::Create(cast->getOpcode(), ptrTosm, destType, "", cast);
+            // unsafe, but currently i dont know another way to remove the addrspace
+            cast->mutateType(destType);
+            cast->replaceAllUsesWith(newCast);
+            cast->eraseFromParent();
+            // remove addrspace casts, because we are already in addrspace 0
+            for (auto user : newCast->users()) {
+              if (AddrSpaceCastInst *addrSpaceCast = dyn_cast<AddrSpaceCastInst>(user)) {
+                addrSpaceCast->replaceAllUsesWith(newCast);
+                addrSpaceCast->eraseFromParent();
               }
             }
+          }
+          userInst->replaceUsesOfWith(GV, ptrTosm);
+        }
+      }
+    }
 
-            userInst->replaceUsesOfWith(GV, ptrTosm);
+    void PACXXNativeLinker::handleExternalArray(Module &M, Function *wrapper,
+                                                GlobalVariable *GV, Value *sm_size, BasicBlock *sharedMemBB) {
+      set<GetElementPtrInst *> gepInstructions;
+      Type *sm_type = GV->getType()->getElementType()->getArrayElementType();
+      Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
+                                         M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
+      BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
+      AllocaInst *sm_alloc = new AllocaInst(sm_type, div,
+                                            M.getDataLayout().getABITypeAlignment(sm_type), "external_sm",
+                                            sharedMemBB);
+
+      if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
+        new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
+
+      for (auto *GVUser : GV->users()) {
+        if (Instruction *userInst = dyn_cast<Instruction>(GVUser)) {
+
+          if (!(userInst->getParent()->getParent() == wrapper)) continue;
+
+          // collect GEPs
+          if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(userInst))
+            gepInstructions.insert(GEP);
+            // handle casts because of addrspaces
+          else if (CastInst *cast = dyn_cast<CastInst>(userInst)) {
+            Type *destType = cast->getDestTy();
+            if (PointerType *ptrType = dyn_cast<PointerType>(destType)) {
+              destType = PointerType::get(ptrType->getElementType(), 0);
+            }
+            CastInst *newCast = CastInst::Create(cast->getOpcode(), sm_alloc, destType, "", cast);
+            // unsafe, but currently i dont know another way to remove the addrspace
+            cast->mutateType(destType);
+            cast->replaceAllUsesWith(newCast);
+            cast->eraseFromParent();
+            // remove addrspace casts, because we are already in addrspace 0
+            for (auto user : newCast->users()) {
+              if (AddrSpaceCastInst *addrSpaceCast = dyn_cast<AddrSpaceCastInst>(user)) {
+                addrSpaceCast->replaceAllUsesWith(newCast);
+                addrSpaceCast->eraseFromParent();
+              }
+            }
+          }
+            // else replace use of global variable
+          else
+            userInst->replaceUsesOfWith(GV, sm_alloc);
+        }
+      }
+
+      for (auto GEP : gepInstructions) {
+        SmallVector<Value *, 4> ValueOperands(GEP->op_begin(), GEP->op_end());
+        ArrayRef<Value *> Ops(ValueOperands);
+        GetElementPtrInst *newGEP = GEP->isInBounds() ?
+                                    GetElementPtrInst::CreateInBounds(sm_type, sm_alloc, Ops.slice(2), "", GEP) :
+                                    GetElementPtrInst::Create(sm_type, sm_alloc, Ops.slice(2), "", GEP);
+        for (auto GEPUser : GEP->users()) {
+          // not needed anymore because we are already in addrspace 0
+          if (AddrSpaceCastInst *cast = dyn_cast<AddrSpaceCastInst>(GEPUser)) {
+            cast->replaceAllUsesWith(newGEP);
+            cast->eraseFromParent();
+          }
+            // need to handle other casts because of addrspace
+          else if (CastInst *cast = dyn_cast<CastInst>(GEPUser)) {
+            Type *destType = cast->getDestTy();
+            if (PointerType *ptrType = dyn_cast<PointerType>(destType)) {
+              destType = PointerType::get(ptrType->getElementType(), 0);
+            }
+            CastInst *newCast = CastInst::Create(cast->getOpcode(), newGEP, destType, "", cast);
+            // unsafe, but currently i dont know another way to remove the addrspace
+            cast->mutateType(destType);
+            cast->replaceAllUsesWith(newCast);
+            cast->eraseFromParent();
+            // remove addrspace casts, because we are already in addrspace 0
+            for (auto user : newCast->users()) {
+              if (AddrSpaceCastInst *addrSpaceCast = dyn_cast<AddrSpaceCastInst>(user)) {
+                addrSpaceCast->replaceAllUsesWith(newCast);
+                addrSpaceCast->eraseFromParent();
+              }
+            }
           }
         }
+        GEP->eraseFromParent();
       }
     }
 

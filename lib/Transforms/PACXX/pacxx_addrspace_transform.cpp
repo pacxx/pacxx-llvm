@@ -6,9 +6,6 @@
 #include <llvm/Transforms/Vectorize.h>
 
 #include "ModuleHelper.h"
-#include "CallVisitor.h"
-
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 
@@ -39,12 +36,13 @@ namespace {
 
             void runOn(Function& F) {
 
+                _deleteInstructions.clear();
+
                 BasicBlock* functionEntry = &F.front();
 
                 BasicBlock* BB = BasicBlock::Create(F.getContext(), "addrspacecast", &F, functionEntry);
 
-                for (Function::arg_iterator I = F.arg_begin(),
-                             E = F.arg_end(); I != E; ++I) {
+                for (Function::arg_iterator I = F.arg_begin(), E = F.arg_end(); I != E; ++I) {
                     if ((*I).getType()->isPointerTy()) {
                         PointerType* ptrType = dyn_cast<PointerType>((*I).getType());
                         if (ptrType->getAddressSpace() != 0) {
@@ -69,40 +67,25 @@ namespace {
 
             bool gatherAndReplaceAddrSpaceCasts(Argument& arg, AddrSpaceCastInst* cast) {
                 bool replaced = false;
-                for (auto AU : arg.users()) {
-                    if (GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(AU)) {
-                        std::vector<Value *> idx;
-                        for(unsigned i = 1; i < GEP->getNumOperands(); ++i)
-                            idx.push_back(GEP->getOperand(i));
-                        GetElementPtrInst* newGEP = GetElementPtrInst::CreateInBounds(
-                                cast, idx, "", GEP);
-                        _deleteInstructions.push_back(GEP);
-                        for (auto GEPU : GEP->users()) {
-                            if (PtrToIntInst* ptrToInt = dyn_cast<PtrToIntInst>(GEPU)) {
-                                _deleteInstructions.push_back(ptrToInt);
-                                for (auto PTIU : ptrToInt->users()) {
-                                    if (IntToPtrInst* intToPtr = dyn_cast<IntToPtrInst>(PTIU)) {
-                                        intToPtr->replaceAllUsesWith(GEP);
-                                        _deleteInstructions.push_back(intToPtr);
-                                    }
-                                }
-                            }
-                        }
-                        replaced = true;
-                        GEP->replaceAllUsesWith(newGEP);
-                    }
 
-                    if(PtrToIntInst *ptrToInt = dyn_cast<PtrToIntInst>(AU)) {
-                       for (auto PTIU : ptrToInt->users()) {
-                            if (IntToPtrInst* intToPtr = dyn_cast<IntToPtrInst>(PTIU)) {
-                                replaced = true;
-                                intToPtr->replaceAllUsesWith(cast);
-                                _deleteInstructions.push_back(intToPtr);
+                Type *oldType = arg.getType();
+                arg.mutateType(cast->getType());
+                for (auto user : arg.users()) {
+                    if (!isa<AddrSpaceCastInst>(user)) {
+                        replaced = true;
+                        user->replaceUsesOfWith(&arg, cast);
+                        user->mutateType(cast->getType());
+                        for (auto Uuser : user->users()) {
+                            if (isa<AddrSpaceCastInst>(Uuser)) {
+                                Uuser->mutateType(user->getType());
+                                Uuser->replaceAllUsesWith(user);
+                                _deleteInstructions.push_back(llvm::cast<AddrSpaceCastInst>(Uuser));
                             }
                         }
-                        _deleteInstructions.push_back(ptrToInt);
                     }
                 }
+
+                arg.mutateType(oldType);
                 return replaced;
             }
 
@@ -117,7 +100,6 @@ namespace {
             vector<Instruction *> _deleteInstructions;
         };
     };
-
 
     char PACXXAddrSpaceTransform::ID = 0;
 }

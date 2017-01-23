@@ -101,7 +101,7 @@ WFV::IsPrimitiveType(const llvm::Type & type) {
 	else if (type.isFloatTy())
 		return true;
 	else
-		return type.getTypeID() <= Type::X86_MMXTyID; // FIXME Type::isPrimitiveType() is no longer available
+		return type.getTypeID() <= Type::X86_MMXTyID;
 }
 
 // Mutate type of original value and
@@ -113,12 +113,16 @@ WFV::uncheckedReplaceAllUsesWith(Value* value, Value* with)
     Type* newType = with->getType();
     value->mutateType(newType);
 
-    //Update phi nodes type. Otherwise the replacement can cause some errors
-    for(auto *User : value->users()) {
-        if (PHINode *PHI = dyn_cast<PHINode>(User)) {
-            PHI->mutateType(newType);
+    //FIXME is that always okay ?
+    for(auto user : value->users()) {
+        if(PHINode *phi = dyn_cast<PHINode>(user)) {
+            if(WFV::hasMetadata(phi, WFV::WFV_METADATA_RES_VECTOR) &&
+                    WFV::hasMetadata(phi, WFV::WFV_METADATA_INDEX_CONSECUTIVE)) {
+                phi->mutateType(newType);
+            }
         }
     }
+
     value->replaceAllUsesWith(with);
     value->mutateType(oldType);
     assert (value->use_empty());

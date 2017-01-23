@@ -29,6 +29,8 @@ public:
         auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
         bool changed = false;
         for (auto &F : kernels) {
+            _instructionsToRemove.clear();
+            _instructionsToMove.clear();
             changed |= removeRedundantIdCalculations(F);
             moveIdCalculation(F);
             _instructionsToRemove.clear();

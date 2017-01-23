@@ -340,8 +340,9 @@ WFVInterface::run()
         Function* finalFn = mod->getFunction(targetName);
         assert (finalFn);
         assert (!finalFn->isDeclaration());
+        if(verbose)
+            WFV::writeFunctionToFile(*finalFn, "vectorized.ll");
         WFV::removeAllMetadata(finalFn);
-        DEBUG_WFV_NO_VERBOSE( WFV::writeFunctionToFile(*finalFn, targetName+".ll"); );
     }
 
 
@@ -597,8 +598,8 @@ WFVInterface::vectorizeFunction()
 
     if(mInfo->mVerbose) {
         scalarFunction.print(outs());
-        WFV::writeFunctionToFile(scalarFunction, scalarName + ".ll");
-        WFV::writeModuleToFile(*mInfo->mModule, scalarName + ".mod.ll");
+        WFV::writeFunctionToFile(scalarFunction, "scalar.ll");
+        WFV::writeModuleToFile(*mInfo->mModule, "scalar.mod.ll");
         verifyFunction(scalarFunction);
     }
 

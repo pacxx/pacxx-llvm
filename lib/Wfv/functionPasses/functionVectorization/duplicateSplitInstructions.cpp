@@ -159,6 +159,8 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
 
     Module* mod = f->getParent();
 
+    outs() << *mod;
+
     // We use a vector to store which instructions to delete
     // to make sure we delete in the right order (there will
     // be dependencies left between some of the unneeded
@@ -180,9 +182,6 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
 
             // ignore pacxx instructions to prevent duplication of intrinsic calls
             if(WFV::hasPACXXMetadata(inst)) continue;
-
-            // masked stores and loads are handled during vectorize instruction phase
-            if(WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_MASKED)) continue;
 
             // Ignore forward calls (marked 'sequential').
             if (isForwardFunctionCall(inst)) continue;
@@ -474,6 +473,7 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
         delete [] it.second;
     }
 
+    /*
     if(mInfo->mVerbose) {
         unsigned notDeleted = 0;
         for (unsigned i = 0, e = deleteVec.size(); i < e; ++i) {
@@ -489,6 +489,7 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
             assert(!isForwardFunctionCall(&*I));
         }
     }
+    */
 }
 
 void

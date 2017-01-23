@@ -505,12 +505,12 @@ FunctionVectorizer::generateHorizontalMerge(SmallVector<Value*, 8>& splitVals,
                                             Instruction*            insertBefore,
                                             const WFVInfo&          info)
 {
-    info.mModule->dump();
     assert (!splitVals.empty());
     assert (splitVals[0]);
     assert (targetType);
     if(mInfo->mVerbose) outs() << "  merging values...\n";
-    assert (!targetType->getPrimitiveSizeInBits() != 0 &&
+
+    assert (!(targetType->getTypeID() <= Type::X86_MMXTyID) &&
             !targetType->isIntegerTy() &&
             "merging into scalar value does not make sense!");
 

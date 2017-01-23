@@ -203,6 +203,7 @@ FunctionVectorizer::insertPackUnpackIntrinsics(Function* f)
 
             if (isPackFunctionCall(useI)) continue;
             if (isForwardFunctionCall(useI)) continue;
+            if (WFV::hasMetadata(useI, WFV::WFV_METADATA_OP_MASKED)) continue;
 
             // If the use instruction is not OP_SEQUENTIAL and the current
             // instruction has a vectorizable return type, simply replace the

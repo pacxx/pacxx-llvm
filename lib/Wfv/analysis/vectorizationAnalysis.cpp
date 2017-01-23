@@ -3938,8 +3938,13 @@ VectorizationAnalysis::deriveIndexInfo(Instruction* inst,
 
 			// default behavior
 			if(mVerbose) errs() << "-> Varying GEP\n";
-            WFV::setMetadata(inst, WFV::WFV_METADATA_RES_VECTOR);
-			//WFV::setMetadata(inst, WFV::WFV_METADATA_RES_SCALARS); // FIXME RES_VECTOR if pointers fit into vector components
+            unsigned registerSize = mTTI->getRegisterBitWidth(true);
+            Type *ptrType = inst->getOperand(0)->getType();
+            unsigned gepElementSize = mSimdFunction->getParent()->getDataLayout().getTypeSizeInBits(ptrType);
+            if( registerSize / gepElementSize <= mVectorizationFactor)
+                WFV::setMetadata(inst, WFV::WFV_METADATA_RES_VECTOR);
+            else
+			    WFV::setMetadata(inst, WFV::WFV_METADATA_RES_SCALARS);
 			indexInfo = WFV::WFV_METADATA_INDEX_RANDOM;
 			break;
         }
@@ -4509,7 +4514,9 @@ VectorizationAnalysis::analyzeSplitInfo(Function* scalarFn)
                 // if the hardware supports masked loads/stores do not split the instruction
                 if (StoreInst * store = dyn_cast<StoreInst>(inst)) {
                     Type *type = store->getValueOperand()->getType();
-                    if (needsGuard && mTTI->isLegalMaskedStore(type)) {
+                    Value *ptr = store->getPointerOperand();
+                    if (needsGuard && mTTI->isLegalMaskedStore(type) &&
+                            WFV::hasMetadata(ptr, WFV::WFV_METADATA_INDEX_CONSECUTIVE)) {
                         if(mVerbose) outs() << "masked store possible for" << store << "\n";
                         changed |= markValueAs(inst, WFV::WFV_METADATA_OP_MASKED);
                         continue;
@@ -4518,7 +4525,9 @@ VectorizationAnalysis::analyzeSplitInfo(Function* scalarFn)
 
                 if (LoadInst * load = dyn_cast<LoadInst>(inst)) {
                     Type *type = cast<PointerType>(load->getPointerOperand()->getType())->getElementType();
-                    if (needsGuard && mTTI->isLegalMaskedLoad(type)) {
+                    Value *ptr = load->getPointerOperand();
+                    if (needsGuard && mTTI->isLegalMaskedLoad(type) &&
+                            WFV::hasMetadata(ptr, WFV::WFV_METADATA_INDEX_CONSECUTIVE)) {
                         if(mVerbose) outs() << "masked load possible for" << load << "\n";
                         changed |= markValueAs(inst, WFV::WFV_METADATA_OP_MASKED);
                         continue;

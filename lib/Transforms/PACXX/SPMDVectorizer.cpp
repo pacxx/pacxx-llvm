@@ -47,11 +47,14 @@ namespace {
 
         unsigned determineVectorWidth(Function *F, unsigned registerWidth);
 
-        bool modifyWrapperLoop(unsigned vectorWidth, Module& M);
+        bool modifyWrapperLoop(Function *dummyFunction, Function *vecDummyFunction, Function *kernel,
+                               unsigned vectorWidth, Module& M);
 
-        bool modifyOldLoop(Module &M);
+        Function *createKernelSpecificFoo(Module &M, Function *F, Function *kernel);
 
-        BasicBlock *determineOldLoopPreHeader(Module& M);
+        bool modifyOldLoop(Function *F);
+
+        BasicBlock *determineOldLoopPreHeader(Function *F);
 
         Value *determineMaxx(Function *F);
 
@@ -73,8 +76,11 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
     auto kernels = getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
+    Function* dummyFunction = M.getFunction("__dummy_kernel");
+    Function* vecDummyFunction = Function::Create(dummyFunction->getFunctionType(),
+                                              GlobalValue::LinkageTypes::ExternalLinkage,
+                                              "__vectorized__dummy_kernel", &M);
     for (auto kernel : kernels) {
-
 
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
@@ -95,14 +101,15 @@ bool SPMDVectorizer::runOnModule(Module& M) {
                                        false,
                                        false,
                                        true,
-                                       false);
+                                       true);
 
         bool vectorized = wfv.run();
         //vectorized = wfv.analyze();
 
         if(vectorized) {
-            modifyWrapperLoop(vectorWidth, M);
+            modifyWrapperLoop(dummyFunction, vecDummyFunction, kernel, vectorWidth, M);
             vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
+            kernel->addFnAttr("vectorized");
         }
         else
             vectorizedKernel->eraseFromParent();
@@ -150,35 +157,36 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
     return vectorizedKernel;
 }
 
-bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M) {
+bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *vecDummyFunction, Function *kernel,
+                                       unsigned vectorWidth, Module& M) {
 
     auto& ctx = M.getContext();
     auto int32_type = Type::getInt32Ty(ctx);
 
     Function* F = M.getFunction("foo");
-    Function* dummyFunction = M.getFunction("__dummy_kernel");
-    Function* vecDummyCall = Function::Create(dummyFunction->getFunctionType(),
-                                              GlobalValue::LinkageTypes::ExternalLinkage,
-                                              "__vectorized__dummy_kernel", &M);
-    BasicBlock* oldLoopHeader = determineOldLoopPreHeader(M);
+
+    // creating a new foo wrapper, because every kernel could have a different vector width
+    Function *vecFoo = createKernelSpecificFoo(M, F, kernel);
+
+    BasicBlock* oldLoopHeader = determineOldLoopPreHeader(vecFoo);
     if(!oldLoopHeader)
         return false;
 
-    Value* maxx = determineMaxx(F);
+    Value* maxx = determineMaxx(vecFoo);
     if(!maxx)
         return false;
 
-    Value* __x = determine_x(F);
+    Value* __x = determine_x(vecFoo);
     if(!__x)
         return false;
 
-    modifyOldLoop(M);
+    modifyOldLoop(vecFoo);
 
     // construct required BasicBlocks
-    BasicBlock* loopEnd = BasicBlock::Create(ctx, "loop-end", F, oldLoopHeader);
-    BasicBlock* loopBody = BasicBlock::Create(ctx, "loop-body", F, loopEnd);
-    BasicBlock* loopHeader = BasicBlock::Create(ctx, "loop-header", F, loopBody);
-    BasicBlock* loopPreHeader = BasicBlock::Create(ctx, "pre-header", F, loopHeader);
+    BasicBlock* loopEnd = BasicBlock::Create(ctx, "loop-end", vecFoo, oldLoopHeader);
+    BasicBlock* loopBody = BasicBlock::Create(ctx, "loop-body", vecFoo, loopEnd);
+    BasicBlock* loopHeader = BasicBlock::Create(ctx, "loop-header", vecFoo, loopBody);
+    BasicBlock* loopPreHeader = BasicBlock::Create(ctx, "pre-header", vecFoo, loopHeader);
 
     //modify predecessor of oldLoopPreHeader to branch into the newLoopPreHeader
     BasicBlock* predecessor = oldLoopHeader->getUniquePredecessor();
@@ -206,6 +214,9 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M) {
 
     for (auto U : dummyFunction->users()) {
         if (CallInst* CI = dyn_cast<CallInst>(U)) {
+
+            if(!(CI->getParent()->getParent() == vecFoo)) continue;
+
             for(auto &I : *(CI->getParent())) {
                 if (!isa<CallInst>(&I) &&
                         !isa<TerminatorInst>(&I))
@@ -217,10 +228,13 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M) {
         }
     }
 
-    CallInst* vecFunction = CallInst::Create(vecDummyCall, args, "", loopBody);
+    CallInst* vecFunction = CallInst::Create(vecDummyFunction, args, "", loopBody);
 
     for (auto U : dummyFunction->users()) {
         if (CallInst* CI = dyn_cast<CallInst>(U)) {
+
+            if(!(CI->getParent()->getParent() == vecFoo)) continue;
+
             __verbose("num args ", CI->getNumArgOperands(), "\n");
             for(Value *arg : CI->arg_operands()) {
                 if (ZExtInst *ZI = dyn_cast<ZExtInst>(arg))
@@ -253,11 +267,44 @@ bool SPMDVectorizer::modifyWrapperLoop(unsigned vectorWidth, Module& M) {
     return true;
 }
 
-bool SPMDVectorizer::modifyOldLoop(Module &M) {
+Function *SPMDVectorizer::createKernelSpecificFoo(Module &M, Function *F, Function *kernel) {
+
+    ValueToValueMapTy VMap;
+
+    Function *vecFoo = cast<Function>(
+            M.getOrInsertFunction("__vectorized__foo__" + kernel->getName().str(), F->getFunctionType()));
+
+    SmallVector<ReturnInst *, 3> rets;
+    for (auto &BB : kernel->getBasicBlockList())
+        for (auto &I : BB.getInstList()) {
+            if (auto r = dyn_cast<ReturnInst>(&I)) {
+                rets.push_back(r);
+            }
+        }
+
+    auto DestI = vecFoo->arg_begin();
+    int i = 0;
+    for (auto I = F->arg_begin(); I != F->arg_end(); ++I) {
+        DestI->setName(string("arg") + to_string(++i));
+        VMap[cast<Value>(I)] = cast<Value>(DestI++);
+    }
+
+    CloneFunctionInto(vecFoo, F, VMap, false, rets);
+
+    vecFoo->setCallingConv(F->getCallingConv());
+    vecFoo->setAttributes(F->getAttributes());
+    vecFoo->setAlignment(F->getAlignment());
+    vecFoo->setLinkage(F->getLinkage());
+
+    return vecFoo;
+}
+
+
+bool SPMDVectorizer::modifyOldLoop(Function *F) {
 
     std::vector<StoreInst *> storesToRemove;
 
-    BasicBlock* oldLoopHeader = determineOldLoopPreHeader(M);
+    BasicBlock* oldLoopHeader = determineOldLoopPreHeader(F);
     if(!oldLoopHeader)
         return false;
 
@@ -276,8 +323,7 @@ bool SPMDVectorizer::modifyOldLoop(Module &M) {
     return true;
 }
 
-BasicBlock * SPMDVectorizer::determineOldLoopPreHeader(Module& M) {
-    Function* F = M.getFunction("foo");
+BasicBlock * SPMDVectorizer::determineOldLoopPreHeader(Function *F) {
     LoopInfo* LI = &getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
     // we know that there are only 3 nested loops
     Loop* xLoop = ((*LI->begin())->getSubLoops().front())->getSubLoops().front();

@@ -223,6 +223,12 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
             auto vec_kernel = M.getFunction("__vectorized__" + kernelName);
 
             if (vec_kernel) {
+
+                //remove vectorized foo because we create special wrapper later
+                Function *vecFoo = M.getFunction("__vectorized__foo__" + kernelName);
+                if(vecFoo)
+                    vecFoo->eraseFromParent();
+
                 __verbose("Running for vectorized kernel");
                 _vectorWidth = getVectorWidth(vec_kernel);
                 _indexMap.clear();
@@ -267,6 +273,7 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
     }
 
     __verbose("Found ", numBarriers, " barriers. Modifying \n");
+
 
     splitAtBarriers(M, barriers);
 
