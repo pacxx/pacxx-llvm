@@ -34,19 +34,19 @@ add_pdb_impl_folder(Raw
   Raw/GlobalsStream.cpp
   Raw/GSI.cpp
   Raw/Hash.cpp
+  Raw/HashTable.cpp
   Raw/InfoStream.cpp
   Raw/InfoStreamBuilder.cpp
   Raw/ModInfo.cpp
   Raw/ModStream.cpp
-  Raw/NameHashTable.cpp
-  Raw/NameHashTableBuilder.cpp
-  Raw/NameMap.cpp
-  Raw/NameMapBuilder.cpp
+  Raw/NamedStreamMap.cpp
   Raw/PDBFile.cpp
   Raw/PDBFileBuilder.cpp
   Raw/PublicsStream.cpp
   Raw/RawError.cpp
   Raw/RawSession.cpp
+  Raw/StringTable.cpp
+  Raw/StringTableBuilder.cpp
   Raw/SymbolStream.cpp
   Raw/TpiHashing.cpp
   Raw/TpiStream.cpp
