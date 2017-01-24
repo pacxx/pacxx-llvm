@@ -81,9 +81,8 @@ protected:
   bool HalfRate64Ops;
 
   // Dynamially set bits that enable features.
-  bool FP16Denormals;
   bool FP32Denormals;
-  bool FP64Denormals;
+  bool FP64FP16Denormals;
   bool FPExceptions;
   bool FlatForGlobal;
   bool UnalignedScratchAccess;
@@ -114,6 +113,8 @@ protected:
   bool HasVGPRIndexMode;
   bool HasScalarStores;
   bool HasInv2PiInlineImm;
+  bool HasSDWA;
+  bool HasDPP;
   bool FlatAddressSpace;
   bool R600ALUInst;
   bool CaymanISA;
@@ -280,7 +281,7 @@ public:
   unsigned getOccupancyWithLocalMemSize(uint32_t Bytes) const;
 
   bool hasFP16Denormals() const {
-    return FP16Denormals;
+    return FP64FP16Denormals;
   }
 
   bool hasFP32Denormals() const {
@@ -288,7 +289,7 @@ public:
   }
 
   bool hasFP64Denormals() const {
-    return FP64Denormals;
+    return FP64FP16Denormals;
   }
 
   bool hasFPExceptions() const {
@@ -550,6 +551,14 @@ public:
 
   bool hasInv2PiInlineImm() const {
     return HasInv2PiInlineImm;
+  }
+
+  bool hasSDWA() const {
+    return HasSDWA;
+  }
+
+  bool hasDPP() const {
+    return HasDPP;
   }
 
   bool enableSIScheduler() const {

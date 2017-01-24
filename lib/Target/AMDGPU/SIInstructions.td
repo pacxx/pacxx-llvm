@@ -111,6 +111,13 @@ def V_MOV_B64_PSEUDO : VPseudoInstSI <(outs VReg_64:$vdst),
                                       (ins VSrc_b64:$src0)>;
 } // End let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC]
 
+def S_TRAP_PSEUDO : VPseudoInstSI <(outs), (ins),
+  [(trap)]> {
+  let hasSideEffects = 1;
+  let SALU = 1;
+  let usesCustomInserter = 1;
+}
+
 let usesCustomInserter = 1, SALU = 1 in {
 def GET_GROUPSTATICSIZE : PseudoInstSI <(outs SReg_32:$sdst), (ins),
   [(set SReg_32:$sdst, (int_amdgcn_groupstaticsize))]>;
@@ -436,11 +443,6 @@ def : Pat <
 def : Pat <
   (f16 (fpround f32:$src)),
   (V_CVT_F16_F32_e32 $src)
->;
-
-def : Pat <
-  (f16 (fpround f64:$src)),
-  (V_CVT_F16_F32_e32 (V_CVT_F32_F64_e32 $src))
 >;
 
 def : Pat <
@@ -1071,6 +1073,15 @@ def : Pat<
   (fcanonicalize f64:$src),
   (V_MUL_F64 0, CONST.FP64_ONE, 0, $src, 0, 0)
 >;
+
+// Allow integer inputs
+class ExpPattern<SDPatternOperator node, ValueType vt, Instruction Inst> : Pat<
+  (node (i8 timm:$tgt), (i8 timm:$en), vt:$src0, vt:$src1, vt:$src2, vt:$src3, (i1 timm:$compr), (i1 timm:$vm)),
+  (Inst i8:$tgt, vt:$src0, vt:$src1, vt:$src2, vt:$src3, i1:$vm, i1:$compr, i8:$en)
+>;
+
+def : ExpPattern<AMDGPUexport, i32, EXP>;
+def : ExpPattern<AMDGPUexport_done, i32, EXP_DONE>;
 
 //===----------------------------------------------------------------------===//
 // Fract Patterns

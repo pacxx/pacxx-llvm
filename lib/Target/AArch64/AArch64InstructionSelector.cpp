@@ -119,7 +119,7 @@ static bool unsupportedBinOp(const MachineInstr &I,
 }
 
 /// Select the AArch64 opcode for the basic binary operation \p GenericOpc
-/// (such as G_OR or G_ADD), appropriate for the register bank \p RegBankID
+/// (such as G_OR or G_SDIV), appropriate for the register bank \p RegBankID
 /// and of size \p OpSize.
 /// \returns \p GenericOpc if the combination is unsupported.
 static unsigned selectBinaryOp(unsigned GenericOpc, unsigned RegBankID,
@@ -140,9 +140,6 @@ static unsigned selectBinaryOp(unsigned GenericOpc, unsigned RegBankID,
         return AArch64::EORWrr;
       case TargetOpcode::G_AND:
         return AArch64::ANDWrr;
-      case TargetOpcode::G_ADD:
-        assert(OpSize != 32 && "s32 G_ADD should have been selected");
-        return AArch64::ADDWrr;
       case TargetOpcode::G_SUB:
         return AArch64::SUBWrr;
       case TargetOpcode::G_SHL:
@@ -759,7 +756,6 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
   case TargetOpcode::G_ASHR:
   case TargetOpcode::G_SDIV:
   case TargetOpcode::G_UDIV:
-  case TargetOpcode::G_ADD:
   case TargetOpcode::G_SUB:
   case TargetOpcode::G_GEP: {
     // Reject the various things we don't support yet.
@@ -1026,7 +1022,7 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
 
     if (Ty == LLT::scalar(32)) {
       CSelOpc = AArch64::CSELWr;
-    } else if (Ty == LLT::scalar(64)) {
+    } else if (Ty == LLT::scalar(64) || Ty == LLT::pointer(0, 64)) {
       CSelOpc = AArch64::CSELXr;
     } else {
       return false;
@@ -1134,7 +1130,7 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
              .addDef(Def1Reg)
              .addUse(AArch64::WZR)
              .addUse(AArch64::WZR)
-             .addImm(CC1);
+             .addImm(getInvertedCondCode(CC1));
 
     if (CC2 != AArch64CC::AL) {
       unsigned Def2Reg = MRI.createVirtualRegister(&AArch64::GPR32RegClass);
@@ -1143,7 +1139,7 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
                .addDef(Def2Reg)
                .addUse(AArch64::WZR)
                .addUse(AArch64::WZR)
-               .addImm(CC2);
+               .addImm(getInvertedCondCode(CC2));
       MachineInstr &OrMI =
           *BuildMI(MBB, I, I.getDebugLoc(), TII.get(AArch64::ORRWrr))
                .addDef(DefReg)

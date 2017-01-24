@@ -38,6 +38,9 @@ def FeatureRAS : SubtargetFeature<"ras", "HasRAS", "true",
 def FeatureLSE : SubtargetFeature<"lse", "HasLSE", "true",
   "Enable ARMv8.1 Large System Extension (LSE) atomic instructions">;
 
+def FeatureRDM : SubtargetFeature<"rdm", "HasRDM", "true",
+  "Enable ARMv8.1 Rounding Double Multiply Add/Subtract instructions">;
+
 def FeaturePerfMon : SubtargetFeature<"perfmon", "HasPerfMon", "true",
   "Enable ARMv8 PMUv3 Performance Monitors extension">;
 
@@ -114,7 +117,7 @@ def FeatureUseRSqrt : SubtargetFeature<
 //
 
 def HasV8_1aOps : SubtargetFeature<"v8.1a", "HasV8_1aOps", "true",
-  "Support ARM v8.1a instructions", [FeatureCRC, FeatureLSE]>;
+  "Support ARM v8.1a instructions", [FeatureCRC, FeatureLSE, FeatureRDM]>;
 
 def HasV8_2aOps : SubtargetFeature<"v8.2a", "HasV8_2aOps", "true",
   "Support ARM v8.2a instructions", [HasV8_1aOps, FeatureRAS]>;
@@ -124,6 +127,7 @@ def HasV8_2aOps : SubtargetFeature<"v8.2a", "HasV8_2aOps", "true",
 //===----------------------------------------------------------------------===//
 
 include "AArch64RegisterInfo.td"
+include "AArch64RegisterBanks.td"
 include "AArch64CallingConvention.td"
 
 //===----------------------------------------------------------------------===//
@@ -270,6 +274,7 @@ def ProcFalkor  : SubtargetFeature<"falkor", "ARMProcFamily", "Falkor",
                                    FeaturePerfMon,
                                    FeaturePostRAScheduler,
                                    FeaturePredictableSelectIsExpensive,
+                                   FeatureRDM,
                                    FeatureZCZeroing
                                    ]>;
 

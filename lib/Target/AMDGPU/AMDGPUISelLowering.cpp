@@ -2855,6 +2855,9 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
   SDLoc SL(N);
   switch (Opc) {
   case ISD::FADD: {
+    if (!mayIgnoreSignedZero(N0))
+      return SDValue();
+
     // (fneg (fadd x, y)) -> (fadd (fneg x), (fneg y))
     SDValue LHS = N0.getOperand(0);
     SDValue RHS = N0.getOperand(1);
@@ -2869,7 +2872,7 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     else
       RHS = RHS.getOperand(0);
 
-    SDValue Res = DAG.getNode(ISD::FADD, SL, VT, LHS, RHS);
+    SDValue Res = DAG.getNode(ISD::FADD, SL, VT, LHS, RHS, N0->getFlags());
     if (!N0.hasOneUse())
       DAG.ReplaceAllUsesWith(N0, DAG.getNode(ISD::FNEG, SL, VT, Res));
     return Res;
@@ -2888,13 +2891,16 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     else
       RHS = DAG.getNode(ISD::FNEG, SL, VT, RHS);
 
-    SDValue Res = DAG.getNode(Opc, SL, VT, LHS, RHS);
+    SDValue Res = DAG.getNode(Opc, SL, VT, LHS, RHS, N0->getFlags());
     if (!N0.hasOneUse())
       DAG.ReplaceAllUsesWith(N0, DAG.getNode(ISD::FNEG, SL, VT, Res));
     return Res;
   }
   case ISD::FMA:
   case ISD::FMAD: {
+    if (!mayIgnoreSignedZero(N0))
+      return SDValue();
+
     // (fneg (fma x, y, z)) -> (fma x, (fneg y), (fneg z))
     SDValue LHS = N0.getOperand(0);
     SDValue MHS = N0.getOperand(1);
@@ -2935,7 +2941,7 @@ SDValue AMDGPUTargetLowering::performFNegCombine(SDNode *N,
     // (fneg (fp_extend x)) -> (fp_extend (fneg x))
     // (fneg (rcp x)) -> (rcp (fneg x))
     SDValue Neg = DAG.getNode(ISD::FNEG, SL, CvtSrc.getValueType(), CvtSrc);
-    return DAG.getNode(Opc, SL, VT, Neg);
+    return DAG.getNode(Opc, SL, VT, Neg, N0->getFlags());
   }
   case ISD::FP_ROUND: {
     SDValue CvtSrc = N0.getOperand(0);
@@ -3272,6 +3278,7 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(CONST_DATA_PTR)
   NODE_NAME_CASE(PC_ADD_REL_OFFSET)
   NODE_NAME_CASE(KILL)
+  NODE_NAME_CASE(DUMMY_CHAIN)
   case AMDGPUISD::FIRST_MEM_OPCODE_NUMBER: break;
   NODE_NAME_CASE(SENDMSG)
   NODE_NAME_CASE(SENDMSGHALT)

@@ -38,31 +38,31 @@ def INT_BARRIER0 : NVPTXInst<(outs), (ins),
       [(int_nvvm_barrier0)]>;
 def INT_BARRIER0_POPC : NVPTXInst<(outs Int32Regs:$dst), (ins Int32Regs:$pred),
   !strconcat("{{ \n\t",
-      !strconcat(".reg .pred \t%p1; \n\t",
-      !strconcat("setp.ne.u32 \t%p1, $pred, 0; \n\t",
-      !strconcat("bar.red.popc.u32 \t$dst, 0, %p1; \n\t",
-        !strconcat("}}", ""))))),
+             ".reg .pred \t%p1; \n\t",
+             "setp.ne.u32 \t%p1, $pred, 0; \n\t",
+             "bar.red.popc.u32 \t$dst, 0, %p1; \n\t",
+             "}}"),
       [(set Int32Regs:$dst, (int_nvvm_barrier0_popc Int32Regs:$pred))]>;
 def INT_BARRIER0_AND : NVPTXInst<(outs Int32Regs:$dst), (ins Int32Regs:$pred),
   !strconcat("{{ \n\t",
-      !strconcat(".reg .pred \t%p1; \n\t",
-      !strconcat(".reg .pred \t%p2; \n\t",
-      !strconcat("setp.ne.u32 \t%p1, $pred, 0; \n\t",
-      !strconcat("bar.red.and.pred \t%p2, 0, %p1; \n\t",
-      !strconcat("selp.u32 \t$dst, 1, 0, %p2; \n\t",
-        !strconcat("}}", ""))))))),
+             ".reg .pred \t%p1; \n\t",
+             ".reg .pred \t%p2; \n\t",
+             "setp.ne.u32 \t%p1, $pred, 0; \n\t",
+             "bar.red.and.pred \t%p2, 0, %p1; \n\t",
+             "selp.u32 \t$dst, 1, 0, %p2; \n\t",
+             "}}"),
       [(set Int32Regs:$dst, (int_nvvm_barrier0_and Int32Regs:$pred))]>;
 def INT_BARRIER0_OR : NVPTXInst<(outs Int32Regs:$dst), (ins Int32Regs:$pred),
   !strconcat("{{ \n\t",
-      !strconcat(".reg .pred \t%p1; \n\t",
-      !strconcat(".reg .pred \t%p2; \n\t",
-      !strconcat("setp.ne.u32 \t%p1, $pred, 0; \n\t",
-      !strconcat("bar.red.or.pred \t%p2, 0, %p1; \n\t",
-      !strconcat("selp.u32 \t$dst, 1, 0, %p2; \n\t",
-        !strconcat("}}", ""))))))),
+             ".reg .pred \t%p1; \n\t",
+             ".reg .pred \t%p2; \n\t",
+             "setp.ne.u32 \t%p1, $pred, 0; \n\t",
+             "bar.red.or.pred \t%p2, 0, %p1; \n\t",
+             "selp.u32 \t$dst, 1, 0, %p2; \n\t",
+             "}}"),
       [(set Int32Regs:$dst, (int_nvvm_barrier0_or Int32Regs:$pred))]>;
 
-def INT_BAR_SYNC : NVPTXInst<(outs), (ins i32imm:$i), "bar.sync\t$i;",
+def INT_BAR_SYNC : NVPTXInst<(outs), (ins i32imm:$i), "bar.sync \t$i;",
                              [(int_nvvm_bar_sync imm:$i)]>;
 
 // shfl.{up,down,bfly,idx}.b32
@@ -187,42 +187,12 @@ class F_MATH_3<string OpcStr, NVPTXRegClass t_regclass,
 // MISC
 //
 
-def INT_NVVM_CLZ_I : F_MATH_1<"clz.b32 \t$dst, $src0;", Int32Regs, Int32Regs,
-  int_nvvm_clz_i>;
-def INT_NVVM_CLZ_LL : F_MATH_1<"clz.b64 \t$dst, $src0;", Int32Regs, Int64Regs,
-  int_nvvm_clz_ll>;
-
-def INT_NVVM_POPC_I : F_MATH_1<"popc.b32 \t$dst, $src0;", Int32Regs, Int32Regs,
-  int_nvvm_popc_i>;
-def INT_NVVM_POPC_LL : F_MATH_1<"popc.b64 \t$dst, $src0;", Int32Regs, Int64Regs,
-  int_nvvm_popc_ll>;
-
 def INT_NVVM_PRMT : F_MATH_3<"prmt.b32 \t$dst, $src0, $src1, $src2;", Int32Regs,
   Int32Regs, Int32Regs, Int32Regs, int_nvvm_prmt>;
 
 //
 // Min Max
 //
-
-def INT_NVVM_MIN_I : F_MATH_2<"min.s32 \t$dst, $src0, $src1;", Int32Regs,
-  Int32Regs, Int32Regs, int_nvvm_min_i>;
-def INT_NVVM_MIN_UI : F_MATH_2<"min.u32 \t$dst, $src0, $src1;", Int32Regs,
-  Int32Regs, Int32Regs, int_nvvm_min_ui>;
-
-def INT_NVVM_MIN_LL : F_MATH_2<"min.s64 \t$dst, $src0, $src1;", Int64Regs,
-  Int64Regs, Int64Regs, int_nvvm_min_ll>;
-def INT_NVVM_MIN_ULL : F_MATH_2<"min.u64 \t$dst, $src0, $src1;", Int64Regs,
-  Int64Regs, Int64Regs, int_nvvm_min_ull>;
-
-def INT_NVVM_MAX_I : F_MATH_2<"max.s32 \t$dst, $src0, $src1;", Int32Regs,
-  Int32Regs, Int32Regs, int_nvvm_max_i>;
-def INT_NVVM_MAX_UI : F_MATH_2<"max.u32 \t$dst, $src0, $src1;", Int32Regs,
-  Int32Regs, Int32Regs, int_nvvm_max_ui>;
-
-def INT_NVVM_MAX_LL : F_MATH_2<"max.s64 \t$dst, $src0, $src1;", Int64Regs,
-  Int64Regs, Int64Regs, int_nvvm_max_ll>;
-def INT_NVVM_MAX_ULL : F_MATH_2<"max.u64 \t$dst, $src0, $src1;", Int64Regs,
-  Int64Regs, Int64Regs, int_nvvm_max_ull>;
 
 def INT_NVVM_FMIN_F : F_MATH_2<"min.f32 \t$dst, $src0, $src1;", Float32Regs,
   Float32Regs, Float32Regs, int_nvvm_fmin_f>;
@@ -238,6 +208,7 @@ def INT_NVVM_FMIN_D : F_MATH_2<"min.f64 \t$dst, $src0, $src1;", Float64Regs,
   Float64Regs, Float64Regs, int_nvvm_fmin_d>;
 def INT_NVVM_FMAX_D : F_MATH_2<"max.f64 \t$dst, $src0, $src1;", Float64Regs,
   Float64Regs, Float64Regs, int_nvvm_fmax_d>;
+
 
 //
 // Multiplication
@@ -321,15 +292,6 @@ def INT_NVVM_DIV_RP_D : F_MATH_2<"div.rp.f64 \t$dst, $src0, $src1;",
   Float64Regs, Float64Regs, Float64Regs, int_nvvm_div_rp_d>;
 
 //
-// Brev
-//
-
-def INT_NVVM_BREV32 : F_MATH_1<"brev.b32 \t$dst, $src0;", Int32Regs, Int32Regs,
-  int_nvvm_brev32>;
-def INT_NVVM_BREV64 : F_MATH_1<"brev.b64 \t$dst, $src0;", Int64Regs, Int64Regs,
-  int_nvvm_brev64>;
-
-//
 // Sad
 //
 
@@ -359,11 +321,6 @@ def : Pat<(int_nvvm_ceil_d Float64Regs:$a),
 //
 // Abs
 //
-
-def INT_NVVM_ABS_I : F_MATH_1<"abs.s32 \t$dst, $src0;", Int32Regs, Int32Regs,
-  int_nvvm_abs_i>;
-def INT_NVVM_ABS_LL : F_MATH_1<"abs.s64 \t$dst, $src0;", Int64Regs, Int64Regs,
-  int_nvvm_abs_ll>;
 
 def INT_NVVM_FABS_FTZ_F : F_MATH_1<"abs.ftz.f32 \t$dst, $src0;", Float32Regs,
   Float32Regs, int_nvvm_fabs_ftz_f>;
@@ -703,16 +660,18 @@ def : Pat<(int_nvvm_ui2f_rp Int32Regs:$a),
 def INT_NVVM_LOHI_I2D : F_MATH_2<"mov.b64 \t$dst, {{$src0, $src1}};",
   Float64Regs, Int32Regs, Int32Regs, int_nvvm_lohi_i2d>;
 
-def INT_NVVM_D2I_LO : F_MATH_1<!strconcat("{{\n\t",
-                       !strconcat(".reg .b32 %temp; \n\t",
-             !strconcat("mov.b64 \t{$dst, %temp}, $src0;\n\t",
-               "}}"))),
-             Int32Regs, Float64Regs, int_nvvm_d2i_lo>;
-def INT_NVVM_D2I_HI : F_MATH_1<!strconcat("{{\n\t",
-                       !strconcat(".reg .b32 %temp; \n\t",
-                         !strconcat("mov.b64 \t{%temp, $dst}, $src0;\n\t",
-                           "}}"))),
-             Int32Regs, Float64Regs, int_nvvm_d2i_hi>;
+def INT_NVVM_D2I_LO : F_MATH_1<
+  !strconcat("{{\n\t",
+             ".reg .b32 %temp; \n\t",
+             "mov.b64 \t{$dst, %temp}, $src0;\n\t",
+             "}}"),
+  Int32Regs, Float64Regs, int_nvvm_d2i_lo>;
+def INT_NVVM_D2I_HI : F_MATH_1<
+  !strconcat("{{\n\t",
+             ".reg .b32 %temp; \n\t",
+             "mov.b64 \t{%temp, $dst}, $src0;\n\t",
+             "}}"),
+  Int32Regs, Float64Regs, int_nvvm_d2i_hi>;
 
 def : Pat<(int_nvvm_f2ll_rn_ftz Float32Regs:$a),
           (CVT_s64_f32 Float32Regs:$a, CvtRNI_FTZ)>;
@@ -808,9 +767,6 @@ def : Pat<(int_nvvm_f2h_rn_ftz Float32Regs:$a),
 def : Pat<(int_nvvm_f2h_rn Float32Regs:$a),
           (BITCONVERT_16_F2I (CVT_f16_f32 Float32Regs:$a, CvtRN))>;
 
-def : Pat<(int_nvvm_h2f Int16Regs:$a),
-          (CVT_f32_f16 (BITCONVERT_16_I2F Int16Regs:$a), CvtNONE)>;
-
 //
 // Bitcast
 //
@@ -846,20 +802,12 @@ multiclass F_ATOMIC_2_imp<NVPTXRegClass ptrclass, NVPTXRegClass regclass,
   string SpaceStr, string TypeStr, string OpcStr, PatFrag IntOp,
   Operand IMMType, SDNode IMM, Predicate Pred> {
   def reg : NVPTXInst<(outs regclass:$dst), (ins ptrclass:$addr, regclass:$b),
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], $b;", ""))))),
-         [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b))]>,
+    !strconcat("atom", SpaceStr, OpcStr, TypeStr, " \t$dst, [$addr], $b;"),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b))]>,
   Requires<[Pred]>;
   def imm : NVPTXInst<(outs regclass:$dst), (ins ptrclass:$addr, IMMType:$b),
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], $b;", ""))))),
-         [(set regclass:$dst, (IntOp ptrclass:$addr, IMM:$b))]>,
+    !strconcat("atom", SpaceStr, OpcStr, TypeStr, " \t$dst, [$addr], $b;", ""),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, IMM:$b))]>,
   Requires<[Pred]>;
 }
 multiclass F_ATOMIC_2<NVPTXRegClass regclass, string SpaceStr, string TypeStr,
@@ -875,21 +823,13 @@ multiclass F_ATOMIC_2_NEG_imp<NVPTXRegClass ptrclass, NVPTXRegClass regclass,
   string SpaceStr, string TypeStr, string OpcStr, PatFrag IntOp,
   Operand IMMType, Predicate Pred> {
   def reg : NVPTXInst<(outs regclass:$dst), (ins ptrclass:$addr, regclass:$b),
-    !strconcat("{{ \n\t",
-         !strconcat(".reg \t.s",
-         !strconcat(TypeStr,
-         !strconcat(" temp; \n\t",
-         !strconcat("neg.s",
-         !strconcat(TypeStr,
-         !strconcat(" \ttemp, $b; \n\t",
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(".u",
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], temp; \n\t",
-           !strconcat("}}", "")))))))))))))),
-         [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b))]>,
+    !strconcat(
+      "{{ \n\t",
+      ".reg \t.s", TypeStr, " temp; \n\t",
+      "neg.s", TypeStr, " \ttemp, $b; \n\t",
+      "atom", SpaceStr, OpcStr, ".u", TypeStr, " \t$dst, [$addr], temp; \n\t",
+      "}}"),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b))]>,
   Requires<[Pred]>;
 }
 multiclass F_ATOMIC_2_NEG<NVPTXRegClass regclass, string SpaceStr,
@@ -907,40 +847,26 @@ multiclass F_ATOMIC_3_imp<NVPTXRegClass ptrclass, NVPTXRegClass regclass,
   Operand IMMType, Predicate Pred> {
   def reg : NVPTXInst<(outs regclass:$dst),
     (ins ptrclass:$addr, regclass:$b, regclass:$c),
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], $b, $c;", ""))))),
-         [(set regclass:$dst,
-           (IntOp ptrclass:$addr, regclass:$b, regclass:$c))]>,
-         Requires<[Pred]>;
+    !strconcat("atom", SpaceStr, OpcStr, TypeStr, " \t$dst, [$addr], $b, $c;"),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b, regclass:$c))]>,
+  Requires<[Pred]>;
+
   def imm1 : NVPTXInst<(outs regclass:$dst),
     (ins ptrclass:$addr, IMMType:$b, regclass:$c),
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], $b, $c;", ""))))),
-         [(set regclass:$dst, (IntOp ptrclass:$addr, imm:$b, regclass:$c))]>,
+    !strconcat("atom", SpaceStr, OpcStr, TypeStr, " \t$dst, [$addr], $b, $c;"),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, imm:$b, regclass:$c))]>,
   Requires<[Pred]>;
+
   def imm2 : NVPTXInst<(outs regclass:$dst),
     (ins ptrclass:$addr, regclass:$b, IMMType:$c),
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], $b, $c;", ""))))),
-         [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b, imm:$c))]>,
+    !strconcat("atom", SpaceStr, OpcStr, TypeStr, " \t$dst, [$addr], $b, $c;", ""),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, regclass:$b, imm:$c))]>,
   Requires<[Pred]>;
+
   def imm3 : NVPTXInst<(outs regclass:$dst),
     (ins ptrclass:$addr, IMMType:$b, IMMType:$c),
-               !strconcat("atom",
-         !strconcat(SpaceStr,
-         !strconcat(OpcStr,
-         !strconcat(TypeStr,
-         !strconcat(" \t$dst, [$addr], $b, $c;", ""))))),
-         [(set regclass:$dst, (IntOp ptrclass:$addr, imm:$b, imm:$c))]>,
+    !strconcat("atom", SpaceStr, OpcStr, TypeStr, " \t$dst, [$addr], $b, $c;"),
+    [(set regclass:$dst, (IntOp ptrclass:$addr, imm:$b, imm:$c))]>,
   Requires<[Pred]>;
 }
 multiclass F_ATOMIC_3<NVPTXRegClass regclass, string SpaceStr, string TypeStr,
@@ -1747,11 +1673,11 @@ defm INT_PTX_LDG_G_v4f32_ELE
 
 multiclass NG_TO_G<string Str, Intrinsic Intrin> {
    def _yes : NVPTXInst<(outs Int32Regs:$result), (ins Int32Regs:$src),
-          !strconcat("cvta.", !strconcat(Str, ".u32 \t$result, $src;")),
+          !strconcat("cvta.", Str, ".u32 \t$result, $src;"),
       [(set Int32Regs:$result, (Intrin Int32Regs:$src))]>,
    Requires<[hasGenericLdSt]>;
    def _yes_64 : NVPTXInst<(outs Int64Regs:$result), (ins Int64Regs:$src),
-          !strconcat("cvta.", !strconcat(Str, ".u64 \t$result, $src;")),
+          !strconcat("cvta.", Str, ".u64 \t$result, $src;"),
       [(set Int64Regs:$result, (Intrin Int64Regs:$src))]>,
    Requires<[hasGenericLdSt]>;
 
@@ -1785,11 +1711,11 @@ multiclass NG_TO_G<string Str, Intrinsic Intrin> {
 
 multiclass G_TO_NG<string Str, Intrinsic Intrin> {
    def _yes : NVPTXInst<(outs Int32Regs:$result), (ins Int32Regs:$src),
-          !strconcat("cvta.to.", !strconcat(Str, ".u32 \t$result, $src;")),
+          !strconcat("cvta.to.", Str, ".u32 \t$result, $src;"),
       [(set Int32Regs:$result, (Intrin Int32Regs:$src))]>,
    Requires<[hasGenericLdSt]>;
    def _yes_64 : NVPTXInst<(outs Int64Regs:$result), (ins Int64Regs:$src),
-          !strconcat("cvta.to.", !strconcat(Str, ".u64 \t$result, $src;")),
+          !strconcat("cvta.to.", Str, ".u64 \t$result, $src;"),
       [(set Int64Regs:$result, (Intrin Int64Regs:$src))]>,
    Requires<[hasGenericLdSt]>;
    def _no : NVPTXInst<(outs Int32Regs:$result), (ins Int32Regs:$src),
@@ -1947,7 +1873,7 @@ def ISSPACEP_SHARED_64
 // Special register reads
 def MOV_SPECIAL : NVPTXInst<(outs Int32Regs:$d),
                             (ins SpecialRegs:$r),
-                            "mov.b32\t$d, $r;", []>;
+                            "mov.b32 \t$d, $r;", []>;
 
 def : Pat<(int_nvvm_read_ptx_sreg_envreg0), (MOV_SPECIAL ENVREG0)>;
 def : Pat<(int_nvvm_read_ptx_sreg_envreg1), (MOV_SPECIAL ENVREG1)>;
@@ -2010,20 +1936,18 @@ def : Pat<(int_nvvm_rotate_b32 Int32Regs:$src, Int32Regs:$amt),
       Requires<[noHWROT32]> ;
 
 let hasSideEffects = 0 in {
-  def GET_LO_INT64
-    : NVPTXInst<(outs Int32Regs:$dst), (ins Int64Regs:$src),
-                !strconcat("{{\n\t",
-                !strconcat(".reg .b32 %dummy;\n\t",
-                !strconcat("mov.b64 \t{$dst,%dummy}, $src;\n\t",
-          !strconcat("}}", "")))),
+  def GET_LO_INT64 : NVPTXInst<(outs Int32Regs:$dst), (ins Int64Regs:$src),
+    !strconcat("{{\n\t",
+               ".reg .b32 %dummy;\n\t",
+               "mov.b64 \t{$dst,%dummy}, $src;\n\t",
+               "}}"),
           []> ;
 
-  def GET_HI_INT64
-    : NVPTXInst<(outs Int32Regs:$dst), (ins Int64Regs:$src),
-                !strconcat("{{\n\t",
-                !strconcat(".reg .b32 %dummy;\n\t",
-                !strconcat("mov.b64 \t{%dummy,$dst}, $src;\n\t",
-          !strconcat("}}", "")))),
+  def GET_HI_INT64 : NVPTXInst<(outs Int32Regs:$dst), (ins Int64Regs:$src),
+    !strconcat("{{\n\t",
+               ".reg .b32 %dummy;\n\t",
+               "mov.b64 \t{%dummy,$dst}, $src;\n\t",
+               "}}"),
           []> ;
 }
 
@@ -2128,19 +2052,19 @@ def TEX_1D_F32_S32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x),
-              "tex.1d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
+              "tex.1d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
               []>;
 def TEX_1D_F32_F32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x),
-              "tex.1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
+              "tex.1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
               []>;
 def TEX_1D_F32_F32_LEVEL
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$lod),
-              "tex.level.1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x\\}], $lod;",
               []>;
 def TEX_1D_F32_F32_GRAD
@@ -2148,27 +2072,27 @@ def TEX_1D_F32_F32_GRAD
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_1D_S32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x),
-              "tex.1d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
+              "tex.1d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
               []>;
 def TEX_1D_S32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x),
-              "tex.1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
+              "tex.1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
               []>;
 def TEX_1D_S32_F32_LEVEL
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x\\}], $lod;",
               []>;
 def TEX_1D_S32_F32_GRAD
@@ -2176,27 +2100,27 @@ def TEX_1D_S32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_1D_U32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x),
-              "tex.1d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
+              "tex.1d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
               []>;
 def TEX_1D_U32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x),
-              "tex.1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
+              "tex.1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, [$t, $s, \\{$x\\}];",
               []>;
 def TEX_1D_U32_F32_LEVEL
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x\\}], $lod;",
               []>;
 def TEX_1D_U32_F32_GRAD
@@ -2204,7 +2128,7 @@ def TEX_1D_U32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 
@@ -2212,14 +2136,14 @@ def TEX_1D_ARRAY_F32_S32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Int32Regs:$x),
-              "tex.a1d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}];",
               []>;
 def TEX_1D_ARRAY_F32_F32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x),
-              "tex.a1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}];",
               []>;
 def TEX_1D_ARRAY_F32_F32_LEVEL
@@ -2227,7 +2151,7 @@ def TEX_1D_ARRAY_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.a1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}], $lod;",
               []>;
 def TEX_1D_ARRAY_F32_F32_GRAD
@@ -2235,21 +2159,21 @@ def TEX_1D_ARRAY_F32_F32_GRAD
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.a1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_1D_ARRAY_S32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Int32Regs:$x),
-              "tex.a1d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}];",
               []>;
 def TEX_1D_ARRAY_S32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x),
-              "tex.a1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}];",
               []>;
 def TEX_1D_ARRAY_S32_F32_LEVEL
@@ -2257,7 +2181,7 @@ def TEX_1D_ARRAY_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.a1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}], $lod;",
               []>;
 def TEX_1D_ARRAY_S32_F32_GRAD
@@ -2265,21 +2189,21 @@ def TEX_1D_ARRAY_S32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.a1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_1D_ARRAY_U32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Int32Regs:$x),
-              "tex.a1d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}];",
               []>;
 def TEX_1D_ARRAY_U32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x),
-              "tex.a1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}];",
               []>;
 def TEX_1D_ARRAY_U32_F32_LEVEL
@@ -2287,7 +2211,7 @@ def TEX_1D_ARRAY_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.a1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}], $lod;",
               []>;
 def TEX_1D_ARRAY_U32_F32_GRAD
@@ -2295,7 +2219,7 @@ def TEX_1D_ARRAY_U32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.a1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 
@@ -2303,14 +2227,14 @@ def TEX_2D_F32_S32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x, Int32Regs:$y),
-              "tex.2d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TEX_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tex.2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TEX_2D_F32_F32_LEVEL
@@ -2318,7 +2242,7 @@ def TEX_2D_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$lod),
-              "tex.level.2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}], $lod;",
               []>;
 def TEX_2D_F32_F32_GRAD
@@ -2327,7 +2251,7 @@ def TEX_2D_F32_F32_GRAD
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -2335,14 +2259,14 @@ def TEX_2D_S32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x, Int32Regs:$y),
-              "tex.2d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TEX_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tex.2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TEX_2D_S32_F32_LEVEL
@@ -2350,7 +2274,7 @@ def TEX_2D_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$lod),
-              "tex.level.2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}], $lod;",
               []>;
 def TEX_2D_S32_F32_GRAD
@@ -2359,7 +2283,7 @@ def TEX_2D_S32_F32_GRAD
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -2367,14 +2291,14 @@ def TEX_2D_U32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x, Int32Regs:$y),
-              "tex.2d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TEX_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tex.2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TEX_2D_U32_F32_LEVEL
@@ -2382,7 +2306,7 @@ def TEX_2D_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$lod),
-              "tex.level.2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}], $lod;",
               []>;
 def TEX_2D_U32_F32_GRAD
@@ -2391,7 +2315,7 @@ def TEX_2D_U32_F32_GRAD
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -2401,7 +2325,7 @@ def TEX_2D_ARRAY_F32_S32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Int32Regs:$x,
                    Int32Regs:$y),
-              "tex.a2d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_2D_ARRAY_F32_F32
@@ -2409,7 +2333,7 @@ def TEX_2D_ARRAY_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y),
-              "tex.a2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_2D_ARRAY_F32_F32_LEVEL
@@ -2417,7 +2341,7 @@ def TEX_2D_ARRAY_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$lod),
-              "tex.level.a2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}], $lod;",
               []>;
 def TEX_2D_ARRAY_F32_F32_GRAD
@@ -2426,7 +2350,7 @@ def TEX_2D_ARRAY_F32_F32_GRAD
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.a2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -2435,7 +2359,7 @@ def TEX_2D_ARRAY_S32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Int32Regs:$x,
                    Int32Regs:$y),
-              "tex.a2d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_2D_ARRAY_S32_F32
@@ -2443,7 +2367,7 @@ def TEX_2D_ARRAY_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y),
-              "tex.a2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_2D_ARRAY_S32_F32_LEVEL
@@ -2451,7 +2375,7 @@ def TEX_2D_ARRAY_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$lod),
-              "tex.level.a2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}], $lod;",
               []>;
 def TEX_2D_ARRAY_S32_F32_GRAD
@@ -2461,7 +2385,7 @@ def TEX_2D_ARRAY_S32_F32_GRAD
                    Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.a2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -2470,7 +2394,7 @@ def TEX_2D_ARRAY_U32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Int32Regs:$x,
                    Int32Regs:$y),
-              "tex.a2d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_2D_ARRAY_U32_F32
@@ -2478,7 +2402,7 @@ def TEX_2D_ARRAY_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y),
-              "tex.a2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_2D_ARRAY_U32_F32_LEVEL
@@ -2486,7 +2410,7 @@ def TEX_2D_ARRAY_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$lod),
-              "tex.level.a2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}], $lod;",
               []>;
 def TEX_2D_ARRAY_U32_F32_GRAD
@@ -2496,7 +2420,7 @@ def TEX_2D_ARRAY_U32_F32_GRAD
                    Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.a2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -2506,7 +2430,7 @@ def TEX_3D_F32_S32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x, Int32Regs:$y,
                    Int32Regs:$z),
-              "tex.3d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_3D_F32_F32
@@ -2514,7 +2438,7 @@ def TEX_3D_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z),
-              "tex.3d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_3D_F32_F32_LEVEL
@@ -2522,7 +2446,7 @@ def TEX_3D_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z, Float32Regs:$lod),
-              "tex.level.3d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.3d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_3D_F32_F32_GRAD
@@ -2533,7 +2457,7 @@ def TEX_3D_F32_F32_GRAD
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$gradx2, Float32Regs:$grady0,
                    Float32Regs:$grady1, Float32Regs:$grady2),
-              "tex.grad.3d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.3d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], "
               "\\{$gradx0, $gradx1, $gradx2, $gradx2\\}, "
               "\\{$grady0, $grady1, $grady2, $grady2\\};",
@@ -2543,7 +2467,7 @@ def TEX_3D_S32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x, Int32Regs:$y,
                    Int32Regs:$z),
-              "tex.3d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_3D_S32_F32
@@ -2551,7 +2475,7 @@ def TEX_3D_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z),
-              "tex.3d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_3D_S32_F32_LEVEL
@@ -2559,7 +2483,7 @@ def TEX_3D_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z, Float32Regs:$lod),
-              "tex.level.3d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.3d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_3D_S32_F32_GRAD
@@ -2570,7 +2494,7 @@ def TEX_3D_S32_F32_GRAD
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$gradx2, Float32Regs:$grady0,
                    Float32Regs:$grady1, Float32Regs:$grady2),
-              "tex.grad.3d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.3d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], "
               "\\{$gradx0, $gradx1, $gradx2, $gradx2\\}, "
               "\\{$grady0, $grady1, $grady2, $grady2\\};",
@@ -2580,7 +2504,7 @@ def TEX_3D_U32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$x, Int32Regs:$y,
                    Int32Regs:$z),
-              "tex.3d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_3D_U32_F32
@@ -2588,7 +2512,7 @@ def TEX_3D_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z),
-              "tex.3d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_3D_U32_F32_LEVEL
@@ -2596,7 +2520,7 @@ def TEX_3D_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z, Float32Regs:$lod),
-              "tex.level.3d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.3d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_3D_U32_F32_GRAD
@@ -2607,7 +2531,7 @@ def TEX_3D_U32_F32_GRAD
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$gradx2, Float32Regs:$grady0,
                    Float32Regs:$grady1, Float32Regs:$grady2),
-              "tex.grad.3d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.3d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], "
               "\\{$gradx0, $gradx1, $gradx2, $gradx2\\}, "
               "\\{$grady0, $grady1, $grady2, $grady2\\};",
@@ -2618,7 +2542,7 @@ def TEX_CUBE_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s,
                Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.cube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.cube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_CUBE_F32_F32_LEVEL
@@ -2627,7 +2551,7 @@ def TEX_CUBE_F32_F32_LEVEL
               (ins Int64Regs:$t, Int64Regs:$s,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.cube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.cube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_CUBE_S32_F32
@@ -2635,7 +2559,7 @@ def TEX_CUBE_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.cube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.cube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_CUBE_S32_F32_LEVEL
@@ -2644,7 +2568,7 @@ def TEX_CUBE_S32_F32_LEVEL
               (ins Int64Regs:$t, Int64Regs:$s,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.cube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.cube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_CUBE_U32_F32
@@ -2652,7 +2576,7 @@ def TEX_CUBE_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.cube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.cube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_CUBE_U32_F32_LEVEL
@@ -2661,7 +2585,7 @@ def TEX_CUBE_U32_F32_LEVEL
               (ins Int64Regs:$t, Int64Regs:$s,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.cube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.cube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 
@@ -2670,7 +2594,7 @@ def TEX_CUBE_ARRAY_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l,
                Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.acube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.acube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $z\\}];",
               []>;
 def TEX_CUBE_ARRAY_F32_F32_LEVEL
@@ -2679,7 +2603,7 @@ def TEX_CUBE_ARRAY_F32_F32_LEVEL
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.acube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.acube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $z\\}], $lod;",
               []>;
 def TEX_CUBE_ARRAY_S32_F32
@@ -2687,7 +2611,7 @@ def TEX_CUBE_ARRAY_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.acube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.acube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $z\\}];",
               []>;
 def TEX_CUBE_ARRAY_S32_F32_LEVEL
@@ -2696,7 +2620,7 @@ def TEX_CUBE_ARRAY_S32_F32_LEVEL
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.acube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.acube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $z\\}], $lod;",
               []>;
 def TEX_CUBE_ARRAY_U32_F32
@@ -2704,7 +2628,7 @@ def TEX_CUBE_ARRAY_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.acube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.acube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $z\\}];",
               []>;
 def TEX_CUBE_ARRAY_U32_F32_LEVEL
@@ -2713,7 +2637,7 @@ def TEX_CUBE_ARRAY_U32_F32_LEVEL
               (ins Int64Regs:$t, Int64Regs:$s, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.acube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.acube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, $s, \\{$l, $x, $y, $z\\}], $lod;",
               []>;
 
@@ -2721,84 +2645,84 @@ def TLD4_R_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.r.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.r.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_G_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.g.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.g.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_B_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.b.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.b.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_A_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.a.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.a.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_R_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.r.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.r.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_G_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.g.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.g.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_B_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.b.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.b.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_A_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.a.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.a.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_R_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.r.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.r.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_G_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.g.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.g.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_B_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.b.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.b.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 def TLD4_A_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Int64Regs:$s, Float32Regs:$x, Float32Regs:$y),
-              "tld4.a.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.a.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, $s, \\{$x, $y\\}];",
               []>;
 }
@@ -2811,19 +2735,19 @@ def TEX_UNIFIED_1D_F32_S32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x),
-              "tex.1d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
+              "tex.1d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
               []>;
 def TEX_UNIFIED_1D_F32_F32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x),
-              "tex.1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
+              "tex.1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
               []>;
 def TEX_UNIFIED_1D_F32_F32_LEVEL
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$lod),
-              "tex.level.1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x\\}], $lod;",
               []>;
 def TEX_UNIFIED_1D_F32_F32_GRAD
@@ -2831,27 +2755,27 @@ def TEX_UNIFIED_1D_F32_F32_GRAD
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_UNIFIED_1D_S32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x),
-              "tex.1d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
+              "tex.1d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
               []>;
 def TEX_UNIFIED_1D_S32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x),
-              "tex.1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
+              "tex.1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
               []>;
 def TEX_UNIFIED_1D_S32_F32_LEVEL
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x\\}], $lod;",
               []>;
 def TEX_UNIFIED_1D_S32_F32_GRAD
@@ -2859,27 +2783,27 @@ def TEX_UNIFIED_1D_S32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_UNIFIED_1D_U32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x),
-              "tex.1d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
+              "tex.1d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
               []>;
 def TEX_UNIFIED_1D_U32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x),
-              "tex.1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
+              "tex.1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, [$t, \\{$x\\}];",
               []>;
 def TEX_UNIFIED_1D_U32_F32_LEVEL
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x\\}], $lod;",
               []>;
 def TEX_UNIFIED_1D_U32_F32_GRAD
@@ -2887,7 +2811,7 @@ def TEX_UNIFIED_1D_U32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 
@@ -2895,14 +2819,14 @@ def TEX_UNIFIED_1D_ARRAY_F32_S32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Int32Regs:$x),
-              "tex.a1d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}];",
               []>;
 def TEX_UNIFIED_1D_ARRAY_F32_F32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x),
-              "tex.a1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}];",
               []>;
 def TEX_UNIFIED_1D_ARRAY_F32_F32_LEVEL
@@ -2910,7 +2834,7 @@ def TEX_UNIFIED_1D_ARRAY_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.a1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}], $lod;",
               []>;
 def TEX_UNIFIED_1D_ARRAY_F32_F32_GRAD
@@ -2918,21 +2842,21 @@ def TEX_UNIFIED_1D_ARRAY_F32_F32_GRAD
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.a1d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a1d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_UNIFIED_1D_ARRAY_S32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Int32Regs:$x),
-              "tex.a1d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}];",
               []>;
 def TEX_UNIFIED_1D_ARRAY_S32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x),
-              "tex.a1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}];",
               []>;
 def TEX_UNIFIED_1D_ARRAY_S32_F32_LEVEL
@@ -2940,7 +2864,7 @@ def TEX_UNIFIED_1D_ARRAY_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.a1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}], $lod;",
               []>;
 def TEX_UNIFIED_1D_ARRAY_S32_F32_GRAD
@@ -2948,21 +2872,21 @@ def TEX_UNIFIED_1D_ARRAY_S32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.a1d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a1d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 def TEX_UNIFIED_1D_ARRAY_U32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Int32Regs:$x),
-              "tex.a1d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}];",
               []>;
 def TEX_UNIFIED_1D_ARRAY_U32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x),
-              "tex.a1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}];",
               []>;
 def TEX_UNIFIED_1D_ARRAY_U32_F32_LEVEL
@@ -2970,7 +2894,7 @@ def TEX_UNIFIED_1D_ARRAY_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$lod),
-              "tex.level.a1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}], $lod;",
               []>;
 def TEX_UNIFIED_1D_ARRAY_U32_F32_GRAD
@@ -2978,7 +2902,7 @@ def TEX_UNIFIED_1D_ARRAY_U32_F32_GRAD
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$gradx, Float32Regs:$grady),
-              "tex.grad.a1d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a1d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x\\}], \\{$gradx\\}, \\{$grady\\};",
               []>;
 
@@ -2986,14 +2910,14 @@ def TEX_UNIFIED_2D_F32_S32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x, Int32Regs:$y),
-              "tex.2d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$r, Float32Regs:$g,
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tex.2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_F32_F32_LEVEL
@@ -3001,7 +2925,7 @@ def TEX_UNIFIED_2D_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$lod),
-              "tex.level.2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}], $lod;",
               []>;
 def TEX_UNIFIED_2D_F32_F32_GRAD
@@ -3010,7 +2934,7 @@ def TEX_UNIFIED_2D_F32_F32_GRAD
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -3018,14 +2942,14 @@ def TEX_UNIFIED_2D_S32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x, Int32Regs:$y),
-              "tex.2d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tex.2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_S32_F32_LEVEL
@@ -3033,7 +2957,7 @@ def TEX_UNIFIED_2D_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$lod),
-              "tex.level.2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}], $lod;",
               []>;
 def TEX_UNIFIED_2D_S32_F32_GRAD
@@ -3042,7 +2966,7 @@ def TEX_UNIFIED_2D_S32_F32_GRAD
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -3050,14 +2974,14 @@ def TEX_UNIFIED_2D_U32_S32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x, Int32Regs:$y),
-              "tex.2d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$r, Int32Regs:$g,
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tex.2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_U32_F32_LEVEL
@@ -3065,7 +2989,7 @@ def TEX_UNIFIED_2D_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$lod),
-              "tex.level.2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}], $lod;",
               []>;
 def TEX_UNIFIED_2D_U32_F32_GRAD
@@ -3074,7 +2998,7 @@ def TEX_UNIFIED_2D_U32_F32_GRAD
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -3084,7 +3008,7 @@ def TEX_UNIFIED_2D_ARRAY_F32_S32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Int32Regs:$x,
                    Int32Regs:$y),
-              "tex.a2d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_ARRAY_F32_F32
@@ -3092,7 +3016,7 @@ def TEX_UNIFIED_2D_ARRAY_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y),
-              "tex.a2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_ARRAY_F32_F32_LEVEL
@@ -3100,7 +3024,7 @@ def TEX_UNIFIED_2D_ARRAY_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$lod),
-              "tex.level.a2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}], $lod;",
               []>;
 def TEX_UNIFIED_2D_ARRAY_F32_F32_GRAD
@@ -3109,7 +3033,7 @@ def TEX_UNIFIED_2D_ARRAY_F32_F32_GRAD
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.a2d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a2d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -3118,7 +3042,7 @@ def TEX_UNIFIED_2D_ARRAY_S32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Int32Regs:$x,
                    Int32Regs:$y),
-              "tex.a2d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_ARRAY_S32_F32
@@ -3126,7 +3050,7 @@ def TEX_UNIFIED_2D_ARRAY_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y),
-              "tex.a2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_ARRAY_S32_F32_LEVEL
@@ -3134,7 +3058,7 @@ def TEX_UNIFIED_2D_ARRAY_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$lod),
-              "tex.level.a2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}], $lod;",
               []>;
 def TEX_UNIFIED_2D_ARRAY_S32_F32_GRAD
@@ -3144,7 +3068,7 @@ def TEX_UNIFIED_2D_ARRAY_S32_F32_GRAD
                    Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.a2d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a2d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -3153,7 +3077,7 @@ def TEX_UNIFIED_2D_ARRAY_U32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Int32Regs:$x,
                    Int32Regs:$y),
-              "tex.a2d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_ARRAY_U32_F32
@@ -3161,7 +3085,7 @@ def TEX_UNIFIED_2D_ARRAY_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y),
-              "tex.a2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.a2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}];",
               []>;
 def TEX_UNIFIED_2D_ARRAY_U32_F32_LEVEL
@@ -3169,7 +3093,7 @@ def TEX_UNIFIED_2D_ARRAY_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l, Float32Regs:$x,
                    Float32Regs:$y, Float32Regs:$lod),
-              "tex.level.a2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.a2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}], $lod;",
               []>;
 def TEX_UNIFIED_2D_ARRAY_U32_F32_GRAD
@@ -3179,7 +3103,7 @@ def TEX_UNIFIED_2D_ARRAY_U32_F32_GRAD
                    Float32Regs:$y,
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$grady0, Float32Regs:$grady1),
-              "tex.grad.a2d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.a2d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $y\\}], \\{$gradx0, $gradx1\\}, "
               "\\{$grady0, $grady1\\};",
               []>;
@@ -3189,7 +3113,7 @@ def TEX_UNIFIED_3D_F32_S32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x, Int32Regs:$y,
                    Int32Regs:$z),
-              "tex.3d.v4.f32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.f32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_3D_F32_F32
@@ -3197,7 +3121,7 @@ def TEX_UNIFIED_3D_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z),
-              "tex.3d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_3D_F32_F32_LEVEL
@@ -3205,7 +3129,7 @@ def TEX_UNIFIED_3D_F32_F32_LEVEL
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z, Float32Regs:$lod),
-              "tex.level.3d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.3d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_3D_F32_F32_GRAD
@@ -3216,7 +3140,7 @@ def TEX_UNIFIED_3D_F32_F32_GRAD
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$gradx2, Float32Regs:$grady0,
                    Float32Regs:$grady1, Float32Regs:$grady2),
-              "tex.grad.3d.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.3d.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], "
               "\\{$gradx0, $gradx1, $gradx2, $gradx2\\}, "
               "\\{$grady0, $grady1, $grady2, $grady2\\};",
@@ -3226,7 +3150,7 @@ def TEX_UNIFIED_3D_S32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x, Int32Regs:$y,
                    Int32Regs:$z),
-              "tex.3d.v4.s32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.s32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_3D_S32_F32
@@ -3234,7 +3158,7 @@ def TEX_UNIFIED_3D_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z),
-              "tex.3d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_3D_S32_F32_LEVEL
@@ -3242,7 +3166,7 @@ def TEX_UNIFIED_3D_S32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z, Float32Regs:$lod),
-              "tex.level.3d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.3d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_3D_S32_F32_GRAD
@@ -3253,7 +3177,7 @@ def TEX_UNIFIED_3D_S32_F32_GRAD
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$gradx2, Float32Regs:$grady0,
                    Float32Regs:$grady1, Float32Regs:$grady2),
-              "tex.grad.3d.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.3d.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], "
               "\\{$gradx0, $gradx1, $gradx2, $gradx2\\}, "
               "\\{$grady0, $grady1, $grady2, $grady2\\};",
@@ -3263,7 +3187,7 @@ def TEX_UNIFIED_3D_U32_S32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$x, Int32Regs:$y,
                    Int32Regs:$z),
-              "tex.3d.v4.u32.s32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.u32.s32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_3D_U32_F32
@@ -3271,7 +3195,7 @@ def TEX_UNIFIED_3D_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z),
-              "tex.3d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.3d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_3D_U32_F32_LEVEL
@@ -3279,7 +3203,7 @@ def TEX_UNIFIED_3D_U32_F32_LEVEL
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y,
                    Float32Regs:$z, Float32Regs:$lod),
-              "tex.level.3d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.3d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_3D_U32_F32_GRAD
@@ -3290,7 +3214,7 @@ def TEX_UNIFIED_3D_U32_F32_GRAD
                    Float32Regs:$gradx0, Float32Regs:$gradx1,
                    Float32Regs:$gradx2, Float32Regs:$grady0,
                    Float32Regs:$grady1, Float32Regs:$grady2),
-              "tex.grad.3d.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.grad.3d.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], "
               "\\{$gradx0, $gradx1, $gradx2, $gradx2\\}, "
               "\\{$grady0, $grady1, $grady2, $grady2\\};",
@@ -3301,7 +3225,7 @@ def TEX_UNIFIED_CUBE_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t,
                Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.cube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.cube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_CUBE_F32_F32_LEVEL
@@ -3310,7 +3234,7 @@ def TEX_UNIFIED_CUBE_F32_F32_LEVEL
               (ins Int64Regs:$t,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.cube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.cube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_CUBE_S32_F32
@@ -3318,7 +3242,7 @@ def TEX_UNIFIED_CUBE_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.cube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.cube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_CUBE_S32_F32_LEVEL
@@ -3327,7 +3251,7 @@ def TEX_UNIFIED_CUBE_S32_F32_LEVEL
               (ins Int64Regs:$t,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.cube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.cube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_CUBE_U32_F32
@@ -3335,7 +3259,7 @@ def TEX_UNIFIED_CUBE_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.cube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.cube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}];",
               []>;
 def TEX_UNIFIED_CUBE_U32_F32_LEVEL
@@ -3344,7 +3268,7 @@ def TEX_UNIFIED_CUBE_U32_F32_LEVEL
               (ins Int64Regs:$t,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.cube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.cube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$x, $y, $z, $z\\}], $lod;",
               []>;
 
@@ -3353,7 +3277,7 @@ def TEX_UNIFIED_CUBE_ARRAY_F32_F32
                     Float32Regs:$b, Float32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l,
                Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.acube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.acube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $z\\}];",
               []>;
 def TEX_UNIFIED_CUBE_ARRAY_F32_F32_LEVEL
@@ -3362,7 +3286,7 @@ def TEX_UNIFIED_CUBE_ARRAY_F32_F32_LEVEL
               (ins Int64Regs:$t, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.acube.v4.f32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.acube.v4.f32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_CUBE_ARRAY_S32_F32
@@ -3370,7 +3294,7 @@ def TEX_UNIFIED_CUBE_ARRAY_S32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.acube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.acube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $z\\}];",
               []>;
 def TEX_UNIFIED_CUBE_ARRAY_S32_F32_LEVEL
@@ -3379,7 +3303,7 @@ def TEX_UNIFIED_CUBE_ARRAY_S32_F32_LEVEL
               (ins Int64Regs:$t, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.acube.v4.s32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.acube.v4.s32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $z\\}], $lod;",
               []>;
 def TEX_UNIFIED_CUBE_ARRAY_U32_F32
@@ -3387,7 +3311,7 @@ def TEX_UNIFIED_CUBE_ARRAY_U32_F32
                     Int32Regs:$b, Int32Regs:$a),
               (ins Int64Regs:$t, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z),
-              "tex.acube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.acube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $z\\}];",
               []>;
 def TEX_UNIFIED_CUBE_ARRAY_U32_F32_LEVEL
@@ -3396,7 +3320,7 @@ def TEX_UNIFIED_CUBE_ARRAY_U32_F32_LEVEL
               (ins Int64Regs:$t, Int32Regs:$l,
                    Float32Regs:$x, Float32Regs:$y, Float32Regs:$z,
                    Float32Regs:$lod),
-              "tex.level.acube.v4.u32.f32\t\\{$r, $g, $b, $a\\}, "
+              "tex.level.acube.v4.u32.f32 \t\\{$r, $g, $b, $a\\}, "
               "[$t, \\{$l, $x, $y, $z\\}], $lod;",
               []>;
 
@@ -3404,84 +3328,84 @@ def TLD4_UNIFIED_R_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.r.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.r.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_G_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.g.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.g.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_B_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.b.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.b.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_A_2D_F32_F32
   : NVPTXInst<(outs Float32Regs:$v0, Float32Regs:$v1,
                     Float32Regs:$v2, Float32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.a.2d.v4.f32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.a.2d.v4.f32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_R_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.r.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.r.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_G_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.g.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.g.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_B_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.b.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.b.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_A_2D_S32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.a.2d.v4.s32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.a.2d.v4.s32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_R_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.r.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.r.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_G_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.g.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.g.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_B_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.b.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.b.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 def TLD4_UNIFIED_A_2D_U32_F32
   : NVPTXInst<(outs Int32Regs:$v0, Int32Regs:$v1,
                     Int32Regs:$v2, Int32Regs:$v3),
               (ins Int64Regs:$t, Float32Regs:$x, Float32Regs:$y),
-              "tld4.a.2d.v4.u32.f32\t\\{$v0, $v1, $v2, $v3\\}, "
+              "tld4.a.2d.v4.u32.f32 \t\\{$v0, $v1, $v2, $v3\\}, "
               "[$t, \\{$x, $y\\}];",
               []>;
 }
@@ -7136,12 +7060,12 @@ def : Pat<(int_nvvm_sust_p_3d_v4i32_trap
 
 class PTX_READ_SREG_R64<string regname, Intrinsic intop>
   : NVPTXInst<(outs Int64Regs:$d), (ins),
-              !strconcat(!strconcat("mov.u64\t$d, %", regname), ";"),
+              !strconcat("mov.u64 \t$d, %", regname, ";"),
               [(set Int64Regs:$d, (intop))]>;
 
 class PTX_READ_SREG_R32<string regname, Intrinsic intop>
   : NVPTXInst<(outs Int32Regs:$d), (ins),
-              !strconcat(!strconcat("mov.u32\t$d, %", regname), ";"),
+              !strconcat("mov.u32 \t$d, %", regname, ";"),
               [(set Int32Regs:$d, (intop))]>;
 
 // TODO Add read vector-version of special registers
