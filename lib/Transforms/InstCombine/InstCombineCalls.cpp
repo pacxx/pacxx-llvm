@@ -520,7 +520,7 @@ static Value *simplifyX86muldq(const IntrinsicInst &II,
          ResTy->getScalarSizeInBits() == 64 && "Unexpected muldq/muludq types");
 
   // muldq/muludq(undef, undef) -> zero (matches generic mul behavior)
-  if (isa<UndefValue>(Arg0) && isa<UndefValue>(Arg1))
+  if (isa<UndefValue>(Arg0) || isa<UndefValue>(Arg1))
     return ConstantAggregateZero::get(ResTy);
 
   // Constant folding.
@@ -1680,11 +1680,18 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       return SelectInst::Create(Cond, Call0, Call1);
     }
 
+    LLVM_FALLTHROUGH;
+  }
+  case Intrinsic::ceil:
+  case Intrinsic::floor:
+  case Intrinsic::round:
+  case Intrinsic::nearbyint:
+  case Intrinsic::trunc: {
     Value *ExtSrc;
     if (match(II->getArgOperand(0), m_FPExt(m_Value(ExtSrc))) &&
         II->getArgOperand(0)->hasOneUse()) {
       // fabs (fpext x) -> fpext (fabs x)
-      Value *F = Intrinsic::getDeclaration(II->getModule(), Intrinsic::fabs,
+      Value *F = Intrinsic::getDeclaration(II->getModule(), II->getIntrinsicID(),
                                            { ExtSrc->getType() });
       CallInst *NewFabs = Builder->CreateCall(F, ExtSrc);
       NewFabs->copyFastMathFlags(II);
