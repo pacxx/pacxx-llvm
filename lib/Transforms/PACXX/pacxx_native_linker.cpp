@@ -2,7 +2,7 @@
 
 #define PACXX_PASS_NAME "PACXXNativeLinker"
 #include "Log.h"
-
+#include "pacxx_sm_pass.h"
 #include "ModuleHelper.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "../../IR/ConstantsContext.h"
@@ -40,6 +40,7 @@ namespace llvm {
 
     private:
         bool _barrier;
+        bool _vectorized;
     };
 
     bool PACXXNativeLinker::runOnModule(Module &M) {
@@ -52,9 +53,11 @@ namespace llvm {
       for (auto &F : kernels) {
 
         _barrier = false;
+        _vectorized = false;
 
         // if the kernel has been vectorized
-        if(F->hasFnAttribute("vectorized")) {
+        if (F->hasFnAttribute("vectorized")) {
+          _vectorized = true;
           foo = M.getFunction("__vectorized__foo__" + F->getName().str());
         }
         // if the kernel has a barrier use a special foo function
@@ -114,7 +117,6 @@ namespace llvm {
 
         BasicBlock *entry = BasicBlock::Create(ctx, "entry", wrappedF);
 
-
         auto term = ReturnInst::Create(ctx, entry);
         auto CI = CallInst::Create(foo, args, "", term);
 
@@ -137,7 +139,6 @@ namespace llvm {
           }
         }
 
-
         // find the dummy kernel call and replace it with a call to the actual
         // kernel
         SmallVector<Value *, 8> kernel_args;
@@ -145,15 +146,9 @@ namespace llvm {
         Value *maxidx = nullptr, *maxidy = nullptr, *maxidz = nullptr;
         Value *maxblockx = nullptr, *maxblocky = nullptr, *maxblockz = nullptr;
         Value *sm_size = nullptr;
-        Function *dummy;
         Function *seq_dummy = M.getFunction("__dummy_kernel");
         Function *vec_dummy = M.getFunction("__vectorized__dummy_kernel");
-        // if the normal dummy call does not exist at this point we know that a sequential version is not needed
-        // so we use the vectorized version
-        if (seq_dummy)
-          dummy = seq_dummy;
-        else
-          dummy = vec_dummy;
+        Function *dummy = seq_dummy;
 
         CallInst *remove = nullptr;
         for (auto U : dummy->users()) {
@@ -262,22 +257,23 @@ namespace llvm {
 
         //If a vectorized version and a sequential version of the kernel exists
         // the vectorized version also needs to be inlined
-        if (seq_dummy && vec_dummy) {
+        if (_vectorized) {
           CallInst *remove_vec = nullptr;
           Function *vec_kernel = M.getFunction("__vectorized__" + F->getName().str());
           for (auto U : vec_dummy->users()) {
             if ((CI = dyn_cast<CallInst>(U))) {
               if (CI->getParent()->getParent() == wrappedF) {
                 remove_vec = CI;
+
                 if (_barrier) {
                   CallInst *actual_call = dyn_cast<CallInst>(&*(--remove_vec->getIterator()));
                   assert(actual_call && "cant find actual call");
                   CI = actual_call;
                   for (unsigned i = 0; i < kernel_args.size(); ++i)
                     CI->setArgOperand(i, kernel_args[i]);
-                }
-                else
+                } else
                   CI = CallInst::Create(vec_kernel, kernel_args, "", CI);
+
                 break;
               }
             }
@@ -289,10 +285,8 @@ namespace llvm {
           InlineFunction(CI, IFI, nullptr, false);
         }
 
-        // At this point we inlined all kernels and can safely replace the shared mem global variable
-        //create shared memory buffer
-        createSharedMemoryBuffer(M, wrappedF, sm_size);
 
+        __verbose("replacing dead calls \n");
         vector<CallInst *> dead_calls;
         for (auto &B : *wrappedF) {
           for (auto &I : B) {
@@ -322,8 +316,8 @@ namespace llvm {
                   CI->replaceAllUsesWith(bidz);
                   dead_calls.push_back(CI);
                 } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_x) {
-                    CI->replaceAllUsesWith(maxblockx);
-                    dead_calls.push_back(CI);
+                  CI->replaceAllUsesWith(maxblockx);
+                  dead_calls.push_back(CI);
                 } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_y) {
                   CI->replaceAllUsesWith(maxblocky);
                   dead_calls.push_back(CI);
@@ -348,17 +342,23 @@ namespace llvm {
         for (auto I : dead_calls)
           I->eraseFromParent();
 
-        if(foo != origFoo)
+        if (foo != origFoo)
           foo->eraseFromParent();
-      }
 
-      __verbose("Cleaning up");
-      //cleanup
-      for (auto F : kernels) {
+        __verbose("Cleaning up");
+        //cleanup
         Function *vec_F = M.getFunction("__vectorized__" + F->getName().str());
         F->eraseFromParent();
         if (vec_F)
           vec_F->eraseFromParent();
+
+        __verbose("creating shared mem \n");
+        // At this point we inlined all kernels and can safely replace the shared mem global variable
+        //create shared memory buffer
+        PACXXNativeSMTransformer smTransformer;
+        smTransformer.runOnFunction(*wrappedF);
+        //createSharedMemoryBuffer(M, wrappedF, sm_size);
+
       }
 
       origFoo->eraseFromParent();
@@ -366,7 +366,7 @@ namespace llvm {
       return true;
     }
 
-    //TODO refactor
+    //TODO remove if everything is working
     void PACXXNativeLinker::createSharedMemoryBuffer(Module &M, Function *wrapper, Value *sm_size) {
 
       // remove constExpr so it is easier to replace the global shared memory

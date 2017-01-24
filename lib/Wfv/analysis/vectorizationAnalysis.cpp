@@ -936,7 +936,6 @@ VectorizationAnalysis::recursivelyMarkVarying(Instruction* inst,
             changed |= markValueAs(call, WFV::WFV_METADATA_OP_VARYING);
             break;
         }
-
         default:
         {
             assert (!inst->getType()->isVoidTy());

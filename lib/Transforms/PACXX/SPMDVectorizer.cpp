@@ -104,7 +104,8 @@ bool SPMDVectorizer::runOnModule(Module& M) {
                                        true);
 
         bool vectorized = wfv.run();
-        //vectorized = wfv.analyze();
+        //bool vectorized = wfv.analyze();
+        __verbose("vectorized: ", vectorized);
 
         if(vectorized) {
             modifyWrapperLoop(dummyFunction, vecDummyFunction, kernel, vectorWidth, M);
@@ -113,6 +114,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         }
         else
             vectorizedKernel->eraseFromParent();
+
 
         kernelsVectorized &= vectorized;
     }

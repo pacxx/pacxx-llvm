@@ -538,7 +538,7 @@ FunctionVectorizer::broadcastUniformOperand(Instruction*   inst,
         assert (((!isa<Instruction>(operand) && !isa<Argument>(operand)) ||
                 !WFV::hasMetadata(operand, WFV::WFV_METADATA_INDEX_CONSECUTIVE)) &&
                 "unexpected consecutive alloca array size operand");
-        return false;
+        return true;
     }
 
     // Selects may have scalar conditions.
@@ -548,7 +548,7 @@ FunctionVectorizer::broadcastUniformOperand(Instruction*   inst,
         assert (((!isa<Instruction>(operand) && !isa<Argument>(operand)) ||
                 !WFV::hasMetadata(operand, WFV::WFV_METADATA_INDEX_CONSECUTIVE)) &&
                 "unexpected consecutive select condition");
-        return false;
+        return true;
     }
 
     if (Constant* c = dyn_cast<Constant>(operand))

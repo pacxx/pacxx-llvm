@@ -645,7 +645,10 @@ WFVInterface::vectorizeFunction()
     // Perform vectorization analysis of current function.
     //
     const bool analyzed = analyzeFunction(tempF, mInfo->mSimdFunction);
-    if (!analyzed) return false;
+    if (!analyzed) {
+        tempF->eraseFromParent();
+        return false;
+    }
 
 #ifndef WFV_ENABLE_OPTIONAL_BELOW_MANDATORY_LOOP_EXITS
     //

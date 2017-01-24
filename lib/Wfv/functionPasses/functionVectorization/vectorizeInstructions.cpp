@@ -63,7 +63,9 @@ FunctionVectorizer::vectorizeInstructions(Function* f)
         // return the correct type (i.e. create a pointer cast).
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE) &&
             !isa<GetElementPtrInst>(inst) &&
-            !isa<AllocaInst>(inst))
+            !isa<AllocaInst>(inst) &&
+            !isa<AddrSpaceCastInst>(inst) &&
+            !isa<BitCastInst>(inst))
         {
             continue;
         }
@@ -261,19 +263,10 @@ FunctionVectorizer::visitLoadInst(LoadInst     &I)
         CallInst *CI = CallInst::Create(Fn, Ops, "masked_load", load);
         WFV::setMetadata(CI, WFV::WFV_METADATA_RES_VECTOR);
 
-        //replace all uses of the load with the masked load
-        // needs to be done manually because llvm forbids replaces of different types
-        for(auto I = load->use_begin(), IE = load->use_end(); I != IE; ++I) {
-            Use &U = *I;
-            if (auto *C = dyn_cast<Constant>(U.getUser())) {
-                if (!isa<GlobalValue>(C)) {
-                    C->handleOperandChange(load, CI);
-                    continue;
-                }
-            }
-            U.set(CI);
-        }
+        load->mutateType(CI->getType());
+        load->replaceAllUsesWith(CI);
         load->eraseFromParent();
+        outs() << "done" << "\n";
         return true;
     }
     else {
@@ -390,18 +383,8 @@ FunctionVectorizer::visitStoreInst(StoreInst   &I)
 
         CallInst *CI = CallInst::Create(Fn, Ops, "", store);
 
-        //replace all uses of the store with the masked load
-        // needs to be done manually because llvm forbids replaces of different types
-        for(auto I = store->use_begin(), IE = store->use_end(); I != IE; ++I) {
-            Use &U = *I;
-            if (auto *C = dyn_cast<Constant>(U.getUser())) {
-                if (!isa<GlobalValue>(C)) {
-                    C->handleOperandChange(store, CI);
-                    continue;
-                }
-            }
-            U.set(CI);
-        }
+        store->mutateType(CI->getType());
+        store->replaceAllUsesWith(CI);
         store->eraseFromParent();
 
         return true;

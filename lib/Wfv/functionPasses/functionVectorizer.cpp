@@ -163,7 +163,7 @@ FunctionVectorizer::runOnFunction(Function& F)
 
     if(mInfo->mVerbose) {
         outs() << "\nafter insertPackUnpackIntrinsics:";
-        f_SIMD->dump();
+        outs() << *f_SIMD;
     }
 
     // 2)
@@ -184,7 +184,7 @@ FunctionVectorizer::runOnFunction(Function& F)
 
     if(mInfo->mVerbose) {
         outs() << "\nafter duplicateSplitInstructions:";
-        f_SIMD->dump();
+        outs() << *f_SIMD;
     }
 
     //outs() << "temporary exit before instruction vectorization.\n";
@@ -206,7 +206,7 @@ FunctionVectorizer::runOnFunction(Function& F)
 
     if(mInfo->mVerbose) {
         outs() << "\nafter vectorizeInstructions:";
-        f_SIMD->dump();
+        outs() << *f_SIMD;
     }
 
     // 4)
@@ -230,7 +230,7 @@ FunctionVectorizer::runOnFunction(Function& F)
 
     if(mInfo->mVerbose) {
         outs() << "\nafter generatePackUnpackCode:";
-        f_SIMD->dump();
+        outs() << *f_SIMD;
     }
 
     // 5)
@@ -243,7 +243,7 @@ FunctionVectorizer::runOnFunction(Function& F)
 
     if(mInfo->mVerbose) {
         outs() << "\nafter generateSideEffectGuards:";
-        f_SIMD->dump();
+        outs() << *f_SIMD;
     }
 
     // 7)

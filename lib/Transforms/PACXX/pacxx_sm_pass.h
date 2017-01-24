@@ -46,20 +46,34 @@ public:
     bool runOnFunction(Function &F) override;
 
 private:
+    struct ConstantUser {
+        Instruction *_inst;
+        vector<ConstantExpr *> _constants;
+
+        ConstantUser(Instruction *inst, vector<ConstantExpr *> constants) : _inst(inst), _constants(constants) { }
+    };
+
+private:
 
     void createSharedMemoryBuffer(Function *func, Value *sm_size);
 
-    void transformConstExprToInst(Function *func);
+    void createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, BasicBlock *sharedMemBB);
 
-    void recursiveTransformConstExprToInst(Instruction *inst, Instruction *insertBefore);
-
-    void createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Function *wrapper,
-                                          BasicBlock *sharedMemBB);
-
-    void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, Function *wrapper,
+    void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals,
                                           Value *sm_size, BasicBlock *sharedMemBB);
 
+    void checkTypes(Value *newSm);
+
     set<GlobalVariable *> getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal);
+
+    vector<ConstantUser> findInstruction(Function *func, ConstantExpr * constExpr);
+
+    void lookAtConstantOps(ConstantExpr *constExp, ConstantExpr *smUser,
+                           vector<ConstantExpr *> &tmp,
+                           vector<ConstantExpr *> &constants,
+                           bool *usesSM);
+
+    void fixAddrspace(Function *func);
 
 };
 

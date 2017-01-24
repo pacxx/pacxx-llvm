@@ -618,8 +618,10 @@ void PACXXNativeBarrier::prepareFunctionForLinker(Module &M, Function *oldFunc, 
 
     LLVMContext &ctx = oldFunc->getContext();
 
+    newFunc->setAttributes(oldFunc->getAttributes());
     // mark first function as kernel and mark use of a barrier
     newFunc->addFnAttr("barrier");
+
 
     // replace old kernel in metadata with new one
     //this work around is needed, replaceAllUsesWith fails cause of different types

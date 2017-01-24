@@ -398,6 +398,7 @@ WFV::isVectorizableInst(const Instruction& inst)
         case Instruction::ShuffleVector:
         case Instruction::LandingPad:
         case Instruction::Invoke:
+        case Instruction::AddrSpaceCast:
         {
             return false;
         }

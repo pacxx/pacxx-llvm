@@ -22,6 +22,7 @@ void PACXXNativeSMTransformer::releaseMemory() {}
 void PACXXNativeSMTransformer::getAnalysisUsage(AnalysisUsage &AU) const {}
 
 
+//TODO test
 bool PACXXNativeSMTransformer::runOnFunction(Function &F) {
 
     auto argIt = F.arg_end();
@@ -41,20 +42,25 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
     auto internal_sm = getSMGlobalsUsedByKernel(M, func, true);
     auto external_sm = getSMGlobalsUsedByKernel(M, func, false);
 
-    BasicBlock *entry = &func->front();
-    BasicBlock *sharedMemBB = BasicBlock::Create(func->getContext(), "shared mem", func, entry);
+    if(!internal_sm.empty() || !external_sm.empty()) {
+        BasicBlock *entry = &func->front();
+        BasicBlock *sharedMemBB = BasicBlock::Create(func->getContext(), "shared mem", func, entry);
 
-    if(!internal_sm.empty()) {
-        __verbose("internal shared memory found\n");
+        if (!internal_sm.empty()) {
+            __verbose("internal shared memory found\n");
+            createInternalSharedMemoryBuffer(*M, internal_sm, sharedMemBB);
+        }
+
+        if (!external_sm.empty()) {
+            __verbose("external shared memory found\n");
+            createExternalSharedMemoryBuffer(*M, external_sm, sm_size, sharedMemBB);
+        }
+
+        BranchInst::Create(entry, sharedMemBB);
+
+        fixAddrspace(func);
+        __verbose("created shared memory");
     }
-
-    if(!external_sm.empty()) {
-        __verbose("external shared memory found\n");
-    }
-
-    BranchInst::Create(entry, sharedMemBB);
-
-    __verbose("created shared memory");
 }
 
 set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal) {
@@ -69,7 +75,24 @@ set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module 
                 }
 
                 if(ConstantExpr *constExpr = dyn_cast<ConstantExpr>(GVUsers)) {
+                    vector<ConstantUser> smUsers = findInstruction(func, constExpr);
+                    set<Constant *> constantsToRemove;
+                    for(auto &smUser : smUsers) {
+                        auto inst = smUser._inst;
+                        for(auto constant : smUser._constants) {
+                            Instruction *constInst = constant->getAsInstruction();
+                            constInst->insertBefore(inst);
+                            inst->replaceUsesOfWith(constant, constInst);
+                            inst = constInst;
+                            constantsToRemove.insert(constant);
+                        }
+                    }
 
+                    for(auto constant : constantsToRemove) {
+                        constant->dropAllReferences();
+                    }
+
+                    sm.insert(&GV);
                 }
             }
         }
@@ -77,8 +100,146 @@ set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module 
     return sm;
 }
 
-void PACXXNativeSMTransformer::transformConstExprToInst(Function *func) {
+vector<PACXXNativeSMTransformer::ConstantUser> PACXXNativeSMTransformer::findInstruction(Function *func, ConstantExpr * constExpr) {
+    vector<ConstantUser> smUsers;
+    for (auto &B : *func) {
+        for (auto &I : B) {
+            vector<ConstantExpr *> constants;
+            vector<ConstantExpr *> tmp;
+            Instruction *inst = &I;
+            for (auto &op : inst->operands()) {
+                if (ConstantExpr *opConstant = dyn_cast<ConstantExpr>(op.get())) {
+                    bool usesSM = false;
+                    if (opConstant == constExpr) {
+                        constants.push_back(opConstant);
+                        smUsers.push_back(ConstantUser(inst, constants));
+                    }
+                    else {
+                        tmp.push_back(opConstant);
+                        lookAtConstantOps(opConstant, constExpr, tmp, constants, &usesSM);
+                        if (usesSM) {
+                            smUsers.push_back(ConstantUser(inst, constants));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return smUsers;
+}
 
+void PACXXNativeSMTransformer::lookAtConstantOps(ConstantExpr *constExp, ConstantExpr *smUser,
+                                                 vector<ConstantExpr *> &tmp,
+                                                 vector<ConstantExpr *> &constants,
+                                                 bool *usesSM) {
+   for(auto &op : constExp->operands()) {
+       if(ConstantExpr *opConstant = dyn_cast<ConstantExpr>(op.get())) {
+           if(opConstant == smUser) {
+               for(auto constant : tmp) {
+                   constants.push_back(constant);
+               }
+               constants.push_back(opConstant);
+               *usesSM = true;
+               return;
+           }
+
+           tmp.push_back(opConstant);
+           lookAtConstantOps(opConstant, smUser, tmp, constants, usesSM);
+       }
+   }
+}
+
+void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable *> &globals,
+                                                                BasicBlock *sharedMemBB) {
+
+    for (auto GV : globals) {
+        Type *sm_type = GV->getType()->getElementType();
+        AllocaInst *sm_alloc = new AllocaInst(sm_type, nullptr,
+                                              M.getDataLayout().getABITypeAlignment(sm_type), "internal_sm",
+                                              sharedMemBB);
+
+        if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
+            new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
+
+        GV->mutateType(sm_alloc->getType());
+
+        GV->replaceAllUsesWith(sm_alloc);
+
+        checkTypes(sm_alloc);
+
+    }
+}
+
+void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable *> &globals,
+                                                                Value *sm_size, BasicBlock *sharedMemBB) {
+    for (auto GV : globals) {
+        Type *GVType = GV->getType()->getElementType();
+        Type *sm_type = nullptr;
+
+        if (isa<PointerType>(GVType))
+            sm_type = GVType->getPointerElementType();
+        else
+            sm_type = GVType->getArrayElementType();
+
+        Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
+                                           M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
+
+        //calc number of elements
+        BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
+        AllocaInst *sm_alloc = new AllocaInst(sm_type, div, M.getDataLayout().getABITypeAlignment(sm_type),
+                                              "external_sm", sharedMemBB);
+
+        Value *newSM = sm_alloc;
+
+        if(isa<PointerType>(GVType)) {
+            AllocaInst *ptrToSM = new AllocaInst(PointerType::get(sm_type, 0), nullptr, "ptrToSM", sharedMemBB);
+            new StoreInst(sm_alloc, ptrToSM, sharedMemBB);
+            newSM = ptrToSM;
+        }
+
+        GV->mutateType(newSM->getType());
+        GV->replaceAllUsesWith(newSM);
+
+        checkTypes(newSM);
+    }
+}
+
+void PACXXNativeSMTransformer::checkTypes(Value *newSm) {
+    for(auto user : newSm->users()) {
+        Type *userType = user->getType();
+        if(isa<PointerType>(userType)) {
+            if (userType->getPointerAddressSpace() == 3)
+                user->mutateType(PointerType::get(userType->getPointerElementType(), 0));
+        }
+        else if(isa<ArrayType>(userType))
+                user->mutateType(newSm->getType());
+    }
+}
+
+void PACXXNativeSMTransformer::fixAddrspace(Function *func) {
+    SmallVector<AddrSpaceCastInst *, 8> castsToRemove;
+    for (auto &B : *func) {
+        for (auto &I : B) {
+            //handle addrspace casts, because we dont need them
+            if(auto addrCast = dyn_cast<AddrSpaceCastInst>(&I)) {
+                if(addrCast->getSrcTy()->getPointerAddressSpace() == addrCast->getDestTy()->getPointerAddressSpace()) {
+                    addrCast->mutateType(addrCast->getOperand(0)->getType());
+                    addrCast->replaceAllUsesWith(addrCast->getOperand(0));
+                    castsToRemove.push_back(addrCast);
+                }
+            }
+            else if(isa<PointerType>(I.getType())){
+                unsigned addrSpace = I.getType()->getPointerAddressSpace();
+                if(addrSpace == 3) {
+                    I.mutateType(PointerType::get(I.getType()->getPointerElementType(), 0));
+                }
+            }
+        }
+    }
+
+    for(auto cast : castsToRemove) {
+        cast->eraseFromParent();
+    }
 }
 
 
