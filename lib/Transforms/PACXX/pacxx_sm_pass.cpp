@@ -58,7 +58,6 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 
         BranchInst::Create(entry, sharedMemBB);
 
-        fixAddrspace(func);
         __verbose("created shared memory");
     }
 }
@@ -66,7 +65,7 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal) {
     set<GlobalVariable *> sm;
     for (auto &GV : M->globals()) {
-        if (internal ? GV.hasInternalLinkage() : GV.hasExternalLinkage() && GV.getType()->getAddressSpace() == 3) {
+        if (internal ? GV.hasInternalLinkage() : GV.hasExternalLinkage() && GV.getMetadata("pacxx.as.shared")) {
             for (User *GVUsers : GV.users()) {
                 if (Instruction *Inst = dyn_cast<Instruction>(GVUsers)) {
                     if (Inst->getParent()->getParent() == func) {
@@ -161,25 +160,18 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M, set<G
         if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
             new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
 
-        GV->mutateType(sm_alloc->getType());
-
         GV->replaceAllUsesWith(sm_alloc);
-
-        checkTypes(sm_alloc);
-
     }
 }
 
+// Currently we aren't handling shared_memory<type>, because it will be removed from pacxx soon
 void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable *> &globals,
                                                                 Value *sm_size, BasicBlock *sharedMemBB) {
     for (auto GV : globals) {
         Type *GVType = GV->getType()->getElementType();
         Type *sm_type = nullptr;
 
-        if (isa<PointerType>(GVType))
-            sm_type = GVType->getPointerElementType();
-        else
-            sm_type = GVType->getArrayElementType();
+        sm_type = GVType->getPointerElementType();
 
         Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
                                            M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
@@ -189,59 +181,12 @@ void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M, set<G
         AllocaInst *sm_alloc = new AllocaInst(sm_type, div, M.getDataLayout().getABITypeAlignment(sm_type),
                                               "external_sm", sharedMemBB);
 
-        Value *newSM = sm_alloc;
+        AllocaInst *ptrToSM = new AllocaInst(PointerType::get(sm_type, 0), nullptr, "ptrToSM", sharedMemBB);
+        new StoreInst(sm_alloc, ptrToSM, sharedMemBB);
 
-        if(isa<PointerType>(GVType)) {
-            AllocaInst *ptrToSM = new AllocaInst(PointerType::get(sm_type, 0), nullptr, "ptrToSM", sharedMemBB);
-            new StoreInst(sm_alloc, ptrToSM, sharedMemBB);
-            newSM = ptrToSM;
-        }
-
-        GV->mutateType(newSM->getType());
-        GV->replaceAllUsesWith(newSM);
-
-        checkTypes(newSM);
+        GV->replaceAllUsesWith(ptrToSM);
     }
 }
-
-void PACXXNativeSMTransformer::checkTypes(Value *newSm) {
-    for(auto user : newSm->users()) {
-        Type *userType = user->getType();
-        if(isa<PointerType>(userType)) {
-            if (userType->getPointerAddressSpace() == 3)
-                user->mutateType(PointerType::get(userType->getPointerElementType(), 0));
-        }
-        else if(isa<ArrayType>(userType))
-                user->mutateType(newSm->getType());
-    }
-}
-
-void PACXXNativeSMTransformer::fixAddrspace(Function *func) {
-    SmallVector<AddrSpaceCastInst *, 8> castsToRemove;
-    for (auto &B : *func) {
-        for (auto &I : B) {
-            //handle addrspace casts, because we dont need them
-            if(auto addrCast = dyn_cast<AddrSpaceCastInst>(&I)) {
-                if(addrCast->getSrcTy()->getPointerAddressSpace() == addrCast->getDestTy()->getPointerAddressSpace()) {
-                    addrCast->mutateType(addrCast->getOperand(0)->getType());
-                    addrCast->replaceAllUsesWith(addrCast->getOperand(0));
-                    castsToRemove.push_back(addrCast);
-                }
-            }
-            else if(isa<PointerType>(I.getType())){
-                unsigned addrSpace = I.getType()->getPointerAddressSpace();
-                if(addrSpace == 3) {
-                    I.mutateType(PointerType::get(I.getType()->getPointerElementType(), 0));
-                }
-            }
-        }
-    }
-
-    for(auto cast : castsToRemove) {
-        cast->eraseFromParent();
-    }
-}
-
 
 namespace llvm {
     Pass* createPACXXNativeSMPass() { return new PACXXNativeSMTransformer(); }

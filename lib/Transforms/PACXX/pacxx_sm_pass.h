@@ -62,8 +62,6 @@ private:
     void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals,
                                           Value *sm_size, BasicBlock *sharedMemBB);
 
-    void checkTypes(Value *newSm);
-
     set<GlobalVariable *> getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal);
 
     vector<ConstantUser> findInstruction(Function *func, ConstantExpr * constExpr);
@@ -72,9 +70,6 @@ private:
                            vector<ConstantExpr *> &tmp,
                            vector<ConstantExpr *> &constants,
                            bool *usesSM);
-
-    void fixAddrspace(Function *func);
-
 };
 
 namespace llvm {
