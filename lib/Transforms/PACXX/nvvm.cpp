@@ -4,28 +4,28 @@
 * Written by Michael Haidl <michael.haidl@uni-muenster.de>, 2010-2014
 */
 
+#include <cassert>
 #include <iostream>
 #include <vector>
-#include <cassert>
 
 #define DEBUG_TYPE "nvvm-transformation"
 
-#include "llvm/Pass.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Function.h"
+#include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/Argument.h"
-#include "llvm/IR/Operator.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/PACXXTransforms.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include "CallVisitor.h"
 #include "ModuleHelper.h"
@@ -68,14 +68,6 @@ struct NVVMPass : public ModulePass {
             return;
           }
         }
-
-        llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 10> md;
-        I->getAllMetadata(md);
-        for (auto m : md) {
-          I->setMetadata(m.first, nullptr);
-        }
-        AttributeSet no_attr;
-        I->setAttributes(no_attr);
       }
     });
 
@@ -85,50 +77,6 @@ struct NVVMPass : public ModulePass {
     auto called_functions = visitor.get();
 
     cleanupDeadCode(&M);
-
-    for (auto &GI : _M->getGlobalList()) {
-      if (GI.getType()->getAddressSpace() == 2) {
-        if (GI.getType()->isPointerTy()) {
-          GI.mutateType(GI.getType()->getPointerElementType()->getPointerTo(4));
-
-          const auto &UL = GI.users();
-          std::map<Instruction *, Instruction *> VMap;
-          for (const auto &U : UL) {
-            if (auto GEP = dyn_cast<GetElementPtrInst>(U)) {
-              vector<Value *> idx(GEP->idx_begin(), GEP->idx_end());
-              auto nGEP = GetElementPtrInst::Create(
-                  GI.getType()->getPointerElementType(), &GI, idx, "", GEP);
-              VMap[GEP] = nGEP;
-              GEP->dump();
-              nGEP->dump();
-              for (const auto &GU : GEP->users()) {
-                if (auto LI = dyn_cast<LoadInst>(GU)) {
-                  VMap[LI] = new LoadInst(
-                      nGEP->getType()->getPointerElementType(), nGEP, "",
-                      LI->isVolatile(), LI->getAlignment(), LI);
-                } else if (auto SI = dyn_cast<StoreInst>(GU)) {
-                  VMap[SI] =
-                      new StoreInst(SI->getValueOperand(), nGEP,
-                                    SI->isVolatile(), SI->getAlignment(), SI);
-                }
-              }
-            }
-          }
-          for (auto p : VMap) {
-            p.first->replaceAllUsesWith(p.second);
-            p.first->eraseFromParent();
-          }
-        } //else
-          //__dump(GI);
-      }
-
-      if (auto ptrT = dyn_cast<PointerType>(GI.getType())) {
-        if (auto arrTy = dyn_cast<ArrayType>(ptrT->getElementType())) {
-          if (arrTy->getArrayNumElements() != 0)
-            GI.setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
-        }
-      }
-    }
 
     for (auto &F : M.getFunctionList()) {
       AttributeSet attrs = F.getAttributes();
@@ -156,14 +104,16 @@ struct NVVMPass : public ModulePass {
         }
 
       F.setAlignment(0);
-      F.setAttributes(new_attrs);
-      F.setCallingConv(CallingConv::C);
+      //      F.setAttributes(new_attrs);
+      //      F.setCallingConv(CallingConv::C);
       F.setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
       F.setVisibility(GlobalValue::VisibilityTypes::DefaultVisibility);
     }
 
     for (auto &F : kernels) {
       F->setCallingConv(CallingConv::PTX_Kernel);
+      AttributeSet new_attrs;
+      F->setAttributes(new_attrs);
     }
 
     return modified;

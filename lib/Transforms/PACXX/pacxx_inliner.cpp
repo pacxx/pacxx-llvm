@@ -70,8 +70,8 @@ private:
       if (F->isDeclaration() || F->isIntrinsic())
         return false;
 
-      if (F->hasFnAttribute(llvm::Attribute::NoInline))
-        return false;
+    //  if (F->hasFnAttribute(llvm::Attribute::NoInline))
+    //    return false;
 
       return true;
     }
