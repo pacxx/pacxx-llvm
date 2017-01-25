@@ -46,9 +46,9 @@ Instruction *getFirstInstructionForConstantExpr(T &kernels, ConstantExpr &CE) {
       if (I->getParent()) {
         auto F = I->getParent()->getParent();
         llvm::errs() << "parent: " << F->getName().str() << "\n";
-        if (find(begin(kernels), end(kernels), F) != end(kernels)) {
+    //    if (find(begin(kernels), end(kernels), F) != end(kernels)) {
           return I;
-        }
+    //    }
       }
     }
     if (auto nextCE = dyn_cast<ConstantExpr>(CEU)) {
@@ -201,23 +201,29 @@ struct SPIRPass : public ModulePass {
     kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
     map<Function *, unsigned> SMMapping;
+    map<GlobalVariable*, Constant*> repGV;
     for (auto &GV : M.globals()) {
       if (GV.getMetadata("pacxx.as.shared") != nullptr) {
         auto F = getParentKernel(kernels, GV);
+        string newName = GV.getName().str() + ".sm"; 
+        auto newGV = new GlobalVariable(M, GV.getType(), false, llvm::GlobalValue::LinkageTypes::ExternalLinkage, nullptr, newName, &GV, GV.getThreadLocalMode(), 3, false);
+        auto ASC = ConstantExpr::getAddrSpaceCast(newGV, newGV->getType()->getPointerElementType());
+
+        repGV[&GV] = ASC;
         if (F) {
           unsigned i = SMMapping[F];
-
-          string newName = F->getName().str() + ".sm" + to_string(i);
-          auto newGV = new GlobalVariable(M, GV.getType(), false, GV.getLinkage(), nullptr, newName, &GV, GV.getThreadLocalMode(), 3, true);
-          newGV->dump(); 
-          GV.setName(newName);
+          newName = F->getName().str() + ".sm" + to_string(i);
+          newGV->setName(newName);
           SMMapping[F] = i + 1;
           break;
         }
-        else 
-          llvm::errs() << "no parent found for: " << GV.getName().str() << "\n"; 
       }
     }
+
+    for (const auto& p : repGV){
+        p.first->replaceAllUsesWith(p.second);
+    }
+
 
     auto called = visitor.get();
 
