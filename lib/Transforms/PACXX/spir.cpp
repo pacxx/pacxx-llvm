@@ -45,6 +45,7 @@ Instruction *getFirstInstructionForConstantExpr(T &kernels, ConstantExpr &CE) {
     if (auto I = dyn_cast<Instruction>(CEU)) {
       if (I->getParent()) {
         auto F = I->getParent()->getParent();
+        llvm::errs() << "parent: " << F->getName().str() << "\n";
         if (find(begin(kernels), end(kernels), F) != end(kernels)) {
           return I;
         }
@@ -200,18 +201,21 @@ struct SPIRPass : public ModulePass {
     kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
     map<Function *, unsigned> SMMapping;
-    for (auto &GV : M.getGlobalList()) {
-      if (GV.getType()->isPointerTy() && GV.getType()->getAddressSpace() == 3) {
+    for (auto &GV : M.globals()) {
+      if (GV.getMetadata("pacxx.as.shared") != nullptr) {
         auto F = getParentKernel(kernels, GV);
         if (F) {
           unsigned i = SMMapping[F];
 
           string newName = F->getName().str() + ".sm" + to_string(i);
+          auto newGV = new GlobalVariable(M, GV.getType(), false, GV.getLinkage(), nullptr, newName, &GV, GV.getThreadLocalMode(), 3, true);
+          newGV->dump(); 
           GV.setName(newName);
           SMMapping[F] = i + 1;
           break;
         }
-        //__dump(GV);
+        else 
+          llvm::errs() << "no parent found for: " << GV.getName().str() << "\n"; 
       }
     }
 
