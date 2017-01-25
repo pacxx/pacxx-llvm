@@ -93,10 +93,16 @@ inline void cleanupDeadCode(Module *M) {
     if (hold)
       continue;
     G.removeDeadConstantUsers();
+
+    bool isConstantMem = false; 
+    bool isSharedMem = false;
+
+    if (auto GV = dyn_cast<GlobalVariable>(&G)){
     // FIXME: is this realy true?
-    bool isConstantMem = G.getType()->getAddressSpace() == 2 ||
-                         G.getType()->getAddressSpace() == 4;
-    bool isSharedMem = G.getType()->getAddressSpace() == 3;
+      isConstantMem = GV->getMetadata("pacxx.as.constant") != nullptr;
+      isSharedMem = GV->getMetadata("pacxx.as.shared") != nullptr;
+    }
+
     if (!isSharedMem && !isConstantMem)
       if (G.getType()->getAddressSpace() == 0 || G.hasNUses(0)) {
         G.replaceAllUsesWith(UndefValue::get(G.getType()));
