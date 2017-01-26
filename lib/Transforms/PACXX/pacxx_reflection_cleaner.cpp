@@ -71,34 +71,11 @@ bool PACXXReflectionCleaner::runOnModule(Module &M) {
   cleanFromKerneles(M);
 
   auto reflects = pacxx::getTagedFunctions(&M, "pacxx.reflection", "");
-  set<Function *> dead;
-  set<Instruction*> dI;
   for (auto &F : M.getFunctionList()) {
     F.setCallingConv(CallingConv::C);
 
     F.setAttributes({});
-    // F.removeFnAttr(Attribute::NoInline);
     F.addFnAttr(Attribute::AlwaysInline);
-
-
-    if (std::find(reflects.begin(), reflects.end(), &F) == reflects.end()){
-      for (auto U : F.users()) {
-        if (auto CI = dyn_cast<CallInst>(U)) {
-          dI.insert(CI);
-        }
-      }
-      F.replaceAllUsesWith(UndefValue::get(F.getType()));
-      dead.insert(&F);
-    }
-  }
-
-  for(auto i : dI){
-    i->replaceAllUsesWith(UndefValue::get(i->getType())); 
-    i->eraseFromParent(); 
-  }
-
-  for (auto F : dead) {
-    if (F) F->eraseFromParent();
   }
 
   return modified;

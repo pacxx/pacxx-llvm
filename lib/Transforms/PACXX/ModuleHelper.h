@@ -48,10 +48,6 @@ inline void cleanupDeadCode(Module *M) {
 
   vector<Function *> deleted;
   for (auto &F : M->getFunctionList()) {
-    if (F.getCallingConv() ==
-        CallingConv::SPIR_FUNC || F.getCallingConv() == CallingConv::PTX_Kernel) // never delete a spir_func
-      continue;
-
     if (find(kernels.begin(), kernels.end(), &F) == kernels.end() &&
         find(called.begin(), called.end(), &F) == called.end() &&
         find(reflects.begin(), reflects.end(), &F) == reflects.end()) {
@@ -99,8 +95,8 @@ inline void cleanupDeadCode(Module *M) {
 
     if (auto GV = dyn_cast<GlobalVariable>(&G)){
     // FIXME: is this realy true?
-      isConstantMem = GV->getMetadata("pacxx.as.constant") != nullptr;
-      isSharedMem = GV->getMetadata("pacxx.as.shared") != nullptr;
+      isConstantMem = GV->getMetadata("pacxx.as.constant") != nullptr || GV->getType()->getAddressSpace() == 4;
+      isSharedMem = GV->getMetadata("pacxx.as.shared") != nullptr || GV->getType()->getAddressSpace() == 3;
     }
 
     if (!isSharedMem && !isConstantMem)
