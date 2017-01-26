@@ -200,16 +200,19 @@ struct SPIRPass : public ModulePass {
     for (auto &GV : M.globals()) {
       if (GV.getMetadata("pacxx.as.shared") != nullptr &&
           GV.getType()->getPointerAddressSpace() != 3) {
-        auto F = getParentKernel(kernels, GV);
-        string newName = GV.getName().str() + ".sm";
-        auto newGV = new GlobalVariable(
-            M, GV.getType()->getPointerElementType(), false,
-            llvm::GlobalValue::LinkageTypes::InternalLinkage,
-            ConstantAggregateZero::get(GV.getType()->getPointerElementType()),
-            newName, &GV, GV.getThreadLocalMode(), 3, false);
-        auto ASC = ConstantExpr::getAddrSpaceCast(newGV, GV.getType());
+          auto F = getParentKernel(kernels, GV);
+          string newName = GV.getName().str() + ".sm";
+          Type *elemType = GV.getType()->getPointerElementType();
 
-        repGV[&GV] = ASC;
+          auto newGV = new GlobalVariable(
+                  M, elemType, false,
+                 GV.getLinkage(), // llvm::GlobalValue::LinkageTypes::InternalLinkage,
+                 nullptr, // ConstantAggregateZero::get(elemType),
+                  newName, &GV, GV.getThreadLocalMode(), 3, false);
+
+          Constant *access = ConstantExpr::getAddrSpaceCast(newGV, GV.getType());
+
+        repGV[&GV] = access;
         if (F) {
           unsigned i = SMMapping[F];
           newName = F->getName().str() + ".sm" + to_string(i);
