@@ -139,30 +139,6 @@ setMetadata(Instruction* inst, const char* const metaDataString)
         removeMetadata(inst, WFV_METADATA_INDEX_STRIDED);
         removeMetadata(inst, WFV_METADATA_INDEX_RANDOM);
     }
-    else if (strcmp(metaDataString, PACXX_ID_X) == 0 ||
-             strcmp(metaDataString, PACXX_ID_Y) == 0 ||
-             strcmp(metaDataString, PACXX_ID_Z) == 0) {
-
-        removeMetadata(inst, PACXX_ID_X);
-        removeMetadata(inst, PACXX_ID_Y);
-        removeMetadata(inst, PACXX_ID_Z);
-    }
-    else if (strcmp(metaDataString, PACXX_BLOCK_ID_X) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_Y) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_Z) == 0) {
-
-        removeMetadata(inst, PACXX_BLOCK_ID_X);
-        removeMetadata(inst, PACXX_BLOCK_ID_Y);
-        removeMetadata(inst, PACXX_BLOCK_ID_Z);
-    }
-    else if (strcmp(metaDataString, PACXX_BLOCK_DIM_X) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_Y) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_Z) == 0) {
-
-        removeMetadata(inst, PACXX_BLOCK_DIM_X);
-        removeMetadata(inst, PACXX_BLOCK_DIM_Y);
-        removeMetadata(inst, PACXX_BLOCK_DIM_Z);
-    }
     else
     {
         assert ((strcmp(metaDataString, WFV_METADATA_ARGUMENT_CAST) == 0 ||
@@ -175,7 +151,6 @@ setMetadata(Instruction* inst, const char* const metaDataString)
                 strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
-                strcmp(metaDataString, PACXX_BARRIER) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
                 "invalid metadata for instruction found!");
     }
@@ -223,51 +198,6 @@ hasWFVMetadata(const Instruction* inst)
     return false;
 }
 
-bool hasPACXXMetadata(const Value* value) {
-    if(!isa<Instruction>(value)) return false;
-
-    if(hasMetadata(value, WFV::PACXX_ID_X)) return true;
-    if(hasMetadata(value, WFV::PACXX_ID_Y)) return true;
-    if(hasMetadata(value, WFV::PACXX_ID_Z)) return true;
-    if(hasMetadata(value, WFV::PACXX_BLOCK_ID_X)) return true;
-    if(hasMetadata(value, WFV::PACXX_BLOCK_ID_Y)) return true;
-    if(hasMetadata(value, WFV::PACXX_BLOCK_ID_Z)) return true;
-    if(hasMetadata(value, WFV::PACXX_BLOCK_DIM_X)) return true;
-    if(hasMetadata(value, WFV::PACXX_BLOCK_DIM_Y)) return true;
-    if(hasMetadata(value, WFV::PACXX_BLOCK_DIM_Z)) return true;
-    if(hasMetadata(value, WFV::PACXX_BARRIER)) return true;
-    return false;
-}
-bool isThreadId(const Value *value) {
-    if(!isa<Instruction>(value)) return false;
-
-    if(hasMetadata(value, WFV::PACXX_ID_X) ||
-       hasMetadata(value, WFV::PACXX_ID_Y) ||
-       hasMetadata(value, WFV::PACXX_ID_Z))
-        return true;
-    return false;
-}
-
-bool isBlockId(const Value *value) {
-    if(!isa<Instruction>(value)) return false;
-
-    if(hasMetadata(value, WFV::PACXX_BLOCK_ID_X) ||
-       hasMetadata(value, WFV::PACXX_BLOCK_ID_Y) ||
-       hasMetadata(value, WFV::PACXX_BLOCK_ID_Z))
-        return true;
-    return false;
-}
-
-bool isBlockDim(const Value *value) {
-    if (!isa<Instruction>(value)) return false;
-
-    if (hasMetadata(value, WFV::PACXX_BLOCK_DIM_X) ||
-        hasMetadata(value, WFV::PACXX_BLOCK_DIM_Y) ||
-        hasMetadata(value, WFV::PACXX_BLOCK_DIM_Z))
-        return true;
-    return false;
-}
-
 bool
 hasMetadata(const Instruction* inst, const char* const metaDataString)
 {
@@ -297,17 +227,7 @@ hasMetadata(const Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
-             strcmp(metaDataString, WFV_METADATA_MASK) == 0 ||
-             strcmp(metaDataString, PACXX_BARRIER) == 0 ||
-             strcmp(metaDataString, PACXX_ID_X) == 0 ||
-             strcmp(metaDataString, PACXX_ID_Y) == 0 ||
-             strcmp(metaDataString, PACXX_ID_Z) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_X) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_Y) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_Z) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_X) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_Y) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_Z) == 0) &&
+             strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
             "invalid metadata for instruction found!");
 
     return inst->getMetadata(metaDataString);
@@ -342,17 +262,7 @@ removeMetadata(Instruction* inst, const char* const metaDataString)
              strcmp(metaDataString, WFV_METADATA_VARIANT_DISABLE_VECT) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
              strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
-             strcmp(metaDataString, WFV_METADATA_MASK) == 0 ||
-             strcmp(metaDataString, PACXX_BARRIER) == 0 ||
-             strcmp(metaDataString, PACXX_ID_X) == 0 ||
-             strcmp(metaDataString, PACXX_ID_Y) == 0 ||
-             strcmp(metaDataString, PACXX_ID_Z) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_X) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_Y) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_ID_Z) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_X) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_Y) == 0 ||
-             strcmp(metaDataString, PACXX_BLOCK_DIM_Z) == 0) &&
+             strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
             "invalid metadata for instruction found!");
 
     inst->setMetadata(metaDataString, nullptr);
@@ -1169,7 +1079,6 @@ setMetadata(GlobalVariable* GV, const char* const metaDataString)
                 strcmp(metaDataString, WFV_METADATA_VARIANT_SEQUENTIALIZE) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_VARIANT_BOSCC) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_OP_MASKED) == 0 ||
-                strcmp(metaDataString, PACXX_BARRIER) == 0 ||
                 strcmp(metaDataString, WFV_METADATA_MASK) == 0) &&
                 "invalid metadata for instruction found!");
     }
@@ -1974,16 +1883,6 @@ removeAllMetadata(Instruction* inst)
     removeMetadata(inst, WFV_METADATA_VARIANT_SEQUENTIALIZE);
     removeMetadata(inst, WFV_METADATA_VARIANT_BOSCC);
     removeMetadata(inst, WFV_METADATA_MASK);
-    removeMetadata(inst, PACXX_BARRIER);
-    removeMetadata(inst, PACXX_ID_X);
-    removeMetadata(inst, PACXX_ID_Y);
-    removeMetadata(inst, PACXX_ID_Z);
-    removeMetadata(inst, PACXX_BLOCK_ID_X);
-    removeMetadata(inst, PACXX_BLOCK_ID_Y);
-    removeMetadata(inst, PACXX_BLOCK_ID_Z);
-    removeMetadata(inst, PACXX_BLOCK_DIM_X);
-    removeMetadata(inst, PACXX_BLOCK_DIM_Y);
-    removeMetadata(inst, PACXX_BLOCK_DIM_Z);
 }
 
 void

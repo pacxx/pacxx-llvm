@@ -74,7 +74,6 @@ WFVInterface::WFVInterface(Module*         module,
                            const bool      disableMemAccessAnalysis,
                            const bool      disableControlFlowDivAnalysis,
                            const bool      disableAllAnalyses,
-                           const bool      pacxx,
                            const bool      verbose)
 : mTimerGroup(new TimerGroup("WFV", "Whole-Function Vectorization")),
         mInfo(new WFVInfo(module,
@@ -87,7 +86,6 @@ WFVInterface::WFVInterface(Module*         module,
                           disableAllAnalyses ? true : disableMemAccessAnalysis,
                           disableAllAnalyses ? true : disableControlFlowDivAnalysis,
                           disableAllAnalyses,
-                          pacxx,
                           verbose,
                           mTimerGroup))
 {
@@ -196,6 +194,35 @@ WFVInterface::addSIMDSemantics(const Argument& arg,
                                    isIndexSame,
                                    isIndexConsecutive);
 }
+
+WFV_API bool
+WFVInterface::addSIMDSemantics(const GlobalVariable& var,
+                               const bool         isOpUniform,
+                               const bool         isOpVarying,
+                               const bool         isOpSequential,
+                               const bool         isOpSequentialGuarded,
+                               const bool         isResultUniform,
+                               const bool         isResultVector,
+                               const bool         isResultScalars,
+                               const bool         isAligned,
+                               const bool         isIndexSame,
+                               const bool         isIndexConsecutive)
+{
+    assert (mInfo && "WFVInterface is not initialized correctly");
+
+    return mInfo->addSIMDSemantics(var,
+                                   isOpUniform,
+                                   isOpVarying,
+                                   isOpSequential,
+                                   isOpSequentialGuarded,
+                                   isResultUniform,
+                                   isResultVector,
+                                   isResultScalars,
+                                   isAligned,
+                                   isIndexSame,
+                                   isIndexConsecutive);
+}
+
 
 WFV_API bool
 WFVInterface::addSIMDSemantics(const Instruction& inst,
@@ -340,6 +367,7 @@ WFVInterface::run()
         Function* finalFn = mod->getFunction(targetName);
         assert (finalFn);
         assert (!finalFn->isDeclaration());
+        WFV::writeModuleToFile(*mod, "vectorized.mod.ll");
         if(verbose)
             WFV::writeFunctionToFile(*finalFn, "vectorized.ll");
         WFV::removeAllMetadata(finalFn);
@@ -424,7 +452,6 @@ WFVInterface::analyzeFunction(Function* scalarFn, Function* simdFn)
                                                 mInfo->mDisableMemAccessAnalysis,
                                                 mInfo->mDisableControlFlowDivAnalysis,
                                                 mInfo->mDisableAllAnalyses,
-                                                mInfo->mPacxx,
                                                 mInfo->mVerbose,
                                                 mInfo->mFailure));
 
@@ -596,6 +623,7 @@ WFVInterface::vectorizeFunction()
         return false;
     }
 
+    WFV::writeFunctionToFile(scalarFunction, "scalar.ll");
     if(mInfo->mVerbose) {
         scalarFunction.print(outs());
         WFV::writeFunctionToFile(scalarFunction, "scalar.ll");

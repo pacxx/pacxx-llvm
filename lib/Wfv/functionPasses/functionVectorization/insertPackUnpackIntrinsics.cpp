@@ -72,8 +72,6 @@ FunctionVectorizer::insertPackUnpackIntrinsics(Function* f)
             continue;
         }
 
-        if(WFV::hasPACXXMetadata(inst)) continue;
-
         //ignore masked loads and stores handled by masked load and stores later
         if(WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_MASKED))
             continue;

@@ -152,9 +152,10 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M, set<G
                                                                 BasicBlock *sharedMemBB) {
 
     for (auto GV : globals) {
+
         Type *sm_type = GV->getType()->getElementType();
         AllocaInst *sm_alloc = new AllocaInst(sm_type, nullptr,
-                                              M.getDataLayout().getABITypeAlignment(sm_type), "internal_sm",
+                                              1, "internal_sm",
                                               sharedMemBB);
 
         if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
@@ -164,27 +165,25 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M, set<G
     }
 }
 
-// Currently we aren't handling shared_memory<type>, because it will be removed from pacxx soon
 void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable *> &globals,
                                                                 Value *sm_size, BasicBlock *sharedMemBB) {
     for (auto GV : globals) {
         Type *GVType = GV->getType()->getElementType();
         Type *sm_type = nullptr;
 
-        sm_type = GVType->getPointerElementType();
+        sm_type = GVType->getArrayElementType();
 
         Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
                                            M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
 
         //calc number of elements
         BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
-        AllocaInst *sm_alloc = new AllocaInst(sm_type, div, M.getDataLayout().getABITypeAlignment(sm_type),
+        AllocaInst *sm_alloc = new AllocaInst(sm_type, div, 1,
                                               "external_sm", sharedMemBB);
 
-        AllocaInst *ptrToSM = new AllocaInst(PointerType::get(sm_type, 0), nullptr, "ptrToSM", sharedMemBB);
-        new StoreInst(sm_alloc, ptrToSM, sharedMemBB);
+        BitCastInst *cast = new BitCastInst(sm_alloc, GV->getType(), "cast", sharedMemBB);
 
-        GV->replaceAllUsesWith(ptrToSM);
+        GV->replaceAllUsesWith(cast);
     }
 }
 

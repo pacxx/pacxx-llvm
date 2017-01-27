@@ -92,6 +92,7 @@ private:
         CaseInfo(unsigned id,
                  uint64_t maxStructSize,
                  Function *foo,
+                 Function *kernel,
                  BasicBlock *switchBB,
                  BasicBlock *breakBB,
                  AllocaInst *switchParam,
@@ -103,6 +104,7 @@ private:
                 : _id(id),
                   _maxStructSize(maxStructSize),
                   _foo(foo),
+                  _origKernel(kernel),
                   _switchBB(switchBB),
                   _breakBB(breakBB),
                   _switchParam(switchParam),
@@ -117,6 +119,7 @@ private:
         const unsigned _id;
         const uint64_t _maxStructSize;
         Function *_foo;
+        Function *_origKernel;
         BasicBlock *_switchBB;
         BasicBlock *_breakBB;
         AllocaInst *_switchParam;
@@ -157,7 +160,7 @@ private:
 
     void prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc);
 
-    void createSpecialFooWrapper(Module &M, Function *foo,
+    void createSpecialFooWrapper(Module &M, Function *foo, Function *kernel,
                                  SetVector<BarrierInfo *> barrierInfo,
                                  SetVector<BarrierInfo *> vecBarrierInfo);
 
@@ -235,7 +238,9 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
                 runOnFunction(M, vec_kernel, vecBarrierInfo, true);
             }
 
-            createSpecialFooWrapper(M, foo, barrierInfo, vecBarrierInfo);
+            createSpecialFooWrapper(M, foo, kernel, barrierInfo, vecBarrierInfo);
+
+            M.dump();
 
             //now we can delete the original function and its vectorized version
             kernel->dropAllReferences();
@@ -355,10 +360,12 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createFirstInfo(LLVMContext
     __verbose("Creating info for first barrier \n");
     SetVector<const Value *> livingValues;
     SmallVector<Type*, 8> params;
+    /*
     for (auto I=kernel->arg_begin(), IE=kernel->arg_end(); I!=IE; ++I) {
         livingValues.insert(&*I);
         params.push_back((&*I)->getType());
     }
+     */
 
     StructType* type = StructType::get(ctx, params, false);
 
@@ -451,6 +458,10 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     SmallVector < Type * , 8 > params;
 
+    for(auto &arg : kernel->args()) {
+        params.push_back(arg.getType());
+    }
+
     params.insert(params.end(), livingValuesType->element_begin(), livingValuesType->element_end());
 
     // pointer to data where to store liveValues
@@ -464,6 +475,13 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     // map instructions of old function to new ones
     ValueToValueMapTy &OrigVMap = info->_OrigFnMap;
+
+    auto newArg = newFunc->arg_begin();
+    for(auto &arg : kernel->args()) {
+        OrigVMap[&arg] = &*newArg;
+        newArg++;
+    }
+
 
     auto liveValueArg = --newFunc->arg_end();
     liveValueArg->setName("native.struct");
@@ -489,7 +507,6 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     }
 
     remapInstructionsInBlocks(clonedBlocks, OrigVMap);
-
 
     //replace all returns with return -1
     __verbose("replace returns with -1 \n");
@@ -517,7 +534,12 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     //manually map living values that are not correctly mapped
     __verbose("start manual remapping \n");
-    auto argIt = newFunc->arg_begin();
+    auto argIt = --newFunc->arg_end();
+    liveValueArg->setName("native.struct");
+    for (unsigned i = 0; i < livingValuesType->getNumElements(); ++i) {
+        --argIt;
+    }
+
     DominatorTree domTree = DominatorTree(*newFunc);
     for(auto livingValue : livingValues) {
         if (isa<Argument>(livingValue)) {
@@ -641,7 +663,7 @@ void PACXXNativeBarrier::prepareFunctionForLinker(Module &M, Function *oldFunc, 
     __verbose("finished preparing \n");
 }
 
-void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
+void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Function *kernel,
                                                  SetVector<BarrierInfo *> barrierInfo,
                                                  SetVector<BarrierInfo *> vecBarrierInfo) {
 
@@ -659,7 +681,15 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
                         "number of infos for vectorized version and sequential version expected to be equal");
 
     // special foo wrapper
-    Function *newFoo = Function::Create(foo->getFunctionType(), Function::ExternalLinkage,
+    SmallVector<Type *, 8> Params;
+    for(auto &arg : foo->args()) {
+        Params.push_back(arg.getType());
+    }
+    for(auto &arg : kernel->args()) {
+        Params.push_back(arg.getType());
+    }
+    FunctionType *FTy = FunctionType::get(Type::getVoidTy(ctx), Params, false);
+    Function *newFoo = Function::Create(FTy, Function::ExternalLinkage,
                                         "__barrier__foo__" + barrierInfo[0]->_func->getName().str() , &M);
 
     BasicBlock *entry = BasicBlock::Create(ctx, "entry", newFoo);
@@ -722,7 +752,7 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo,
         pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
                                                   vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
 
-        const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, switchBB, breakBB, allocSwitchParam, alloc_max,
+        const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, kernel, switchBB, breakBB, allocSwitchParam, alloc_max,
                                  livingValuesMem, livingValuesMem, loadTypes, calledFunctions);
         BasicBlock *caseBlock = createCase(M, info, vectorized);
 
@@ -836,11 +866,11 @@ BasicBlock *PACXXNativeBarrier::createCase(Module &M,
 }
 
 pair<BasicBlock *, BasicBlock*> PACXXNativeBarrier::createXLoop(Module &M,
-                                                               const CaseInfo &info,
-                                                               Alloca3 id,
-                                                               BasicBlock *afterBB,
-                                                               BasicBlock *falseBB,
-                                                               bool vectorized) {
+                                                                const CaseInfo &info,
+                                                                Alloca3 id,
+                                                                BasicBlock *afterBB,
+                                                                BasicBlock *falseBB,
+                                                                bool vectorized) {
 
     __verbose("Creating the x-loop \n");
 
@@ -930,6 +960,8 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
     LLVMContext &ctx = M.getContext();
 
+    unsigned numKernelArgs = info._origKernel->getArgumentList().size();
+
     SmallVector<Value *, 8> args;
 
     LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
@@ -962,8 +994,6 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
         Function *calledFunc = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
 
-        StructType *type = vectorized ? info._loadType.second : info._loadType.first;
-
         // create metadata so we can find the memory in the native linker
         AllocaInst *mem = vectorized ? info._nextStruct.second : info._nextStruct.first;
 
@@ -978,9 +1008,8 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
         args.clear();
 
-        for(unsigned i = 0; i < type->getStructNumElements(); ++i) {
-            args.push_back(UndefValue::get(type->getElementType(i)));
-        }
+        //TODO args.insert only kernel args
+        //args.insert(args.end(), advance(info._foo->arg_end(), - numKernelArgs), info._foo->arg_end());
 
         args.push_back(mem_gep);
 
@@ -998,6 +1027,10 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
     }
     else {
 
+        Function *func = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
+
+        //TODO insert only kernel args
+        //args.insert(args.end(), info._foo->arg_end()-numKernelArgs, info._foo->arg_end());
 
         StructType *type = vectorized ? info._loadType.second : info._loadType.first;
         AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
@@ -1028,7 +1061,6 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
             args.push_back(UndefValue::get(Type::getInt8PtrTy(ctx)));
         }
 
-        Function *func = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
         CallInst *call = CallInst::Create(func, args, "", loopBody);
         new StoreInst(call, info._switchParam, loopBody);
 

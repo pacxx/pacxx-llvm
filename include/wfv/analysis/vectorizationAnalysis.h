@@ -76,7 +76,6 @@ public:
                           const bool                  disableMemAccessAnalysis,
                           const bool                  disableControlFlowDivAnalysis,
                           const bool                  disableAllAnalyses,
-						  const bool				  pacxx,
                           const bool                  verbose,
                           bool*                       failure);
 
@@ -122,7 +121,6 @@ private:
     const bool                  mDisableMemAccessAnalysis;
     const bool                  mDisableControlFlowDivAnalysis;
     const bool                  mDisableAllAnalyses;
-	const bool 					mPacxx;
     const bool                  mVerbose;
     bool*                       mFailure;
 
@@ -364,7 +362,6 @@ createVectorizationAnalysisPass(Function*                   scalarFn=nullptr,
                                 const bool                  disableMemAccessAnalysis=false,
                                 const bool                  disableControlFlowDivAnalysis=false,
                                 const bool                  disableAllAnalyses=false,
-								const bool 					pacxx=false,
                                 const bool                  verbose=false,
                                 bool*                       failure=nullptr);
 }

@@ -159,8 +159,6 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
 
     Module* mod = f->getParent();
 
-    outs() << *mod;
-
     // We use a vector to store which instructions to delete
     // to make sure we delete in the right order (there will
     // be dependencies left between some of the unneeded
@@ -181,8 +179,6 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
             }
 
             // ignore pacxx instructions to prevent duplication of intrinsic calls
-            if(WFV::hasPACXXMetadata(inst)) continue;
-
             // Ignore forward calls (marked 'sequential').
             if (isForwardFunctionCall(inst)) continue;
 

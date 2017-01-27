@@ -687,10 +687,6 @@ WFV::mayHaveSideEffects(const Instruction&     inst,
 
     if (!functionInfoMap) return true;
 
-    //calculation of global id y and z has no side effect
-    if(WFV::hasMetadata(&inst, WFV::PACXX_ID_Y) || WFV::hasMetadata(&inst, WFV::PACXX_ID_Z))
-        return false;
-
     const CallInst& call = cast<CallInst>(inst);
     const Function* callee = call.getCalledFunction();
     if (!callee) return true;

@@ -47,7 +47,9 @@ namespace {
 
         unsigned determineVectorWidth(Function *F, unsigned registerWidth);
 
-        bool modifyWrapperLoop(Function *dummyFunction, Function *vecDummyFunction, Function *kernel,
+        void prepareForVectorization(Function *kernel, WFVInterface::WFVInterface &wfv);
+
+        bool modifyWrapperLoop(Function *dummyFunction, Function *vectorizedKernel, Function *kernel,
                                unsigned vectorWidth, Module& M);
 
         Function *createKernelSpecificFoo(Module &M, Function *F, Function *kernel);
@@ -77,9 +79,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
     auto kernels = getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
     Function* dummyFunction = M.getFunction("__dummy_kernel");
-    Function* vecDummyFunction = Function::Create(dummyFunction->getFunctionType(),
-                                              GlobalValue::LinkageTypes::ExternalLinkage,
-                                              "__vectorized__dummy_kernel", &M);
+
     for (auto kernel : kernels) {
 
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
@@ -100,26 +100,42 @@ bool SPMDVectorizer::runOnModule(Module& M) {
                                        false,
                                        false,
                                        false,
-                                       true,
-                                       true);
+                                       false);
+
+        prepareForVectorization(kernel, wfv);
 
         bool vectorized = wfv.run();
         //bool vectorized = wfv.analyze();
         __verbose("vectorized: ", vectorized);
 
         if(vectorized) {
-            modifyWrapperLoop(dummyFunction, vecDummyFunction, kernel, vectorWidth, M);
+            modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
             vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
             kernel->addFnAttr("vectorized");
         }
         else
             vectorizedKernel->eraseFromParent();
 
-
         kernelsVectorized &= vectorized;
     }
 
     return kernelsVectorized;
+}
+
+Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kernel) {
+
+
+    kernel->dump();
+
+    Function* vectorizedKernel = Function::Create(kernel->getFunctionType(), GlobalValue::LinkageTypes::ExternalLinkage,
+                                           std::string("__vectorized__") + kernel->getName().str(), M);
+
+    Function::arg_iterator AI = vectorizedKernel->arg_begin();
+    for(const Argument& I : kernel->args()) {
+        AI->setName(I.getName());
+    }
+
+    return vectorizedKernel;
 }
 
 unsigned SPMDVectorizer::determineVectorWidth(Function *F, unsigned registerWidth) {
@@ -146,20 +162,89 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, unsigned registerWidt
     return registerWidth / MaxWidth;
 }
 
-Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kernel) {
+void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFVInterface &wfv) {
 
-    Function* vectorizedKernel = Function::Create(kernel->getFunctionType(), GlobalValue::LinkageTypes::ExternalLinkage,
-                                           std::string("__vectorized__") + kernel->getName().str(), M);
+    Module *M = kernel->getParent();
 
-    Function::arg_iterator AI = vectorizedKernel->arg_begin();
-    for(const Argument& I : kernel->args()) {
-        AI->setName(I.getName());
+    for(auto &global : M->globals()) {
+        wfv.addSIMDSemantics(global,
+                             true, //uniform
+                             false, // varying
+                             false, //seq
+                             false, //seq guarded
+                             true, // res uniform
+                             false,  // res vector
+                             false, // res scalars
+                             false, //aligned
+                             true, // same
+                             false); // consecutive
     }
 
-    return vectorizedKernel;
+    for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
+        Instruction *inst = &*II;
+
+        // mark intrinsics
+        if (auto CI = dyn_cast<CallInst>(inst)) {
+            auto called = CI->getCalledFunction();
+            if (called && called->isIntrinsic()) {
+                auto intrin_id = called->getIntrinsicID();
+
+                switch (intrin_id) {
+                    case Intrinsic::nvvm_read_ptx_sreg_tid_x: {
+                        wfv.addSIMDSemantics(*CI,
+                                             false, //uniform
+                                             true, // varying
+                                             false, //seq
+                                             false, //seq guarded
+                                             false, // res uniform
+                                             true,  // res vector
+                                             false, // res scalars
+                                             false, //aligned
+                                             false, // same
+                                             true); // consecutive
+                        break;
+                    }
+                    case Intrinsic::nvvm_read_ptx_sreg_tid_y:
+                    case Intrinsic::nvvm_read_ptx_sreg_tid_z:
+                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
+                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+                    case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
+                    case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
+                    case Intrinsic::nvvm_read_ptx_sreg_ntid_z: {
+                        wfv.addSIMDSemantics(*CI,
+                                             true, //uniform
+                                             false, // varying
+                                             false, //seq
+                                             false, //seq guarded
+                                             true, // res uniform
+                                             false,  // res vector
+                                             false, // res scalars
+                                             false, //aligned
+                                             true, // same
+                                             false); // consecutive
+                    }
+                    default: break;
+                }
+            }
+        }
+    }
+
+    if(Function *barrierFunc = M->getFunction("llvm.nvvm.barrier0"))
+        wfv.addSIMDSemantics(*barrierFunc,
+                             true, //uniform
+                             false, // varying
+                             false, //seq
+                             false, //seq guarded
+                             true, // res uniform
+                             false,  // res vector
+                             false, // res scalars
+                             false, //aligned
+                             true, // same
+                             false); // consecutive
 }
 
-bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *vecDummyFunction, Function *kernel,
+bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel, Function *vectorizedKernel,
                                        unsigned vectorWidth, Module& M) {
 
     auto& ctx = M.getContext();
@@ -211,6 +296,7 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *vecDum
     BranchInst::Create(loopBody, oldLoopHeader, varLessThanMaxx, loopHeader);
 
 
+    InlineFunctionInfo IFI;
     std::vector<Value *> args;
     std::vector<Instruction *> instructionsToMove;
 
@@ -224,19 +310,31 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *vecDum
                         !isa<TerminatorInst>(&I))
                     instructionsToMove.push_back(&I);
             }
-            for(Value* argOperand : CI->arg_operands()) {
-                args.push_back(argOperand);
+
+            auto argIt = vecFoo->arg_end();
+            unsigned numArgs = kernel->getArgumentList().size();
+            for(unsigned i = 0; i < numArgs; ++i)
+                --argIt;
+
+            for(unsigned i = 0; i < numArgs; ++i) {
+                args.push_back(&*argIt);
+                argIt++;
             }
         }
     }
 
-    CallInst* vecFunction = CallInst::Create(vecDummyFunction, args, "", loopBody);
+    CallInst* vecFunction = CallInst::Create(vectorizedKernel, args, "", loopBody);
 
     for (auto U : dummyFunction->users()) {
         if (CallInst* CI = dyn_cast<CallInst>(U)) {
 
             if(!(CI->getParent()->getParent() == vecFoo)) continue;
 
+            CallInst *kernelCall = CallInst::Create(kernel, args, "", CI);
+            InlineFunction(kernelCall, IFI);
+            CI->eraseFromParent();
+
+            /*
             __verbose("num args ", CI->getNumArgOperands(), "\n");
             for(Value *arg : CI->arg_operands()) {
                 if (ZExtInst *ZI = dyn_cast<ZExtInst>(arg))
@@ -246,16 +344,18 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *vecDum
                                 LI->getPointerOperand()->getName() == "__z") {
                             LoadInst *copy = new LoadInst(LI->getPointerOperand(), "copied load", CI);
                             ZExtInst *zext = new ZExtInst(copy, arg->getType(), "", CI);
-                            CI->replaceUsesOfWith(arg, zext);
                         }
             }
+             */
         }
     }
 
     //move load of Params
+    /*
     for(auto I : instructionsToMove) {
         I->moveBefore(vecFunction);
     }
+     */
 
     BranchInst::Create(loopEnd, loopBody);
 
@@ -266,6 +366,8 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *vecDum
     new StoreInst(incLoopEnd, __x, loopEnd);
     BranchInst::Create(loopHeader, loopEnd);
 
+    InlineFunction(vecFunction, IFI);
+
     return true;
 }
 
@@ -273,8 +375,20 @@ Function *SPMDVectorizer::createKernelSpecificFoo(Module &M, Function *F, Functi
 
     ValueToValueMapTy VMap;
 
+    SmallVector<Type *, 8> Params;
+
+    for(auto &arg : F->args()) {
+        Params.push_back(arg.getType());
+    }
+
+    for(auto &arg : kernel->args()) {
+        Params.push_back(arg.getType());
+    }
+
+    FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Params, false);
+
     Function *vecFoo = cast<Function>(
-            M.getOrInsertFunction("__vectorized__foo__" + kernel->getName().str(), F->getFunctionType()));
+            M.getOrInsertFunction("__vectorized__foo__" + kernel->getName().str(), FTy));
 
     SmallVector<ReturnInst *, 3> rets;
     for (auto &BB : kernel->getBasicBlockList())

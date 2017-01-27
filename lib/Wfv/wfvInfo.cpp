@@ -47,7 +47,6 @@ WFVInfo::WFVInfo()
         mDisableControlFlowDivAnalysis(false),
         mDisableAllAnalyses(false),
         mInitialized(false),
-        mPacxx(false),
         mVerbose(false),
         mFailure(nullptr),
         mTimerGroup(nullptr),
@@ -67,7 +66,6 @@ WFVInfo::WFVInfo(Module*         M,
 				 const bool      disableMemAccessAnalysis,
 				 const bool      disableControlFlowDivAnalysis,
 				 const bool      disableAllAnalyses,
-                 const bool      pacxx,
 				 const bool      verbose,
                  TimerGroup*     timerGroup)
         : ImmutablePass(ID),
@@ -83,7 +81,6 @@ WFVInfo::WFVInfo(Module*         M,
         mDisableControlFlowDivAnalysis(disableControlFlowDivAnalysis),
         mDisableAllAnalyses(disableAllAnalyses),
         mInitialized(false),
-        mPacxx(pacxx),
         mVerbose(verbose),
         mFailure(nullptr),
         mTimerGroup(timerGroup),
@@ -115,7 +112,6 @@ WFVInfo::WFVInfo(const WFVInfo& other)
         mDisableControlFlowDivAnalysis(other.mDisableControlFlowDivAnalysis),
         mDisableAllAnalyses(other.mDisableAllAnalyses),
         mInitialized(other.mInitialized),
-        mPacxx(other.mPacxx),
         mVerbose(other.mVerbose),
         mFailure(other.mFailure),
         mTimerGroup(other.mTimerGroup),
@@ -404,6 +400,62 @@ checkSanity(const Argument& arg,
     return isSane;
 }
 
+
+bool
+checkSanity(const GlobalVariable& var,
+            const bool         isOpUniform,
+            const bool         isOpVarying,
+            const bool         isOpSequential,
+            const bool         isOpSequentialGuarded,
+            const bool         isResultUniform,
+            const bool         isResultVector,
+            const bool         isResultScalars,
+            const bool         isAligned,
+            const bool         isIndexSame,
+            const bool         isIndexConsecutive)
+{
+    bool isSane = true;
+
+    if (!isOpSequential && !isOpSequentialGuarded && isResultScalars)
+    {
+        errs() << "ERROR while adding SIMD semantics for global variable'"
+            << var << "': Only OP_SEQUENTIAL instructions can be RESULT_SCALARS!\n";
+        isSane = false;
+    }
+
+    if (isOpUniform)
+    {
+        if (!isResultUniform)
+        {
+            errs() << "ERROR while adding SIMD semantics for global variable'"
+                << var << "': OP_UNIFORM instruction has to be RESULT_SAME!\n";
+            isSane = false;
+        }
+        if (!isIndexSame)
+        {
+            errs() << "ERROR while adding SIMD semantics for global variable'"
+                << var << "': OP_UNIFORM instruction has to be INDEX_SAME!\n";
+            isSane = false;
+        }
+    }
+    else
+    {
+        if (isResultUniform)
+        {
+            errs() << "ERROR while adding SIMD semantics for global variable'"
+                << var << "': Only OP_UNIFORM instruction can be RESULT_SAME!\n";
+            isSane = false;
+        }
+        if (isIndexSame)
+        {
+            errs() << "ERROR while adding SIMD semantics for global variable'"
+                << var << "': Only OP_UNIFORM instruction can be INDEX_SAME!\n";
+            isSane = false;
+        }
+    }
+
+    return isSane;
+}
 bool
 checkSanity(const Instruction& inst,
             const bool         isOpUniform,
@@ -564,6 +616,50 @@ WFVInfo::addSIMDSemantics(const Argument& arg,
     }
 
     return success;
+}
+
+// This function should be called *before* run()
+bool
+WFVInfo::addSIMDSemantics(const GlobalVariable& var,
+                          const bool         isOpUniform,
+                          const bool         isOpVarying,
+                          const bool         isOpSequential,
+                          const bool         isOpSequentialGuarded,
+                          const bool         isResultUniform,
+                          const bool         isResultVector,
+                          const bool         isResultScalars,
+                          const bool         isAligned,
+                          const bool         isIndexSame,
+                          const bool         isIndexConsecutive)
+{
+    // Check sanity of properties.
+    if (!checkSanity(var, isOpUniform, isOpVarying, isOpSequential, isOpSequentialGuarded,
+                     isResultUniform, isResultVector, isResultScalars,
+                     isAligned, isIndexSame, isIndexConsecutive))
+    {
+        return false;
+    }
+
+    const bool success = mValueInfoMap.add(var,
+                                           isOpUniform,
+                                           isOpVarying,
+                                           isOpSequential,
+                                           isOpSequentialGuarded,
+                                           isResultUniform,
+                                           isResultVector,
+                                           isResultScalars,
+                                           isAligned,
+                                           isIndexSame,
+                                           isIndexConsecutive);
+
+    if (!success)
+    {
+        errs() << "ERROR: Insertion of value analysis info failed for instruction: "
+               << var << "\n";
+        return false;
+    }
+
+    return true;
 }
 
 // This function should be called *before* run()

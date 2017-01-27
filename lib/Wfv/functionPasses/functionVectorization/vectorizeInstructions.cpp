@@ -64,17 +64,10 @@ FunctionVectorizer::vectorizeInstructions(Function* f)
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE) &&
             !isa<GetElementPtrInst>(inst) &&
             !isa<AllocaInst>(inst) &&
-            !isa<AddrSpaceCastInst>(inst) &&
             !isa<BitCastInst>(inst))
         {
             continue;
         }
-
-        //Ignore barriers
-        if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
-
-        //Ignore other instructions of the tidx calculation
-        if(WFV::hasMetadata(inst, WFV::PACXX_ID_X)) continue;
 
         if(mInfo->mVerbose) outs() << "vectorizeInstruction(" << *inst << " )\n";
         if(!visit(inst))
@@ -115,7 +108,6 @@ FunctionVectorizer::vectorizeInstructions(Function* f)
         Instruction* inst = &*I;
 
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_PACK_UNPACK)) continue;
-        if(WFV::hasPACXXMetadata(inst)) continue;
 
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_RES_VECTOR))
         {
@@ -266,7 +258,6 @@ FunctionVectorizer::visitLoadInst(LoadInst     &I)
         load->mutateType(CI->getType());
         load->replaceAllUsesWith(CI);
         load->eraseFromParent();
-        outs() << "done" << "\n";
         return true;
     }
     else {
@@ -417,6 +408,8 @@ createDummyPointerIfNecessary(Value*         pointer,
 
     Type*  oldPointerType = pointer->getType();
 
+    oldPointerType->dump();
+
     const bool requiresVectorPointer = !WFV::hasMetadata(pointer, WFV::WFV_METADATA_RES_UNIFORM);
     if (!requiresVectorPointer) return nullptr;
 
@@ -426,6 +419,8 @@ createDummyPointerIfNecessary(Value*         pointer,
     Type* vecPointerType = pointerIsVectorized ?
         oldPointerType :
         WFV::vectorizeSIMDType(oldPointerType, vectorizationFactor);
+
+    vecPointerType->dump();
 
     return WFV::createDummy(vecPointerType, insertBefore);
 }
@@ -459,6 +454,10 @@ FunctionVectorizer::visitGetElementPtrInst(GetElementPtrInst &I)
         indices.push_back(*IDX);
     }
 
+    if(dummy) {
+        outs() << "dummy \n";
+        dummy->dump();
+    }
 
     // Create new GEP either with vectorized or with scalar pointer
     // depending on vectorization analysis.
@@ -475,6 +474,7 @@ FunctionVectorizer::visitGetElementPtrInst(GetElementPtrInst &I)
     }
 
     if(mInfo->mVerbose) outs() << "  inserted new GEP: " << *newGEP << "\n";
+    outs() << "  inserted new GEP: " << *newGEP << "\n";
 
     // If the pointer is UNIFORM, we now have to create a pointer
     // cast of the result of the GEP (the correct address has to
@@ -642,8 +642,6 @@ FunctionVectorizer::visitInsertValueInst(InsertValueInst &I)
 bool
 FunctionVectorizer::visitCallInst(CallInst &I)
 {
-    if(WFV::hasPACXXMetadata(&I)) return true;
-
     if(mInfo->mVerbose) outs() << "\nvectorizing call: " << I << "\n";
 
     assert (!WFV::isVectorizedType(*I.getType()) && "call is already vectorized!");

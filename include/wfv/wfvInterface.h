@@ -47,6 +47,7 @@
 namespace llvm {
 class Module;
 class Argument;
+class GlobalVariable;
 class LLVMContext;
 class Function;
 class BasicBlock;
@@ -77,7 +78,6 @@ public:
                          const bool      disableMemAccessAnalysis=false,
                          const bool      disableControlFlowDivAnalysis=false,
                          const bool      disableAllAnalyses=false,
-                         const bool      pacxx=false,
                          const bool      verbose=false);
 
     WFV_API ~WFVInterface();
@@ -113,6 +113,19 @@ public:
                                   const bool      isAligned,
                                   const bool      isIndexSame,
                                   const bool      isIndexConsecutive);
+
+    WFV_API bool addSIMDSemantics(const GlobalVariable& var,
+                                  const bool         isOpUniform,
+                                  const bool         isOpVarying,
+                                  const bool         isOpSequential,
+                                  const bool         isOpSequentialGuarded,
+                                  const bool         isResultUniform,
+                                  const bool         isResultVector,
+                                  const bool         isResultScalars,
+                                  const bool         isAligned,
+                                  const bool         isIndexSame,
+                                  const bool         isIndexConsecutive);
+
 
     WFV_API bool addSIMDSemantics(const Instruction& inst,
                                   const bool         isOpUniform,

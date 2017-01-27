@@ -32,6 +32,7 @@ bool PACXXNativeLivenessAnalyzer::runOnFunction(Function &F) {
 }
 
 void PACXXNativeLivenessAnalyzer::computeLiveSets(Function &F) {
+
     for (auto BI = F.begin(), BE = F.end(); BI != BE; ++BI) {
 
         BasicBlock *BB = &*BI;

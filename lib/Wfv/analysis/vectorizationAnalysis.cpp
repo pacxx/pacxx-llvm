@@ -59,7 +59,6 @@ llvm::createVectorizationAnalysisPass(Function*                   scalarFn,
                                       const bool                  disableMemAccessAnalysis,
                                       const bool                  disableControlFlowDivAnalysis,
                                       const bool                  disableAllAnalyses,
-                                      const bool                  pacxx,
                                       const bool                  verbose,
                                       bool*                       failure)
 {
@@ -73,7 +72,6 @@ llvm::createVectorizationAnalysisPass(Function*                   scalarFn,
                                      disableMemAccessAnalysis,
                                      disableControlFlowDivAnalysis,
                                      disableAllAnalyses,
-                                     pacxx,
                                      verbose,
                                      failure);
 }
@@ -89,7 +87,6 @@ VectorizationAnalysis::VectorizationAnalysis()
         mDisableMemAccessAnalysis(false),
         mDisableControlFlowDivAnalysis(false),
         mDisableAllAnalyses(false),
-        mPacxx(false),
         mVerbose(false),
         mFailure(nullptr),
         mVectorizationFactor(0)
@@ -108,7 +105,6 @@ VectorizationAnalysis::VectorizationAnalysis(Function*                   scalarF
                                              const bool                  disableMemAccessAnalysis,
                                              const bool                  disableControlFlowDivAnalysis,
                                              const bool                  disableAllAnalyses,
-                                             const bool                  pacxx,
                                              const bool                  verbose,
                                              bool*                       failure)
 : FunctionPass(ID),
@@ -121,7 +117,6 @@ VectorizationAnalysis::VectorizationAnalysis(Function*                   scalarF
         mDisableMemAccessAnalysis(disableMemAccessAnalysis),
         mDisableControlFlowDivAnalysis(disableControlFlowDivAnalysis),
         mDisableAllAnalyses(disableAllAnalyses),
-        mPacxx(pacxx),
         mVerbose(verbose),
         mFailure(failure),
         mVectorizationFactor(vectorizationFactor)
@@ -234,9 +229,6 @@ VectorizationAnalysis::runOnFunction(Function& F)
     }
     else
     {
-        if(mPacxx)
-            analyzePACXX(&F);
-
         analyzeUniformInfo(&F, hasUniformReturn, uniformArgs);
 
         analyzeConsecutiveAlignedInfo(&F);
@@ -270,7 +262,8 @@ VectorizationAnalysis::setMarksFromOutside(Value*                   value,
     {
         assert (info.mIsResultUniform && "OP_UNIFORM value has to be RESULT_SAME!");
         assert (info.mIsIndexSame && "OP_UNIFORM value has to be INDEX_SAME!");
-        assert (isa<Instruction>(value) && "Only instructions can be OP_UNIFORM!");
+        assert ((isa<Instruction>(value) || isa<GlobalVariable>(value)) &&
+                                                   "Only instructions or global variables can be OP_UNIFORM!");
         markValueAs(value, WFV::WFV_METADATA_OP_UNIFORM);
     }
     else if (info.mIsOpVarying)
@@ -372,6 +365,8 @@ VectorizationAnalysis::setUserDefinedMarks(Function*                   scalarFn,
                                            const WFV::ValueInfoMap&    valueInfoMap,
                                            const WFV::FunctionInfoMap& functionInfoMap)
 {
+    Module *M = scalarFn->getParent();
+
     // Mark arguments that are defined as OP_VARYING by the user via
     // addSIMDSemantics() as well as their uses.
     for (Function::arg_iterator A = scalarFn->arg_begin(),
@@ -379,6 +374,12 @@ VectorizationAnalysis::setUserDefinedMarks(Function*                   scalarFn,
     {
         if (!valueInfoMap.hasMapping(*A)) continue;
         setMarksFromOutside(&*A, valueInfoMap);
+    }
+
+    //Mark global variables that are defined by the user
+    for(auto &global : M->globals()) {
+       if(!valueInfoMap.hasMapping(global)) continue;
+        setMarksFromOutside(&global, valueInfoMap);
     }
 
     // Mark instructions that are defined as OP_VARYING by the user via
@@ -515,69 +516,6 @@ VectorizationAnalysis::analyzeNothing(Function* scalarFn, const bool uniformRetu
     markNestedDivergentTopLevelLoops();
 }
 
-void VectorizationAnalysis::analyzePACXX(Function *scalarFn) {
-
-    if(mVerbose)
-        outs() << "analyze PACXX called \n";
-
-    // iterate over all instructions
-    for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
-        Instruction *inst = &*II;
-
-        // mark intrinsics
-        if (auto CI = dyn_cast<CallInst>(inst)) {
-            auto called = CI->getCalledFunction();
-            if (called && called->isIntrinsic()) {
-                auto intrin_id = called->getIntrinsicID();
-
-                switch (intrin_id) {
-                    case Intrinsic::nvvm_read_ptx_sreg_tid_x : {
-                       WFV::setMetadata(inst, WFV::PACXX_ID_X);
-                       break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_tid_y : {
-                       WFV::setMetadata(inst, WFV::PACXX_ID_Y);
-                       break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_tid_z : {
-                       WFV::setMetadata(inst, WFV::PACXX_ID_Z);
-                       break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x : {
-                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_ID_X);
-                        break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y : {
-                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_ID_Y);
-                        break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z : {
-                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_ID_Z);
-                        break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_ntid_x : {
-                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_DIM_X);
-                        break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_ntid_y : {
-                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_DIM_Y);
-                        break;
-                    }
-                    case Intrinsic::nvvm_read_ptx_sreg_ntid_z : {
-                        WFV::setMetadata(inst, WFV::PACXX_BLOCK_DIM_Z);
-                        break;
-                    }
-                    case Intrinsic::nvvm_barrier0 : {
-                        WFV::setMetadata(inst, WFV::PACXX_BARRIER);
-                        break;
-                    }
-                    default: break;
-                }
-            }
-        }
-    }
-}
-
 // Mark instructions as OP_UNIFORM or OP_VARYING.
 // Mark results of instructions as RES_UNIFORM or RES_VECTOR.
 // Mark blocks as MANDATORY or OPTIONAL.
@@ -591,26 +529,6 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
                                           const SmallVector<bool, 4>& uniformArgs)
 {
     assert (scalarFn);
-
-    //mark instructions of tidx calculation and users
-    for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
-        Instruction *inst = &*II;
-
-        if(WFV::hasMetadata(inst, WFV::PACXX_ID_X)) {
-            markValueAs(inst, WFV::WFV_METADATA_OP_VARYING);
-            markValueAs(inst, WFV::WFV_METADATA_RES_VECTOR);
-
-            for(auto user : inst->users()) {
-                assert(isa<Instruction>(user) && "user of tidx is not an instruction");
-                Instruction *userInst = cast<Instruction>(user);
-                recursivelyMarkVarying(userInst, nullptr);
-            }
-        }
-        else if(WFV::hasPACXXMetadata(inst)){
-            markValueAs(inst, WFV::WFV_METADATA_OP_UNIFORM);
-            markValueAs(inst, WFV::WFV_METADATA_RES_UNIFORM);
-        }
-    }
 
     // Start at arguments and user-defined functions,
     // mark all non-UNIFORM instructions as OP_VARYING.
@@ -659,7 +577,6 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
     {
         Instruction* inst = &*I;
         if (!isa<BranchInst>(inst) && !isa<ReturnInst>(inst)) continue;
-        if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
 
         if (BranchInst* br = dyn_cast<BranchInst>(inst))
         {
@@ -706,8 +623,6 @@ VectorizationAnalysis::analyzeUniformInfo(Function*                   scalarFn,
         {
             continue;
         }
-
-        if(WFV::hasPACXXMetadata(inst)) continue;
 
         if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_VARYING) ||
             WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_SEQUENTIAL) ||
@@ -2967,8 +2882,6 @@ VectorizationAnalysis::updateUniformSideEffectOperations(Function* scalarFn)
             // Ignore our own metadata calls.
             if (WFV::isMetadataCall(inst)) continue;
 
-            if(WFV::hasPACXXMetadata(inst)) continue;
-
             // Ignore all operations that are already marked as VARYING/SEQUENTIAL.
             if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_VARYING) ||
                 WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_SEQUENTIAL) ||
@@ -3378,21 +3291,6 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
         if (mValueInfoMap->hasMapping(*inst)) markedValues.insert(inst);
     }
 
-    //mark global_id x/y/z as consecutive
-    for (llvm::inst_iterator II=inst_begin(scalarFn), IE=inst_end(scalarFn); II!=IE; ++II) {
-        Instruction *inst = &*II;
-        if (WFV::hasMetadata(inst, WFV::PACXX_ID_X)) {
-            WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_CONSECUTIVE);
-            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_FALSE);
-            markedValues.insert(inst);
-        }
-        else if(WFV::hasPACXXMetadata(inst)) {
-            WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_SAME);
-            WFV::setMetadata(inst, WFV::WFV_METADATA_ALIGNED_FALSE);
-            markedValues.insert(inst);
-        }
-    }
-
     if (mDisableMemAccessAnalysis)
     {
         for (llvm::inst_iterator I=inst_begin(scalarFn), IE=inst_end(scalarFn); I!=IE; ++I)
@@ -3400,7 +3298,6 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
             Instruction* inst = &*I;
             if (inst->getType()->isVoidTy()) continue;
             if (mValueInfoMap->hasMapping(*inst)) continue;
-            if(WFV::hasMetadata(inst, WFV::PACXX_BARRIER)) continue;
             if (WFV::hasMetadata(inst, WFV::WFV_METADATA_OP_UNIFORM)) // TODO: Shouldn't this test for RES_UNIFORM?
             {
                 WFV::setMetadata(inst, WFV::WFV_METADATA_INDEX_SAME);
@@ -3505,8 +3402,6 @@ VectorizationAnalysis::analyzeConsecutiveAlignedInfo(Function* scalarFn)
 
             // Ignore our own metadata calls.
             if (WFV::isMetadataCall(&*I)) continue;
-
-            if(WFV::hasMetadata(&*I, WFV::PACXX_BARRIER)) continue;
 
             if (BranchInst* br = dyn_cast <BranchInst>(I))
             {
@@ -3937,12 +3832,14 @@ VectorizationAnalysis::deriveIndexInfo(Instruction* inst,
 
 			// default behavior
 			if(mVerbose) errs() << "-> Varying GEP\n";
+			/*
             unsigned registerSize = mTTI->getRegisterBitWidth(true);
             Type *ptrType = inst->getOperand(0)->getType();
             unsigned gepElementSize = mSimdFunction->getParent()->getDataLayout().getTypeSizeInBits(ptrType);
             if( registerSize / gepElementSize <= mVectorizationFactor)
                 WFV::setMetadata(inst, WFV::WFV_METADATA_RES_VECTOR);
             else
+            */
 			    WFV::setMetadata(inst, WFV::WFV_METADATA_RES_SCALARS);
 			indexInfo = WFV::WFV_METADATA_INDEX_RANDOM;
 			break;
@@ -4657,8 +4554,6 @@ VectorizationAnalysis::requiresSplit(const Instruction& inst) const
 {
     // Ignore our own metadata calls.
     if (WFV::isMetadataCall(&inst)) return false;
-
-    if(WFV::hasPACXXMetadata(&inst)) return false;
 
     if(mVerbose) outs() << "testing if instruction has to be split: " << inst << "...\n";
 

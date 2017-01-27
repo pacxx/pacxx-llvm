@@ -34,18 +34,6 @@ using namespace llvm;
 
 namespace WFV {
 
-//PACXX properties
-static const char* const PACXX_ID_X = "idx";
-static const char* const PACXX_ID_Y = "idy";
-static const char* const PACXX_ID_Z = "idz";
-static const char* const PACXX_BLOCK_ID_X = "bidx";
-static const char* const PACXX_BLOCK_ID_Y = "bidy";
-static const char* const PACXX_BLOCK_ID_Z = "bidz";
-static const char* const PACXX_BLOCK_DIM_X = "bdimx";
-static const char* const PACXX_BLOCK_DIM_Y = "bdimy";
-static const char* const PACXX_BLOCK_DIM_Z = "bdimz";
-static const char* const PACXX_BARRIER = "barrier";
-
 // Instruction properties
 static const char* const WFV_METADATA_ARGUMENT_CAST         = "wfv_arg_cast";
 static const char* const WFV_METADATA_PKT_PTR_CAST          = "wfv_pkt_ptr_cast";
@@ -135,10 +123,6 @@ void removeMetadata(Loop* loop, const char* const metaDataString);
 void setMetadata(Value* value, const char* const metaDataString);
 bool hasMetadata(const Value* value);
 bool hasWFVMetadata(const Value* value);
-bool hasPACXXMetadata(const Value* value);
-bool isThreadId(const Value *value);
-bool isBlockId(const Value *value);
-bool isBlockDim(const Value *value);
 
 bool hasMetadata(const Value* value, const char* const metaDataString);
 void removeMetadata(Value* value, const char* const metaDataString);
