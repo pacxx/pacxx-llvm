@@ -57,10 +57,13 @@ private:
 
     void createSharedMemoryBuffer(Function *func, Value *sm_size);
 
-    void createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals, BasicBlock *sharedMemBB);
+    void createInternalSharedMemoryBuffer(Module &M, Function *kernel,
+                                          set<GlobalVariable*> &globals, BasicBlock *sharedMemBB);
 
-    void createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable*> &globals,
+    void createExternalSharedMemoryBuffer(Module &M, Function *kernel, set<GlobalVariable*> &globals,
                                           Value *sm_size, BasicBlock *sharedMemBB);
+
+    void replaceAllUsesInKernel(Function *kernel, Value *from, Value *with);
 
     set<GlobalVariable *> getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal);
 

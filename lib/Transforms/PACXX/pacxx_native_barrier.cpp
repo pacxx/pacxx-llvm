@@ -158,8 +158,6 @@ private:
 
     void storeLiveValues(Module &M, BarrierInfo *info, ValueToValueMapTy &origFnMap);
 
-    void prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc);
-
     void createSpecialFooWrapper(Module &M, Function *foo, Function *kernel,
                                  SetVector<BarrierInfo *> barrierInfo,
                                  SetVector<BarrierInfo *> vecBarrierInfo);
@@ -222,15 +220,11 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
         bool modified_kernel = runOnFunction(M, kernel, barrierInfo);
 
         if(modified_kernel) {
+
             //if we have a vectorized version of the kernel also eliminate barriers
-            auto vec_kernel = M.getFunction("__vectorized__" + kernelName);
+            if (kernel->hasFnAttribute("vectorized")) {
 
-            if (vec_kernel) {
-
-                //remove vectorized foo because we create special wrapper later
-                Function *vecFoo = M.getFunction("__vectorized__foo__" + kernelName);
-                if(vecFoo)
-                    vecFoo->eraseFromParent();
+                auto vec_kernel = M.getFunction("__vectorized__" + kernelName);
 
                 __verbose("Running for vectorized kernel");
                 _vectorWidth = getVectorWidth(vec_kernel);
@@ -239,17 +233,6 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
             }
 
             createSpecialFooWrapper(M, foo, kernel, barrierInfo, vecBarrierInfo);
-
-            M.dump();
-
-            //now we can delete the original function and its vectorized version
-            kernel->dropAllReferences();
-            kernel->eraseFromParent();
-
-            if (vec_kernel) {
-                vec_kernel->dropAllReferences();
-                vec_kernel->eraseFromParent();
-            }
         }
 
         modified |= modified_kernel;
@@ -278,6 +261,8 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
     }
 
     __verbose("Found ", numBarriers, " barriers. Modifying \n");
+    // mark kernel as a kernel with barriers
+    kernel->addFnAttr("barrier");
 
 
     splitAtBarriers(M, barriers);
@@ -294,10 +279,7 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
     }
 
     for(auto info : infoVec) {
-        Function *newFunc = createFunction(M, kernel, info);
-        if(info->_id == 0 && !vecVersion) {
-            prepareFunctionForLinker(M, kernel, newFunc);
-        }
+        createFunction(M, kernel, info);
     }
 
     for(auto info : infoVec) {
@@ -447,9 +429,6 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     LLVMContext &ctx = M.getContext();
 
     string name = kernel->getName().str();
-
-    if(info->_id == 0)
-        kernel->setName("old" + kernel->getName().str());
 
     SetVector<const BasicBlock *> &parts = info->_parts;
     SetVector<const Value *> &livingValues = info->_livingValues;
@@ -635,34 +614,6 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info, ValueToVa
     __verbose("Finished creating store \n");
 }
 
-void PACXXNativeBarrier::prepareFunctionForLinker(Module &M, Function *oldFunc, Function *newFunc) {
-    __verbose("preparing function for linker \n");
-
-    LLVMContext &ctx = oldFunc->getContext();
-
-    newFunc->setAttributes(oldFunc->getAttributes());
-    // mark first function as kernel and mark use of a barrier
-    newFunc->addFnAttr("barrier");
-
-
-    // replace old kernel in metadata with new one
-    //this work around is needed, replaceAllUsesWith fails cause of different types
-    NamedMDNode *MD = M.getNamedMetadata("nvvm.annotations");
-
-    Metadata *MDVals[] = {ConstantAsMetadata::get(newFunc), MDString::get(ctx, "kernel"),
-                          ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(ctx), 1))};
-
-    MD->setOperand(0, MDNode::get(ctx, MDVals));
-
-
-    while (!oldFunc->use_empty()) {
-        auto &U = *oldFunc->use_begin();
-        U.set(newFunc);
-    }
-
-    __verbose("finished preparing \n");
-}
-
 void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Function *kernel,
                                                  SetVector<BarrierInfo *> barrierInfo,
                                                  SetVector<BarrierInfo *> vecBarrierInfo) {
@@ -690,7 +641,7 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Funct
     }
     FunctionType *FTy = FunctionType::get(Type::getVoidTy(ctx), Params, false);
     Function *newFoo = Function::Create(FTy, Function::ExternalLinkage,
-                                        "__barrier__foo__" + barrierInfo[0]->_func->getName().str() , &M);
+                                        "__barrier__foo__" + kernel->getName().str(), &M);
 
     BasicBlock *entry = BasicBlock::Create(ctx, "entry", newFoo);
     BasicBlock *allocBB = BasicBlock::Create(ctx, "allocBB", newFoo);
@@ -960,8 +911,6 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
     LLVMContext &ctx = M.getContext();
 
-    unsigned numKernelArgs = info._origKernel->getArgumentList().size();
-
     SmallVector<Value *, 8> args;
 
     LoadInst *load_x = new LoadInst(id._x, "__x", loopBody);
@@ -981,94 +930,57 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
     BinaryOperator *add = BinaryOperator::CreateAdd(mul_y_maxx, mul_mulmaxxmaxy_z, "", loopBody);
     BinaryOperator *blockId = BinaryOperator::CreateAdd(load_x, add, "", loopBody);
 
-    ConstantInt * jump_size = ConstantInt::get(ctx, APInt(32, info._maxStructSize));
+    ConstantInt *jump_size = ConstantInt::get(ctx, APInt(32, info._maxStructSize));
 
     BinaryOperator *offset = BinaryOperator::CreateMul(blockId, jump_size, "", loopBody);
 
-    if(info._id == 0) {
+    Function *func = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
 
-        // create call to dummy for native linker
-        args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
-        args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
-        args.push_back(UndefValue::get(Type::getInt64Ty(ctx)));
+    auto argIt = info._foo->arg_end();
+    unsigned numArgs = info._origKernel->getArgumentList().size();
+    for(unsigned i = 0; i < numArgs; ++i)
+        --argIt;
 
-        Function *calledFunc = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
+    for(unsigned i = 0; i < numArgs; ++i) {
+        args.push_back(&*argIt);
+        argIt++;
+    }
 
-        // create metadata so we can find the memory in the native linker
-        AllocaInst *mem = vectorized ? info._nextStruct.second : info._nextStruct.first;
+    StructType *type = vectorized ? info._loadType.second : info._loadType.first;
+    AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
 
-        Function *dummy = vectorized ? M.getFunction("__vectorized__dummy_kernel") : M.getFunction("__dummy_kernel");
+    GetElementPtrInst *mem_gep = GetElementPtrInst::Create(Type::getInt8Ty(ctx), mem, offset, "", loopBody);
+    CastInst *cast = CastInst::Create(CastInst::BitCast, mem_gep, PointerType::getUnqual(type), "", loopBody);
 
-        CallInst *CI = CallInst::Create(dummy, args, "", loopBody);
+    __verbose("Setting living values args \n");
+    for (unsigned i = 0; i < type->getStructNumElements(); ++i) {
+        SmallVector<Value *, 8> idx;
+        idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
+        idx.push_back(ConstantInt::get(ctx, APInt(32, i)));
+        GetElementPtrInst *struct_gep = GetElementPtrInst::Create(nullptr,
+                                                                  cast, idx, "", loopBody);
+        LoadInst *load = new LoadInst(struct_gep, "", loopBody);
+        args.push_back(load);
+    }
 
-        //calculate next struct mem
-        GetElementPtrInst *mem_gep = GetElementPtrInst::Create(Type::getInt8Ty(ctx), mem, offset, "", CI);
+    __verbose("Setting ptr to next struct \n");
 
-        // create the actual call
-
-        args.clear();
-
-        //TODO args.insert only kernel args
-        //args.insert(args.end(), advance(info._foo->arg_end(), - numKernelArgs), info._foo->arg_end());
-
+    // set ptr to next struct
+    AllocaInst *nextMem = vectorized ? info._nextStruct.second : info._nextStruct.first;
+    // handle last case where we have no next memory
+    if (nextMem) {
         args.push_back(mem_gep);
-
-        CallInst::Create(calledFunc, args, "", CI);
-
-        //replace return with a store, because we inline dummy later and so the return is void
-        for(auto I = calledFunc->begin(), IE = calledFunc->end(); I != IE; ++I) {
-            if (ReturnInst *RI = dyn_cast<ReturnInst>(I->getTerminator())) {
-                new StoreInst(RI->getReturnValue(), info._switchParam, loopBody);
-            }
-        }
-
-        BranchInst::Create(nextBB, loopBody);
-        __verbose("created x-loop body for first case \n");
+    } else {
+        args.push_back(UndefValue::get(Type::getInt8PtrTy(ctx)));
     }
-    else {
 
-        Function *func = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
+    CallInst *call = CallInst::Create(func, args, "", loopBody);
+    new StoreInst(call, info._switchParam, loopBody);
 
-        //TODO insert only kernel args
-        //args.insert(args.end(), info._foo->arg_end()-numKernelArgs, info._foo->arg_end());
+    BranchInst::Create(nextBB, loopBody);
 
-        StructType *type = vectorized ? info._loadType.second : info._loadType.first;
-        AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
-
-        GetElementPtrInst *mem_gep = GetElementPtrInst::Create(Type::getInt8Ty(ctx), mem, offset, "", loopBody);
-        CastInst *cast = CastInst::Create(CastInst::BitCast, mem_gep, PointerType::getUnqual(type), "", loopBody);
-
-        __verbose("Setting living values args \n");
-        for(unsigned i = 0; i < type->getStructNumElements(); ++i) {
-            SmallVector<Value*, 8> idx;
-            idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
-            idx.push_back(ConstantInt::get(ctx, APInt(32, i)));
-            GetElementPtrInst *struct_gep = GetElementPtrInst::Create(nullptr,
-                                                                      cast, idx, "", loopBody);
-            LoadInst *load = new LoadInst(struct_gep, "", loopBody);
-            args.push_back(load);
-        }
-
-        __verbose("Setting ptr to next struct \n");
-
-        // set ptr to next struct
-        AllocaInst *nextMem = vectorized ? info._nextStruct.second : info._nextStruct.first;
-        // handle last case where we have no next memory
-        if(nextMem) {
-            args.push_back(mem_gep);
-        }
-        else {
-            args.push_back(UndefValue::get(Type::getInt8PtrTy(ctx)));
-        }
-
-        CallInst *call = CallInst::Create(func, args, "", loopBody);
-        new StoreInst(call, info._switchParam, loopBody);
-
-        BranchInst::Create(nextBB, loopBody);
-
-        //save call to inline it later
-        _inlineCalls.push_back(call);
-    }
+    //save call to inline it later
+    _inlineCalls.push_back(call);
 
     __verbose("Done filling x-loop body \n");
 }

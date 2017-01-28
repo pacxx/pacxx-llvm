@@ -86,46 +86,46 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         unsigned vectorWidth = determineVectorWidth(kernel, TTI->getRegisterBitWidth(true));
 
+        __verbose("registerWidth: ", TTI->getRegisterBitWidth(true));
         __verbose("vectorWidth: ", vectorWidth);
 
-        Function *vectorizedKernel  = createVectorizedKernelHeader(&M, kernel);
+        if(vectorWidth >= 4) {
 
-        WFVInterface::WFVInterface wfv(&M,
-                                       &M.getContext(),
-                                       kernel,
-                                       vectorizedKernel,
-                                       TTI,
-                                       vectorWidth,
-                                       -1,
-                                       false,
-                                       false,
-                                       false,
-                                       false);
+            Function *vectorizedKernel = createVectorizedKernelHeader(&M, kernel);
 
-        prepareForVectorization(kernel, wfv);
+            WFVInterface::WFVInterface wfv(&M,
+                                           &M.getContext(),
+                                           kernel,
+                                           vectorizedKernel,
+                                           TTI,
+                                           vectorWidth,
+                                           -1,
+                                           false,
+                                           false,
+                                           false,
+                                           false);
 
-        bool vectorized = wfv.run();
-        //bool vectorized = wfv.analyze();
-        __verbose("vectorized: ", vectorized);
+            prepareForVectorization(kernel, wfv);
 
-        if(vectorized) {
-            modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
-            vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
-            kernel->addFnAttr("vectorized");
+            bool vectorized = wfv.run();
+            //bool vectorized = wfv.analyze();
+            __verbose("vectorized: ", vectorized);
+
+            if (vectorized) {
+                modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
+                vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
+                kernel->addFnAttr("vectorized");
+            } else
+                vectorizedKernel->eraseFromParent();
+
+            kernelsVectorized &= vectorized;
         }
-        else
-            vectorizedKernel->eraseFromParent();
-
-        kernelsVectorized &= vectorized;
     }
 
     return kernelsVectorized;
 }
 
 Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kernel) {
-
-
-    kernel->dump();
 
     Function* vectorizedKernel = Function::Create(kernel->getFunctionType(), GlobalValue::LinkageTypes::ExternalLinkage,
                                            std::string("__vectorized__") + kernel->getName().str(), M);
@@ -139,6 +139,7 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
 }
 
 unsigned SPMDVectorizer::determineVectorWidth(Function *F, unsigned registerWidth) {
+
     unsigned MaxWidth = 8;
     const DataLayout &DL = F->getParent()->getDataLayout();
 
@@ -146,7 +147,7 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, unsigned registerWidt
         for (auto &I : B) {
             Type *T = I.getType();
 
-            if (!isa<LoadInst>(&I) && !isa<StoreInst>(&I) && !isa<PHINode>(&I))
+            if (!isa<LoadInst>(&I) && !isa<StoreInst>(&I))
                 continue;
 
             if (StoreInst * ST = dyn_cast<StoreInst>(&I))
@@ -298,18 +299,11 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
 
     InlineFunctionInfo IFI;
     std::vector<Value *> args;
-    std::vector<Instruction *> instructionsToMove;
 
     for (auto U : dummyFunction->users()) {
         if (CallInst* CI = dyn_cast<CallInst>(U)) {
 
             if(!(CI->getParent()->getParent() == vecFoo)) continue;
-
-            for(auto &I : *(CI->getParent())) {
-                if (!isa<CallInst>(&I) &&
-                        !isa<TerminatorInst>(&I))
-                    instructionsToMove.push_back(&I);
-            }
 
             auto argIt = vecFoo->arg_end();
             unsigned numArgs = kernel->getArgumentList().size();
@@ -333,29 +327,8 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
             CallInst *kernelCall = CallInst::Create(kernel, args, "", CI);
             InlineFunction(kernelCall, IFI);
             CI->eraseFromParent();
-
-            /*
-            __verbose("num args ", CI->getNumArgOperands(), "\n");
-            for(Value *arg : CI->arg_operands()) {
-                if (ZExtInst *ZI = dyn_cast<ZExtInst>(arg))
-                    if (LoadInst *LI = dyn_cast<LoadInst>(ZI->getOperand(0)))
-                        if (LI->getPointerOperand()->getName() == "__x" ||
-                                LI->getPointerOperand()->getName() == "__y" ||
-                                LI->getPointerOperand()->getName() == "__z") {
-                            LoadInst *copy = new LoadInst(LI->getPointerOperand(), "copied load", CI);
-                            ZExtInst *zext = new ZExtInst(copy, arg->getType(), "", CI);
-                        }
-            }
-             */
         }
     }
-
-    //move load of Params
-    /*
-    for(auto I : instructionsToMove) {
-        I->moveBefore(vecFunction);
-    }
-     */
 
     BranchInst::Create(loopEnd, loopBody);
 

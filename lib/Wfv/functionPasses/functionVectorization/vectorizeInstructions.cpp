@@ -408,8 +408,6 @@ createDummyPointerIfNecessary(Value*         pointer,
 
     Type*  oldPointerType = pointer->getType();
 
-    oldPointerType->dump();
-
     const bool requiresVectorPointer = !WFV::hasMetadata(pointer, WFV::WFV_METADATA_RES_UNIFORM);
     if (!requiresVectorPointer) return nullptr;
 
@@ -419,8 +417,6 @@ createDummyPointerIfNecessary(Value*         pointer,
     Type* vecPointerType = pointerIsVectorized ?
         oldPointerType :
         WFV::vectorizeSIMDType(oldPointerType, vectorizationFactor);
-
-    vecPointerType->dump();
 
     return WFV::createDummy(vecPointerType, insertBefore);
 }
@@ -454,11 +450,6 @@ FunctionVectorizer::visitGetElementPtrInst(GetElementPtrInst &I)
         indices.push_back(*IDX);
     }
 
-    if(dummy) {
-        outs() << "dummy \n";
-        dummy->dump();
-    }
-
     // Create new GEP either with vectorized or with scalar pointer
     // depending on vectorization analysis.
     Instruction *newGEP = GetElementPtrInst::Create(nullptr,
@@ -474,7 +465,6 @@ FunctionVectorizer::visitGetElementPtrInst(GetElementPtrInst &I)
     }
 
     if(mInfo->mVerbose) outs() << "  inserted new GEP: " << *newGEP << "\n";
-    outs() << "  inserted new GEP: " << *newGEP << "\n";
 
     // If the pointer is UNIFORM, we now have to create a pointer
     // cast of the result of the GEP (the correct address has to

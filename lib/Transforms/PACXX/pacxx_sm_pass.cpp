@@ -21,8 +21,6 @@ void PACXXNativeSMTransformer::releaseMemory() {}
 
 void PACXXNativeSMTransformer::getAnalysisUsage(AnalysisUsage &AU) const {}
 
-
-//TODO test
 bool PACXXNativeSMTransformer::runOnFunction(Function &F) {
 
     auto argIt = F.arg_end();
@@ -48,12 +46,12 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 
         if (!internal_sm.empty()) {
             __verbose("internal shared memory found\n");
-            createInternalSharedMemoryBuffer(*M, internal_sm, sharedMemBB);
+            createInternalSharedMemoryBuffer(*M, func, internal_sm, sharedMemBB);
         }
 
         if (!external_sm.empty()) {
             __verbose("external shared memory found\n");
-            createExternalSharedMemoryBuffer(*M, external_sm, sm_size, sharedMemBB);
+            createExternalSharedMemoryBuffer(*M, func, external_sm, sm_size, sharedMemBB);
         }
 
         BranchInst::Create(entry, sharedMemBB);
@@ -148,25 +146,30 @@ void PACXXNativeSMTransformer::lookAtConstantOps(ConstantExpr *constExp, Constan
    }
 }
 
-void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M, set<GlobalVariable *> &globals,
+void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M,
+                                                                Function *kernel,
+                                                                set<GlobalVariable *> &globals,
                                                                 BasicBlock *sharedMemBB) {
 
     for (auto GV : globals) {
 
         Type *sm_type = GV->getType()->getElementType();
         AllocaInst *sm_alloc = new AllocaInst(sm_type, nullptr,
-                                              1, "internal_sm",
+                                              0, "internal_sm",
                                               sharedMemBB);
 
         if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
             new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
 
-        GV->replaceAllUsesWith(sm_alloc);
+        replaceAllUsesInKernel(kernel, GV, sm_alloc);
     }
 }
 
-void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M, set<GlobalVariable *> &globals,
-                                                                Value *sm_size, BasicBlock *sharedMemBB) {
+void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M,
+                                                                Function *kernel,
+                                                                set<GlobalVariable *> &globals,
+                                                                Value *sm_size,
+                                                                BasicBlock *sharedMemBB) {
     for (auto GV : globals) {
         Type *GVType = GV->getType()->getElementType();
         Type *sm_type = nullptr;
@@ -174,17 +177,32 @@ void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M, set<G
         sm_type = GVType->getArrayElementType();
 
         Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
-                                           M.getDataLayout().getTypeSizeInBits(sm_type) / 8);
+                                           M.getDataLayout().getTypeAllocSize(sm_type));
 
         //calc number of elements
         BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
-        AllocaInst *sm_alloc = new AllocaInst(sm_type, div, 1,
+        AllocaInst *sm_alloc = new AllocaInst(GV->getType(), div,
                                               "external_sm", sharedMemBB);
 
         BitCastInst *cast = new BitCastInst(sm_alloc, GV->getType(), "cast", sharedMemBB);
 
-        GV->replaceAllUsesWith(cast);
+        replaceAllUsesInKernel(kernel, GV, cast);
     }
+}
+
+void PACXXNativeSMTransformer::replaceAllUsesInKernel(Function *kernel, Value *from, Value *with) {
+    auto UI = from->use_begin(), E = from->use_end();
+    for (; UI != E;) {
+        Use &U = *UI;
+        ++UI;
+        auto *Usr = dyn_cast<Instruction>(U.getUser());
+        if (Usr && Usr->getParent()->getParent() == kernel)
+            U.set(with);
+        else
+            //this is needed because of some leftover reflection calls that use the sm variable
+            U.set(UndefValue::get(from->getType()));
+    }
+    return;
 }
 
 namespace llvm {

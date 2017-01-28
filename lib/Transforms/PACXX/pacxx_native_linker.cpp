@@ -35,17 +35,13 @@ namespace llvm {
         };
 
     private:
-        Function *getFooFunction(Function *kernel);
+        Function *getFooFunction(Function *kernel, bool vectorized, bool barrier);
         Function *createWrapper(Function *kernel, TerminatorInst **term, SmallVector<Value *, 8> &wrapperArgs);
         SmallVector<Value *,8> createKernelArgs(Function *wrapper, Function *kernel,
                                                 Value3 &blockId, Value3 &maxBlock, Value3 &maxId);
-        void replaceDummyWithKernelIfNeeded(Function *wrapper, Function *kernel, SmallVector<Value *, 8> &kernelArgs);
+        void replaceDummyWithKernelIfNeeded(Function *wrapper, Function *kernel, SmallVector<Value *, 8> &kernelArgs,
+                                            bool vectorized, bool barrier);
         void removeDeadCalls(Function *wrapper, Value3 &blockId, Value3 &maxBlock, Value3 &maxId);
-
-    private:
-
-        bool _barrier;
-        bool _vectorized;
     };
 
     bool PACXXNativeLinker::runOnModule(Module &M) {
@@ -54,8 +50,8 @@ namespace llvm {
 
       for (auto &F : kernels) {
 
-        _barrier = false;
-        _vectorized = false;
+        bool vectorized = F->hasFnAttribute("vectorized") ? true : false;
+        bool barrier = F->hasFnAttribute("barrier") ? true : false;
 
         SmallVector<Value *, 8> wrapperArgs;
         Value3 blockId;
@@ -64,7 +60,7 @@ namespace llvm {
 
         TerminatorInst *term;
 
-        Function *foo = getFooFunction(F);
+        Function *foo = getFooFunction(F, vectorized, barrier);
 
         Function *wrapper = createWrapper(F, &term, wrapperArgs);
 
@@ -79,14 +75,20 @@ namespace llvm {
         InlineFunctionInfo IFI;
         InlineFunction(CI, IFI, nullptr, false);
 
-        replaceDummyWithKernelIfNeeded(wrapper, F, kernelArgs);
+        replaceDummyWithKernelIfNeeded(wrapper, F, kernelArgs, vectorized, barrier);
 
         removeDeadCalls(wrapper, blockId, maxBlock, maxId);
 
         __verbose("Cleaning up");
-        if(_vectorized) {
+        if(vectorized) {
           Function *vec_F = M.getFunction("__vectorized__" + F->getName().str());
           vec_F->eraseFromParent();
+          // if the kernel has been vectorized and has a barrier, we neeed to remove the vectorized wrapper because we
+          // will use the barrier version of the wrapper
+          if(barrier) {
+            Function *vecFoo = M.getFunction("__vectorized__foo__" + F->getName().str());
+            vecFoo->eraseFromParent();
+          }
         }
         F->eraseFromParent();
         foo->eraseFromParent();
@@ -105,25 +107,26 @@ namespace llvm {
       return true;
     }
 
-    Function* PACXXNativeLinker::getFooFunction(Function *kernel) {
+    Function* PACXXNativeLinker::getFooFunction(Function *kernel, bool vectorized, bool barrier) {
+
+      __verbose("Getting correct foo function");
 
       Module *M = kernel->getParent();
       LLVMContext &ctx = M->getContext();
       Function *origFoo = M->getFunction("foo");
       Function *foo = nullptr;
 
+
       // if the kernel has been vectorized
-      if (kernel->hasFnAttribute("vectorized")) {
-        _vectorized = true;
+      if (vectorized && !barrier) {
         foo = M->getFunction("__vectorized__foo__" + kernel->getName().str());
       }
       // if the kernel has a barrier use a special foo function
-      if (kernel->hasFnAttribute("barrier")) {
-        _barrier = true;
+      if (barrier) {
         foo = M->getFunction("__barrier__foo__" + kernel->getName().str());
       }
       //if the kernel has not been vectorized and contains no barriers
-      if(!kernel->hasFnAttribute("vectorized") && !kernel->hasFnAttribute("barrier")) {
+      if(!vectorized && !barrier) {
         SmallVector<Type *, 8> Params;
         for (auto &arg : origFoo->args()) {
           Params.push_back(arg.getType());
@@ -293,12 +296,13 @@ namespace llvm {
     }
 
     void PACXXNativeLinker::replaceDummyWithKernelIfNeeded(Function *wrapper, Function *kernel,
-                                                           SmallVector<Value *, 8> &kernelArgs) {
+                                                           SmallVector<Value *, 8> &kernelArgs,
+                                                           bool vectorized, bool barrier) {
 
       Module *M = wrapper->getParent();
       CallInst *CI = nullptr;
 
-      if(!_barrier && !_vectorized) {
+      if(!barrier && !vectorized) {
         Function *dummy = M->getFunction("__dummy_kernel");
 
         CallInst *remove = nullptr;
