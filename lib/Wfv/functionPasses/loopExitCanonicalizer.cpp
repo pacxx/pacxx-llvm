@@ -97,6 +97,11 @@ LoopExitCanonicalizer::runOnFunction(Function& F)
             *mInfo->mFailure = true;
     }
 
+    if(mInfo->mVerbose) {
+        outs() << "after loop canonicalizer \n";
+        F.print(outs(), nullptr);
+    }
+
     return false;
 }
 

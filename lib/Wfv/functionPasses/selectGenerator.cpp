@@ -136,6 +136,7 @@ SelectGenerator::runOnFunction(Function& F)
     }
 
     if(mInfo->mVerbose) {
+        outs() << "after select generation \n";
         F.print(outs());
     }
 

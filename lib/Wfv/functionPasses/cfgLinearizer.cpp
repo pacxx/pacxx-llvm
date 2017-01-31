@@ -257,7 +257,10 @@ CFGLinearizer::runOnFunction(Function& F)
     collectLoopExitInfo(&F);
     linearize(&F);
 
-    if(mInfo->mVerbose) F.print(outs());
+    if(mInfo->mVerbose) {
+        outs() << "after cfgLinearizer \n";
+        F.print(outs());
+    }
 
     if (!verify(F)) *mInfo->mFailure = true;
 

@@ -159,6 +159,8 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
 
     Module* mod = f->getParent();
 
+    outs() << vectorizationFactor << "\n";
+
     // We use a vector to store which instructions to delete
     // to make sure we delete in the right order (there will
     // be dependencies left between some of the unneeded
@@ -178,7 +180,6 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
                 continue;
             }
 
-            // ignore pacxx instructions to prevent duplication of intrinsic calls
             // Ignore forward calls (marked 'sequential').
             if (isForwardFunctionCall(inst)) continue;
 
@@ -448,6 +449,17 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
         pack->eraseFromParent();
     }
 
+    //TODO is that always correct ??
+    for(unsigned i=0; i < deleteVec.size(); ++i) {
+        Instruction *inst = deleteVec[i];
+        if(mInfo->mVerbose) outs() << "removing instruction: " << *inst << "\n";
+        inst->replaceAllUsesWith(UndefValue::get(inst->getType()));
+        inst->eraseFromParent();
+
+        deleteVec[i] = nullptr;
+    }
+
+    /*
     unsigned deleted = 1;
     while (deleted)
     {
@@ -460,17 +472,18 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
             if(mInfo->mVerbose) outs() << "removing instruction: " << *inst << "\n";
             inst->eraseFromParent();
             deleteVec[i] = nullptr;
-            ++deleted;
+            deleted = 1;
         }
     }
+     */
 
     for (auto &it : duplicateMap)
     {
         delete [] it.second;
     }
 
-    /*
     if(mInfo->mVerbose) {
+        mInfo->mModule->dump();
         unsigned notDeleted = 0;
         for (unsigned i = 0, e = deleteVec.size(); i < e; ++i) {
             if (deleteVec[i]) ++notDeleted;
@@ -485,7 +498,6 @@ FunctionVectorizer::duplicateSplitInstructions(Function*      f,
             assert(!isForwardFunctionCall(&*I));
         }
     }
-    */
 }
 
 void

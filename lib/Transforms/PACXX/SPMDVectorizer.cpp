@@ -210,6 +210,9 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
                     case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
                     case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
                     case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+                    case Intrinsic::nvvm_read_ptx_sreg_nctaid_x:
+                    case Intrinsic::nvvm_read_ptx_sreg_nctaid_y:
+                    case Intrinsic::nvvm_read_ptx_sreg_nctaid_z:
                     case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
                     case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
                     case Intrinsic::nvvm_read_ptx_sreg_ntid_z: {
@@ -319,16 +322,6 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
 
     CallInst* vecFunction = CallInst::Create(vectorizedKernel, args, "", loopBody);
 
-    for (auto U : dummyFunction->users()) {
-        if (CallInst* CI = dyn_cast<CallInst>(U)) {
-
-            if(!(CI->getParent()->getParent() == vecFoo)) continue;
-
-            CallInst *kernelCall = CallInst::Create(kernel, args, "", CI);
-            InlineFunction(kernelCall, IFI);
-            CI->eraseFromParent();
-        }
-    }
 
     BranchInst::Create(loopEnd, loopBody);
 
@@ -340,6 +333,17 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     BranchInst::Create(loopHeader, loopEnd);
 
     InlineFunction(vecFunction, IFI);
+
+    for (auto U : dummyFunction->users()) {
+        if (CallInst* CI = dyn_cast<CallInst>(U)) {
+
+            if(!(CI->getParent()->getParent() == vecFoo)) continue;
+
+            CallInst *kernelCall = CallInst::Create(kernel, args, "", CI);
+            InlineFunction(kernelCall, IFI);
+            CI->eraseFromParent();
+        }
+    }
 
     return true;
 }

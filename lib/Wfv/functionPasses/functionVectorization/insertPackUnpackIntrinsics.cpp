@@ -32,10 +32,23 @@ redirectOperand(Value*       operand,
     assert (operand && inst && unpackFn);
     assert (isa<Argument>(operand) || isa<Instruction>(operand));
 
-    CallInst* unpackCall = CallInst::Create(unpackFn,
-                                            ArrayRef<Value*>(operand),
+    Instruction *insertBefore = inst;
+
+    // This is needed because we cant place unpack calls before phi nodes.
+    // This would destroy the SSA form
+    if(PHINode *phi = dyn_cast<PHINode>(inst)) {
+        for (auto &use : phi->operands()) {
+            if (use.get() == operand) {
+                BasicBlock *BB = phi->getIncomingBlock(use);
+                insertBefore = BB->getTerminator();
+            }
+        }
+    }
+
+    CallInst *unpackCall = CallInst::Create(unpackFn,
+                                            ArrayRef<Value *>(operand),
                                             "unpack",
-                                            inst);
+                                            insertBefore);
 
     unpackCall->setTailCall();
     unpackCall->setDoesNotAccessMemory();

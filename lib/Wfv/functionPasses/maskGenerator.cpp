@@ -108,6 +108,7 @@ MaskGenerator::runOnFunction(Function& F)
 
     //DEBUG_WFV( mMaskAnalysis->print(outs(), nullptr); );
     if(mInfo->mVerbose) {
+        outs() << "after mask analysis \n";
         F.print(outs());
     }
 

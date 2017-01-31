@@ -719,9 +719,10 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Funct
 
     //now inline all calls and remove the no longer required functions
     for(auto call : _inlineCalls) {
+        Function *calledFunction = call->getCalledFunction();
         InlineFunctionInfo IFI;
         InlineFunction(call, IFI);
-        call->getCalledFunction()->eraseFromParent();
+        calledFunction->eraseFromParent();
     }
 }
 
