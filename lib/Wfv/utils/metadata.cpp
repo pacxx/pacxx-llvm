@@ -1949,9 +1949,12 @@ removeAllMetadata(Function* f)
 }
 
 Metadata *mapValueToMD(Value *value) {
-    Metadata *MD = MDString::get(value->getContext(), std::to_string(id));
-    MDValueMap[MD] = value;
-    id++;
+    Metadata *MD = nullptr;
+    if(value) {
+        MD = MDString::get(value->getContext(), std::to_string(id));
+        MDValueMap[MD] = value;
+        id++;
+    }
     return MD;
 }
 
