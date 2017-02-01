@@ -13,26 +13,34 @@
 //===----------------------------------------------------------------------===//
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <system_error>
 #include <utility>
 
-#include "xray-extract.h"
 #include "xray-graph.h"
 #include "xray-registry.h"
-#include "llvm/Support/Errc.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/XRay/InstrumentationMap.h"
 #include "llvm/XRay/Trace.h"
 #include "llvm/XRay/YAMLXRayRecord.h"
 
 using namespace llvm;
-using namespace xray;
+using namespace llvm::xray;
 
 // Setup llvm-xray graph subcommand and its options.
 static cl::SubCommand Graph("graph", "Generate function-call graph");
 static cl::opt<std::string> GraphInput(cl::Positional,
                                        cl::desc("<xray log file>"),
                                        cl::Required, cl::sub(Graph));
+
+static cl::opt<bool>
+    GraphKeepGoing("keep-going", cl::desc("Keep going on errors encountered"),
+                   cl::sub(Graph), cl::init(false));
+static cl::alias GraphKeepGoing2("k", cl::aliasopt(GraphKeepGoing),
+                                 cl::desc("Alias for -keep-going"),
+                                 cl::sub(Graph));
 
 static cl::opt<std::string>
     GraphOutput("output", cl::value_desc("Output file"), cl::init("-"),
@@ -48,17 +56,6 @@ static cl::alias GraphInstrMap2("m", cl::aliasopt(GraphInstrMap),
                                 cl::desc("alias for -instr_map"),
                                 cl::sub(Graph));
 
-static cl::opt<InstrumentationMapExtractor::InputFormats> InstrMapFormat(
-    "instr-map-format", cl::desc("format of instrumentation map"),
-    cl::values(clEnumValN(InstrumentationMapExtractor::InputFormats::ELF, "elf",
-                          "instrumentation map in an ELF header"),
-               clEnumValN(InstrumentationMapExtractor::InputFormats::YAML,
-                          "yaml", "instrumentation map in YAML")),
-    cl::sub(Graph), cl::init(InstrumentationMapExtractor::InputFormats::ELF));
-static cl::alias InstrMapFormat2("t", cl::aliasopt(InstrMapFormat),
-                                 cl::desc("Alias for -instr-map-format"),
-                                 cl::sub(Graph));
-
 static cl::opt<bool> GraphDeduceSiblingCalls(
     "deduce-sibling-calls",
     cl::desc("Deduce sibling calls when unrolling function call stacks"),
@@ -72,8 +69,10 @@ static cl::opt<GraphRenderer::StatType>
     GraphEdgeLabel("edge-label",
                    cl::desc("Output graphs with edges labeled with this field"),
                    cl::value_desc("field"), cl::sub(Graph),
-                   cl::init(GraphRenderer::StatType::COUNT),
-                   cl::values(clEnumValN(GraphRenderer::StatType::COUNT,
+                   cl::init(GraphRenderer::StatType::NONE),
+                   cl::values(clEnumValN(GraphRenderer::StatType::NONE, "none",
+                                         "Do not label Edges"),
+                              clEnumValN(GraphRenderer::StatType::COUNT,
                                          "count", "function call counts"),
                               clEnumValN(GraphRenderer::StatType::MIN, "min",
                                          "minimum function durations"),
@@ -91,36 +90,120 @@ static cl::alias GraphEdgeLabel2("e", cl::aliasopt(GraphEdgeLabel),
                                  cl::desc("Alias for -edge-label"),
                                  cl::sub(Graph));
 
-namespace {
+static cl::opt<GraphRenderer::StatType> GraphVertexLabel(
+    "vertex-label",
+    cl::desc("Output graphs with vertices labeled with this field"),
+    cl::value_desc("field"), cl::sub(Graph),
+    cl::init(GraphRenderer::StatType::NONE),
+    cl::values(clEnumValN(GraphRenderer::StatType::NONE, "none",
+                          "Do not label Edges"),
+               clEnumValN(GraphRenderer::StatType::COUNT, "count",
+                          "function call counts"),
+               clEnumValN(GraphRenderer::StatType::MIN, "min",
+                          "minimum function durations"),
+               clEnumValN(GraphRenderer::StatType::MED, "med",
+                          "median function durations"),
+               clEnumValN(GraphRenderer::StatType::PCT90, "90p",
+                          "90th percentile durations"),
+               clEnumValN(GraphRenderer::StatType::PCT99, "99p",
+                          "99th percentile durations"),
+               clEnumValN(GraphRenderer::StatType::MAX, "max",
+                          "maximum function durations"),
+               clEnumValN(GraphRenderer::StatType::SUM, "sum",
+                          "sum of call durations")));
+static cl::alias GraphVertexLabel2("v", cl::aliasopt(GraphVertexLabel),
+                                   cl::desc("Alias for -edge-label"),
+                                   cl::sub(Graph));
+
+static cl::opt<GraphRenderer::StatType> GraphEdgeColorType(
+    "color-edges",
+    cl::desc("Output graphs with edge colors determined by this field"),
+    cl::value_desc("field"), cl::sub(Graph),
+    cl::init(GraphRenderer::StatType::NONE),
+    cl::values(clEnumValN(GraphRenderer::StatType::NONE, "none",
+                          "Do not label Edges"),
+               clEnumValN(GraphRenderer::StatType::COUNT, "count",
+                          "function call counts"),
+               clEnumValN(GraphRenderer::StatType::MIN, "min",
+                          "minimum function durations"),
+               clEnumValN(GraphRenderer::StatType::MED, "med",
+                          "median function durations"),
+               clEnumValN(GraphRenderer::StatType::PCT90, "90p",
+                          "90th percentile durations"),
+               clEnumValN(GraphRenderer::StatType::PCT99, "99p",
+                          "99th percentile durations"),
+               clEnumValN(GraphRenderer::StatType::MAX, "max",
+                          "maximum function durations"),
+               clEnumValN(GraphRenderer::StatType::SUM, "sum",
+                          "sum of call durations")));
+static cl::alias GraphEdgeColorType2("c", cl::aliasopt(GraphEdgeColorType),
+                                     cl::desc("Alias for -color-edges"),
+                                     cl::sub(Graph));
+
+static cl::opt<GraphRenderer::StatType> GraphVertexColorType(
+    "color-vertices",
+    cl::desc("Output graphs with vertex colors determined by this field"),
+    cl::value_desc("field"), cl::sub(Graph),
+    cl::init(GraphRenderer::StatType::NONE),
+    cl::values(clEnumValN(GraphRenderer::StatType::NONE, "none",
+                          "Do not label Edges"),
+               clEnumValN(GraphRenderer::StatType::COUNT, "count",
+                          "function call counts"),
+               clEnumValN(GraphRenderer::StatType::MIN, "min",
+                          "minimum function durations"),
+               clEnumValN(GraphRenderer::StatType::MED, "med",
+                          "median function durations"),
+               clEnumValN(GraphRenderer::StatType::PCT90, "90p",
+                          "90th percentile durations"),
+               clEnumValN(GraphRenderer::StatType::PCT99, "99p",
+                          "99th percentile durations"),
+               clEnumValN(GraphRenderer::StatType::MAX, "max",
+                          "maximum function durations"),
+               clEnumValN(GraphRenderer::StatType::SUM, "sum",
+                          "sum of call durations")));
+static cl::alias GraphVertexColorType2("b", cl::aliasopt(GraphVertexColorType),
+                                       cl::desc("Alias for -edge-label"),
+                                       cl::sub(Graph));
+
 template <class T> T diff(T L, T R) { return std::max(L, R) - std::min(L, R); }
 
-void updateStat(GraphRenderer::TimeStat &S, int64_t lat) {
+// Updates the statistics for a GraphRenderer::TimeStat
+static void updateStat(GraphRenderer::TimeStat &S, int64_t L) {
   S.Count++;
-  if (S.Min > lat || S.Min == 0)
-    S.Min = lat;
-  if (S.Max < lat)
-    S.Max = lat;
-  S.Sum += lat;
-}
+  if (S.Min > L || S.Min == 0)
+    S.Min = L;
+  if (S.Max < L)
+    S.Max = L;
+  S.Sum += L;
 }
 
-// Evaluates an XRay record and performs accounting on it, creating and
-// decorating a function call graph as it does so. It does this by maintaining
-// a call stack on a per-thread basis and adding edges and verticies to the
-// graph as they are seen for the first time.
+// Evaluates an XRay record and performs accounting on it.
 //
-// There is an immaginary root for functions at the top of their stack with
+// If the record is an ENTER record it pushes the FuncID and TSC onto a
+// structure representing the call stack for that function.
+// If the record is an EXIT record it checks computes computes the ammount of
+// time the function took to complete and then stores that information in an
+// edge of the graph. If there is no matching ENTER record the function tries
+// to recover by assuming that there were EXIT records which were missed, for
+// example caused by tail call elimination and if the option is enabled then
+// then tries to recover from this.
+//
+// This funciton will also error if the records are out of order, as the trace
+// is expected to be sorted.
+//
+// The graph generated has an immaginary root for functions called by no-one at
 // FuncId 0.
 //
-// FIXME: make more robust to errors and
-// Decorate Graph More Heavily.
 // FIXME: Refactor this and account subcommand to reduce code duplication.
-bool GraphRenderer::accountRecord(const XRayRecord &Record) {
+Error GraphRenderer::accountRecord(const XRayRecord &Record) {
+  using std::make_error_code;
+  using std::errc;
   if (CurrentMaxTSC == 0)
     CurrentMaxTSC = Record.TSC;
 
   if (Record.TSC < CurrentMaxTSC)
-    return false;
+    return make_error<StringError>("Records not in order",
+                                   make_error_code(errc::invalid_argument));
 
   auto &ThreadStack = PerThreadFunctionStack[Record.TId];
   switch (Record.Type) {
@@ -136,12 +219,16 @@ bool GraphRenderer::accountRecord(const XRayRecord &Record) {
     // duplication
     if (ThreadStack.size() == 0 || ThreadStack.back().FuncId != Record.FuncId) {
       if (!DeduceSiblingCalls)
-        return false;
+        return make_error<StringError>("No matching ENTRY record",
+                                       make_error_code(errc::invalid_argument));
       auto Parent = std::find_if(
           ThreadStack.rbegin(), ThreadStack.rend(),
           [&](const FunctionAttr &A) { return A.FuncId == Record.FuncId; });
       if (Parent == ThreadStack.rend())
-        return false; // There is no matching Function for this exit.
+        return make_error<StringError>(
+            "No matching Entry record in stack",
+            make_error_code(errc::invalid_argument)); // There is no matching
+                                                      // Function for this exit.
       while (ThreadStack.back().FuncId != Record.FuncId) {
         uint64_t D = diff(ThreadStack.back().TSC, Record.TSC);
         int32_t TopFuncId = ThreadStack.back().FuncId;
@@ -164,7 +251,7 @@ bool GraphRenderer::accountRecord(const XRayRecord &Record) {
   }
   }
 
-  return true;
+  return Error::success();
 }
 
 template <typename U>
@@ -181,11 +268,23 @@ void GraphRenderer::getStats(U begin, U end, GraphRenderer::TimeStat &S) {
   S.Pct99 = *(begin + Pct99Off);
 }
 
+void GraphRenderer::updateMaxStats(const GraphRenderer::TimeStat &S,
+                                   GraphRenderer::TimeStat &M) {
+  M.Count = std::max(M.Count, S.Count);
+  M.Min = std::max(M.Min, S.Min);
+  M.Median = std::max(M.Median, S.Median);
+  M.Pct90 = std::max(M.Pct90, S.Pct90);
+  M.Pct99 = std::max(M.Pct99, S.Pct99);
+  M.Max = std::max(M.Max, S.Max);
+  M.Sum = std::max(M.Sum, S.Sum);
+}
+
 void GraphRenderer::calculateEdgeStatistics() {
   for (auto &V : Graph) {
     for (auto &E : V.second) {
       auto &A = E.second;
       getStats(A.Timings.begin(), A.Timings.end(), A.S);
+      updateMaxStats(A.S, GraphEdgeMax);
     }
   }
 }
@@ -211,60 +310,162 @@ void GraphRenderer::calculateVertexStatistics() {
                          P->Timings.end());
     }
     getStats(TempTimings.begin(), TempTimings.end(), VertexAttrs[V.first].S);
+    updateMaxStats(VertexAttrs[V.first].S, GraphVertexMax);
     TempTimings.clear();
   }
 }
 
-void GraphRenderer::normaliseStatistics(double CycleFrequency) {
+// A Helper function for normalizeStatistics which normalises a single
+// TimeStat element.
+static void normalizeTimeStat(GraphRenderer::TimeStat &S,
+                              double CycleFrequency) {
+  S.Min /= CycleFrequency;
+  S.Median /= CycleFrequency;
+  S.Max /= CycleFrequency;
+  S.Sum /= CycleFrequency;
+  S.Pct90 /= CycleFrequency;
+  S.Pct99 /= CycleFrequency;
+}
+
+// Normalises the statistics in the graph for a given TSC frequency.
+void GraphRenderer::normalizeStatistics(double CycleFrequency) {
   for (auto &V : Graph) {
     for (auto &E : V.second) {
       auto &S = E.second.S;
-      S.Min /= CycleFrequency;
-      S.Median /= CycleFrequency;
-      S.Max /= CycleFrequency;
-      S.Sum /= CycleFrequency;
-      S.Pct90 /= CycleFrequency;
-      S.Pct99 /= CycleFrequency;
+      normalizeTimeStat(S, CycleFrequency);
     }
   }
   for (auto &V : VertexAttrs) {
     auto &S = V.second.S;
-    S.Min /= CycleFrequency;
-    S.Median /= CycleFrequency;
-    S.Max /= CycleFrequency;
-    S.Sum /= CycleFrequency;
-    S.Pct90 /= CycleFrequency;
-    S.Pct99 /= CycleFrequency;
+    normalizeTimeStat(S, CycleFrequency);
   }
+
+  normalizeTimeStat(GraphEdgeMax, CycleFrequency);
+  normalizeTimeStat(GraphVertexMax, CycleFrequency);
 }
 
-namespace {
-void outputEdgeInfo(const GraphRenderer::TimeStat &S, GraphRenderer::StatType T,
-                    raw_ostream &OS) {
+// Returns a string containing the value of statistic field T
+std::string
+GraphRenderer::TimeStat::getAsString(GraphRenderer::StatType T) const {
+  std::string St;
+  raw_string_ostream S{St};
   switch (T) {
   case GraphRenderer::StatType::COUNT:
-    OS << S.Count;
+    S << Count;
     break;
   case GraphRenderer::StatType::MIN:
-    OS << S.Min;
+    S << Min;
     break;
   case GraphRenderer::StatType::MED:
-    OS << S.Median;
+    S << Median;
     break;
   case GraphRenderer::StatType::PCT90:
-    OS << S.Pct90;
+    S << Pct90;
     break;
   case GraphRenderer::StatType::PCT99:
-    OS << S.Pct99;
+    S << Pct99;
     break;
   case GraphRenderer::StatType::MAX:
-    OS << S.Max;
+    S << Max;
     break;
   case GraphRenderer::StatType::SUM:
-    OS << S.Sum;
+    S << Sum;
+    break;
+  case GraphRenderer::StatType::NONE:
     break;
   }
+  return S.str();
 }
+
+// Evaluates a polynomial given the coefficints provided in an ArrayRef
+// evaluating:
+//
+//    p(x) = a[n-0]*x^0 + a[n-1]*x^1 + ... a[n-n]*x^n
+//
+// at x_0 using Horner's Method for both performance and stability reasons.
+static double polyEval(ArrayRef<double> a, double x_0) {
+  double B = 0;
+  for (const auto &c : a) {
+    B = c + B * x_0;
+  }
+  return B;
+}
+
+// Takes a double precision number, clips it between 0 and 1 and then converts
+// that to an integer between 0x00 and 0xFF with proxpper rounding.
+static uint8_t uintIntervalTo8bitChar(double B) {
+  double n = std::max(std::min(B, 1.0), 0.0);
+  return static_cast<uint8_t>(255 * n + 0.5);
+}
+
+// Gets a color in a gradient given a number in the interval [0,1], it does this
+// by evaluating a polynomial which maps [0, 1] -> [0, 1] for each of the R G
+// and B values in the color. It then converts this [0,1] colors to a 24 bit
+// color.
+//
+// In order to calculate these polynomials,
+//   1. Convert the OrRed9 color scheme from http://colorbrewer2.org/ from sRGB
+//      to LAB color space.
+//   2. Interpolate between the descrete colors in LAB space using a cubic
+//      spline interpolation.
+//   3. Sample this interpolation at 100 points and convert to sRGB.
+//   4. Calculate a polynomial fit for these 100 points for each of R G and B.
+//      We used a polynomial of degree 9 arbitrarily based on a fuzzy goodness
+//      of fit metric (using human judgement);
+//   5. Extract these polynomial coefficients from matlab as a set of constants.
+static std::string getColor(double point) {
+  assert(point >= 0.0 && point <= 1);
+  const static double RedPoly[] = {-38.4295,  239.239, -600.108, 790.544,
+                                   -591.26,   251.304, -58.0983, 6.62999,
+                                   -0.325899, 1.00173};
+  const static double GreenPoly[] = {-603.634,   2338.15, -3606.74, 2786.16,
+                                     -1085.19,   165.15,  11.2584,  -6.11338,
+                                     -0.0091078, 0.965469};
+  const static double BluePoly[] = {-325.686, 947.415,  -699.079, -513.75,
+                                    1127.78,  -732.617, 228.092,  -33.8202,
+                                    0.732108, 0.913916};
+
+  uint8_t r = uintIntervalTo8bitChar(polyEval(RedPoly, point));
+  uint8_t g = uintIntervalTo8bitChar(polyEval(GreenPoly, point));
+  uint8_t b = uintIntervalTo8bitChar(polyEval(BluePoly, point));
+
+  return llvm::formatv("#{0:X-2}{1:X-2}{2:x-2}", r, g, b);
+}
+
+// Returns the quotient between the property T of this and another TimeStat as
+// a double
+double GraphRenderer::TimeStat::compare(StatType T, const TimeStat &O) const {
+  double retval = 0;
+  switch (T) {
+  case GraphRenderer::StatType::COUNT:
+    retval = static_cast<double>(Count) / static_cast<double>(O.Count);
+    break;
+  case GraphRenderer::StatType::MIN:
+    retval = Min / O.Min;
+    break;
+  case GraphRenderer::StatType::MED:
+    retval = Median / O.Median;
+    break;
+  case GraphRenderer::StatType::PCT90:
+    retval = Pct90 / O.Pct90;
+    break;
+  case GraphRenderer::StatType::PCT99:
+    retval = Pct99 / O.Pct99;
+    break;
+  case GraphRenderer::StatType::MAX:
+    retval = Max / O.Max;
+    break;
+  case GraphRenderer::StatType::SUM:
+    retval = Sum / O.Sum;
+    break;
+  case GraphRenderer::StatType::NONE:
+    retval = 0.0;
+    break;
+  }
+  return std::sqrt(
+      retval); // the square root here provides more dynamic contrast for
+               // low runtime edges, giving better separation and
+               // coloring lower down the call stack.
 }
 
 // Outputs a DOT format version of the Graph embedded in the GraphRenderer
@@ -274,29 +475,41 @@ void outputEdgeInfo(const GraphRenderer::TimeStat &S, GraphRenderer::StatType T,
 //
 // FIXME: output more information, better presented.
 void GraphRenderer::exportGraphAsDOT(raw_ostream &OS, const XRayFileHeader &H,
-                                     StatType T) {
+                                     StatType ET, StatType EC, StatType VT,
+                                     StatType VC) {
   calculateEdgeStatistics();
   calculateVertexStatistics();
   if (H.CycleFrequency)
-    normaliseStatistics(H.CycleFrequency);
+    normalizeStatistics(H.CycleFrequency);
 
   OS << "digraph xray {\n";
 
+  if (VT != StatType::NONE)
+    OS << "node [shape=record];\n";
+
   for (const auto &V : Graph)
     for (const auto &E : V.second) {
+      const auto &S = E.second.S;
       OS << "F" << V.first << " -> "
-         << "F" << E.first << " [label=\"";
-      outputEdgeInfo(E.second.S, T, OS);
-      OS << "\"];\n";
+         << "F" << E.first << " [label=\"" << S.getAsString(ET) << "\"";
+      if (EC != StatType::NONE)
+        OS << " color=\"" << getColor(S.compare(EC, GraphEdgeMax)) << "\"";
+      OS << "];\n";
     }
 
-  for (const auto &V : VertexAttrs)
-    OS << "F" << V.first << " [label=\""
-       << (V.second.SymbolName.size() > 40
-               ? V.second.SymbolName.substr(0, 40) + "..."
-               : V.second.SymbolName)
-       << "\"];\n";
-
+  for (const auto &V : VertexAttrs) {
+    const auto &VA = V.second;
+    OS << "F" << V.first << " [label=\"" << (VT != StatType::NONE ? "{" : "")
+       << (VA.SymbolName.size() > 40 ? VA.SymbolName.substr(0, 40) + "..."
+                                     : VA.SymbolName);
+    if (VT != StatType::NONE)
+      OS << "|" << VA.S.getAsString(VT) << "}\"";
+    else
+      OS << "\"";
+    if (VC != StatType::NONE)
+      OS << " color=\"" << getColor(VA.S.compare(VC, GraphVertexMax)) << "\"";
+    OS << "];\n";
+  }
   OS << "}\n";
 }
 
@@ -309,58 +522,67 @@ void GraphRenderer::exportGraphAsDOT(raw_ostream &OS, const XRayFileHeader &H,
 // FIXME: include additional filtering and annalysis passes to provide more
 // specific useful information.
 static CommandRegistration Unused(&Graph, []() -> Error {
-  int Fd;
-  auto EC = sys::fs::openFileForRead(GraphInput, Fd);
-  if (EC)
-    return make_error<StringError>(
-        Twine("Cannot open file '") + GraphInput + "'", EC);
+  InstrumentationMap Map;
+  if (!GraphInstrMap.empty()) {
+    auto InstrumentationMapOrError = loadInstrumentationMap(GraphInstrMap);
+    if (!InstrumentationMapOrError)
+      return joinErrors(
+          make_error<StringError>(
+              Twine("Cannot open instrumentation map '") + GraphInstrMap + "'",
+              std::make_error_code(std::errc::invalid_argument)),
+          InstrumentationMapOrError.takeError());
+    Map = std::move(*InstrumentationMapOrError);
+  }
 
-  Error Err = Error::success();
-  xray::InstrumentationMapExtractor Extractor(GraphInstrMap, InstrMapFormat,
-                                              Err);
-  handleAllErrors(std::move(Err),
-                  [&](const ErrorInfoBase &E) { E.log(errs()); });
-
-  const auto &FunctionAddresses = Extractor.getFunctionAddresses();
-
+  const auto &FunctionAddresses = Map.getFunctionAddresses();
   symbolize::LLVMSymbolizer::Options Opts(
       symbolize::FunctionNameKind::LinkageName, true, true, false, "");
-
   symbolize::LLVMSymbolizer Symbolizer(Opts);
-
   llvm::xray::FuncIdConversionHelper FuncIdHelper(GraphInstrMap, Symbolizer,
                                                   FunctionAddresses);
-
   xray::GraphRenderer GR(FuncIdHelper, GraphDeduceSiblingCalls);
-
+  std::error_code EC;
   raw_fd_ostream OS(GraphOutput, EC, sys::fs::OpenFlags::F_Text);
-
   if (EC)
     return make_error<StringError>(
         Twine("Cannot open file '") + GraphOutput + "' for writing.", EC);
 
   auto TraceOrErr = loadTraceFile(GraphInput, true);
-
-  if (!TraceOrErr) {
+  if (!TraceOrErr)
     return joinErrors(
         make_error<StringError>(Twine("Failed loading input file '") +
                                     GraphInput + "'",
                                 make_error_code(llvm::errc::invalid_argument)),
-        std::move(Err));
-  }
+        TraceOrErr.takeError());
 
   auto &Trace = *TraceOrErr;
   const auto &Header = Trace.getFileHeader();
+
+  // Here we generate the call graph from entries we find in the trace.
   for (const auto &Record : Trace) {
-    // Generate graph, FIXME: better error recovery.
-    if (!GR.accountRecord(Record)) {
-      return make_error<StringError>(
-          Twine("Failed accounting function calls in file '") + GraphInput +
-              "'.",
-          make_error_code(llvm::errc::invalid_argument));
+    auto E = GR.accountRecord(Record);
+    if (!E)
+      continue;
+
+    for (const auto &ThreadStack : GR.getPerThreadFunctionStack()) {
+      errs() << "Thread ID: " << ThreadStack.first << "\n";
+      auto Level = ThreadStack.second.size();
+      for (const auto &Entry : llvm::reverse(ThreadStack.second))
+        errs() << "#" << Level-- << "\t"
+               << FuncIdHelper.SymbolOrNumber(Entry.FuncId) << '\n';
     }
+
+    if (!GraphKeepGoing)
+      return joinErrors(make_error<StringError>(
+                            "Error encountered generating the call graph.",
+                            std::make_error_code(std::errc::invalid_argument)),
+                        std::move(E));
+
+    handleAllErrors(std::move(E),
+                    [&](const ErrorInfoBase &E) { E.log(errs()); });
   }
 
-  GR.exportGraphAsDOT(OS, Header, GraphEdgeLabel);
+  GR.exportGraphAsDOT(OS, Header, GraphEdgeLabel, GraphEdgeColorType,
+                      GraphVertexLabel, GraphVertexColorType);
   return Error::success();
 });

@@ -199,11 +199,14 @@ const Loop* llvm::addClonedBlockToLoopInfo(BasicBlock *OriginalBB,
     assert(OriginalBB == OldLoop->getHeader() &&
            "Header should be first in RPO");
 
+    NewLoop = new Loop();
     Loop *NewLoopParent = NewLoops.lookup(OldLoop->getParentLoop());
-    assert(NewLoopParent &&
-           "Expected parent loop before sub-loop in RPO");
-    NewLoop = new Loop;
-    NewLoopParent->addChildLoop(NewLoop);
+
+    if (NewLoopParent)
+      NewLoopParent->addChildLoop(NewLoop);
+    else
+      LI->addTopLevelLoop(NewLoop);
+
     NewLoop->addBasicBlockToLoop(ClonedBB, *LI);
     return OldLoop;
   } else {
@@ -303,8 +306,10 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
     Count = TripCount;
 
   // Don't enter the unroll code if there is nothing to do.
-  if (TripCount == 0 && Count < 2 && PeelCount == 0)
+  if (TripCount == 0 && Count < 2 && PeelCount == 0) {
+    DEBUG(dbgs() << "Won't unroll; almost nothing to do\n");
     return false;
+  }
 
   assert(Count > 0);
   assert(TripMultiple > 0);
@@ -359,8 +364,12 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
                                   PreserveLCSSA)) {
     if (Force)
       RuntimeTripCount = false;
-    else
+    else {
+      DEBUG(
+          dbgs() << "Wont unroll; prolog and epilog code could not be inserted "
+                    "when assuming runtime trip count\n");
       return false;
+    }
   }
 
   // Notify ScalarEvolution that the loop will be substantially changed,
@@ -463,19 +472,16 @@ bool llvm::UnrollLoop(Loop *L, unsigned Count, unsigned TripCount, bool Force,
       BasicBlock *New = CloneBasicBlock(*BB, VMap, "." + Twine(It));
       Header->getParent()->getBasicBlockList().push_back(New);
 
+      assert(*BB != Header || LI->getLoopFor(*BB) == L &&
+             "Header should not be in a sub-loop");
       // Tell LI about New.
-      if (*BB == Header) {
-        assert(LI->getLoopFor(*BB) == L && "Header should not be in a sub-loop");
-        L->addBasicBlockToLoop(New, *LI);
-      } else {
-        const Loop *OldLoop = addClonedBlockToLoopInfo(*BB, New, LI, NewLoops);
-        if (OldLoop) {
-          LoopsToSimplify.insert(NewLoops[OldLoop]);
+      const Loop *OldLoop = addClonedBlockToLoopInfo(*BB, New, LI, NewLoops);
+      if (OldLoop) {
+        LoopsToSimplify.insert(NewLoops[OldLoop]);
 
-          // Forget the old loop, since its inputs may have changed.
-          if (SE)
-            SE->forgetLoop(OldLoop);
-        }
+        // Forget the old loop, since its inputs may have changed.
+        if (SE)
+          SE->forgetLoop(OldLoop);
       }
 
       if (*BB == Header)

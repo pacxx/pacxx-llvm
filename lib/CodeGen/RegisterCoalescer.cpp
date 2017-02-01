@@ -1004,24 +1004,41 @@ bool RegisterCoalescer::removePartialRedundancy(const CoalescerPair &CP,
                                   .addReg(IntA.reg);
     SlotIndex NewCopyIdx =
         LIS->InsertMachineInstrInMaps(*NewCopyMI).getRegSlot();
-    VNInfo *VNI = IntB.getNextValue(NewCopyIdx, LIS->getVNInfoAllocator());
-    IntB.createDeadDef(VNI);
+    IntB.createDeadDef(NewCopyIdx, LIS->getVNInfoAllocator());
+    for (LiveInterval::SubRange &SR : IntB.subranges())
+      SR.createDeadDef(NewCopyIdx, LIS->getVNInfoAllocator());
   } else {
     DEBUG(dbgs() << "\tremovePartialRedundancy: Remove the copy from BB#"
                  << MBB.getNumber() << '\t' << CopyMI);
   }
 
   // Remove CopyMI.
-  SmallVector<SlotIndex, 8> EndPoints;
-  VNInfo *BValNo = IntB.Query(CopyIdx.getRegSlot()).valueOutOrDead();
-  LIS->pruneValue(IntB, CopyIdx.getRegSlot(), &EndPoints);
-  BValNo->markUnused();
+  // Note: This is fine to remove the copy before updating the live-ranges.
+  // While updating the live-ranges, we only look at slot indices and
+  // never go back to the instruction.
   LIS->RemoveMachineInstrFromMaps(CopyMI);
   CopyMI.eraseFromParent();
 
+  // Update the liveness.
+  SmallVector<SlotIndex, 8> EndPoints;
+  VNInfo *BValNo = IntB.Query(CopyIdx).valueOutOrDead();
+  LIS->pruneValue(*static_cast<LiveRange *>(&IntB), CopyIdx.getRegSlot(),
+                  &EndPoints);
+  BValNo->markUnused();
   // Extend IntB to the EndPoints of its original live interval.
   LIS->extendToIndices(IntB, EndPoints);
 
+  // Now, do the same for its subranges.
+  for (LiveInterval::SubRange &SR : IntB.subranges()) {
+    EndPoints.clear();
+    VNInfo *BValNo = SR.Query(CopyIdx).valueOutOrDead();
+    assert(BValNo && "All sublanes should be live");
+    LIS->pruneValue(SR, CopyIdx.getRegSlot(), &EndPoints);
+    BValNo->markUnused();
+    LIS->extendToIndices(SR, EndPoints);
+  }
+
+  // Finally, update the live-range of IntA.
   shrinkToUses(&IntA);
   return true;
 }

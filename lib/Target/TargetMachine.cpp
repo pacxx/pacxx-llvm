@@ -84,6 +84,7 @@ void TargetMachine::resetTargetOptions(const Function &F) const {
   RESET_OPTION(UnsafeFPMath, "unsafe-fp-math");
   RESET_OPTION(NoInfsFPMath, "no-infs-fp-math");
   RESET_OPTION(NoNaNsFPMath, "no-nans-fp-math");
+  RESET_OPTION(NoSignedZerosFPMath, "no-signed-zeros-fp-math");
   RESET_OPTION(NoTrappingFPMath, "no-trapping-math");
 
   StringRef Denormal =
@@ -162,8 +163,11 @@ bool TargetMachine::shouldAssumeDSOLocal(const Module &M,
     bool IsTLS = GV && GV->isThreadLocal();
     bool IsAccessViaCopyRelocs =
         Options.MCOptions.MCPIECopyRelocations && GV && isa<GlobalVariable>(GV);
-    // Check if we can use copy relocations.
-    if (!IsTLS && (RM == Reloc::Static || IsAccessViaCopyRelocs))
+    Triple::ArchType Arch = TT.getArch();
+    bool IsPPC =
+        Arch == Triple::ppc || Arch == Triple::ppc64 || Arch == Triple::ppc64le;
+    // Check if we can use copy relocations. PowerPC has no copy relocations.
+    if (!IsTLS && !IsPPC && (RM == Reloc::Static || IsAccessViaCopyRelocs))
       return true;
   }
 

@@ -17,6 +17,7 @@
 
 #include "ARMBaseInstrInfo.h"
 #include "ARMISelLowering.h"
+#include "ARMSubtarget.h"
 
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -37,7 +38,7 @@ static bool isSupportedType(const DataLayout &DL, const ARMTargetLowering &TLI,
     return false;
 
   unsigned VTSize = VT.getSimpleVT().getSizeInBits();
-  return VTSize == 8 || VTSize == 16 || VTSize == 32;
+  return VTSize == 1 || VTSize == 8 || VTSize == 16 || VTSize == 32;
 }
 
 namespace {
@@ -59,11 +60,8 @@ struct FuncReturnHandler : public CallLowering::ValueHandler {
     assert(VA.getValVT().getSizeInBits() <= 32 && "Unsupported value size");
     assert(VA.getLocVT().getSizeInBits() == 32 && "Unsupported location size");
 
-    assert(VA.getLocInfo() != CCValAssign::SExt &&
-           VA.getLocInfo() != CCValAssign::ZExt &&
-           "ABI extensions not supported yet");
-
-    MIRBuilder.buildCopy(PhysReg, ValVReg);
+    unsigned ExtReg = extendRegister(ValVReg, VA);
+    MIRBuilder.buildCopy(PhysReg, ExtReg);
     MIB.addUse(PhysReg, RegState::Implicit);
   }
 
@@ -124,7 +122,7 @@ struct FormalArgHandler : public CallLowering::ValueHandler {
 
   unsigned getStackAddress(uint64_t Size, int64_t Offset,
                            MachinePointerInfo &MPO) override {
-    assert(Size == 4 && "Unsupported size");
+    assert((Size == 1 || Size == 2 || Size == 4) && "Unsupported size");
 
     auto &MFI = MIRBuilder.getMF().getFrameInfo();
 
@@ -140,7 +138,16 @@ struct FormalArgHandler : public CallLowering::ValueHandler {
 
   void assignValueToAddress(unsigned ValVReg, unsigned Addr, uint64_t Size,
                             MachinePointerInfo &MPO, CCValAssign &VA) override {
-    assert(Size == 4 && "Unsupported size");
+    assert((Size == 1 || Size == 2 || Size == 4) && "Unsupported size");
+
+    if (VA.getLocInfo() == CCValAssign::SExt ||
+        VA.getLocInfo() == CCValAssign::ZExt) {
+      // If the argument is zero- or sign-extended by the caller, its size
+      // becomes 4 bytes, so that's what we should load.
+      Size = 4;
+      assert(MRI.getType(ValVReg).isScalar() && "Only scalars supported atm");
+      MRI.setType(ValVReg, LLT::scalar(32));
+    }
 
     auto MMO = MIRBuilder.getMF().getMachineMemOperand(
         MPO, MachineMemOperand::MOLoad, Size, /* Alignment */ 0);
@@ -155,6 +162,7 @@ struct FormalArgHandler : public CallLowering::ValueHandler {
     assert(VA.getValVT().getSizeInBits() <= 32 && "Unsupported value size");
     assert(VA.getLocVT().getSizeInBits() == 32 && "Unsupported location size");
 
+    // The caller should handle all necesary extensions.
     MIRBuilder.getMBB().addLiveIn(PhysReg);
     MIRBuilder.buildCopy(ValVReg, PhysReg);
   }
@@ -174,18 +182,13 @@ bool ARMCallLowering::lowerFormalArguments(MachineIRBuilder &MIRBuilder,
   auto DL = MIRBuilder.getMF().getDataLayout();
   auto &TLI = *getTLI<ARMTargetLowering>();
 
+  if (TLI.getSubtarget()->isThumb())
+    return false;
+
   auto &Args = F.getArgumentList();
-  unsigned ArgIdx = 0;
-  for (auto &Arg : Args) {
-    ArgIdx++;
+  for (auto &Arg : Args)
     if (!isSupportedType(DL, TLI, Arg.getType()))
       return false;
-
-    // FIXME: This check as well as ArgIdx are going away as soon as we support
-    // loading values < 32 bits.
-    if (ArgIdx > 4 && Arg.getType()->getIntegerBitWidth() != 32)
-      return false;
-  }
 
   CCAssignFn *AssignFn =
       TLI.CCAssignFnForCall(F.getCallingConv(), F.isVarArg());

@@ -23,6 +23,7 @@ add_llvm_library(LLVMCodeGen
   ExpandISelPseudos.cpp
   ExpandPostRAPseudos.cpp
   FaultMaps.cpp
+  FEntryInserter.cpp
   FuncletLayout.cpp
   GCMetadata.cpp
   GCMetadataPrinter.cpp
@@ -71,6 +72,7 @@ add_llvm_library(LLVMCodeGen
   MachineLoopInfo.cpp
   MachineModuleInfo.cpp
   MachineModuleInfoImpls.cpp
+  MachineOptimizationRemarkEmitter.cpp
   MachinePassRegistry.cpp
   MachinePipeliner.cpp
   MachinePostDominators.cpp

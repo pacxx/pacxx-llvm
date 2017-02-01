@@ -2050,6 +2050,16 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     if (Cond == ISD::SETO || Cond == ISD::SETUO)
       return DAG.getSetCC(dl, VT, N0, N0, Cond);
 
+    // setcc (fneg x), C -> setcc swap(pred) x, -C
+    if (N0.getOpcode() == ISD::FNEG) {
+      ISD::CondCode SwapCond = ISD::getSetCCSwappedOperands(Cond);
+      if (DCI.isBeforeLegalizeOps() ||
+          isCondCodeLegal(SwapCond, N0.getSimpleValueType())) {
+        SDValue NegN1 = DAG.getNode(ISD::FNEG, dl, N0.getValueType(), N1);
+        return DAG.getSetCC(dl, VT, N0.getOperand(0), NegN1, SwapCond);
+      }
+    }
+
     // If the condition is not legal, see if we can find an equivalent one
     // which is legal.
     if (!isCondCodeLegal(Cond, N0.getSimpleValueType())) {
@@ -2470,10 +2480,7 @@ TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *RI,
     std::make_pair(0u, static_cast<const TargetRegisterClass*>(nullptr));
 
   // Figure out which register class contains this reg.
-  for (TargetRegisterInfo::regclass_iterator RCI = RI->regclass_begin(),
-       E = RI->regclass_end(); RCI != E; ++RCI) {
-    const TargetRegisterClass *RC = *RCI;
-
+  for (const TargetRegisterClass *RC : RI->regclasses()) {
     // If none of the value types for this register class are valid, we
     // can't use it.  For example, 64-bit reg classes on 32-bit targets.
     if (!isLegalRC(RC))

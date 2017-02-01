@@ -1280,7 +1280,7 @@ static bool HoistThenElseCodeToIf(BranchInst *BI,
     if (!isa<CallInst>(I1))
       I1->setDebugLoc(
           DILocation::getMergedLocation(I1->getDebugLoc(), I2->getDebugLoc()));
- 
+
     I2->eraseFromParent();
     Changed = true;
 
@@ -1436,6 +1436,14 @@ static bool canSinkInstructions(
     if (isa<PHINode>(I) || I->isEHPad() || isa<AllocaInst>(I) ||
         I->getType()->isTokenTy())
       return false;
+
+    // Conservatively return false if I is an inline-asm instruction. Sinking
+    // and merging inline-asm instructions can potentially create arguments
+    // that cannot satisfy the inline-asm constraints.
+    if (const auto *C = dyn_cast<CallInst>(I))
+      if (C->isInlineAsm())
+        return false;
+
     // Everything must have only one use too, apart from stores which
     // have no uses.
     if (!isa<StoreInst>(I) && !I->hasOneUse())
@@ -1538,7 +1546,7 @@ static bool sinkLastInstruction(ArrayRef<BasicBlock*> Blocks) {
         }))
       return false;
   }
-  
+
   // We don't need to do any more checking here; canSinkLastInstruction should
   // have done it all for us.
   SmallVector<Value*, 4> NewOperands;
@@ -1645,7 +1653,7 @@ namespace {
     bool isValid() const {
       return !Fail;
     }
-    
+
     void operator -- () {
       if (Fail)
         return;
@@ -1729,7 +1737,7 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
   }
   if (UnconditionalPreds.size() < 2)
     return false;
-  
+
   bool Changed = false;
   // We take a two-step approach to tail sinking. First we scan from the end of
   // each block upwards in lockstep. If the n'th instruction from the end of each
@@ -1759,7 +1767,7 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
     unsigned NumPHIInsts = NumPHIdValues / UnconditionalPreds.size();
     if ((NumPHIdValues % UnconditionalPreds.size()) != 0)
         NumPHIInsts++;
-    
+
     return NumPHIInsts <= 1;
   };
 
@@ -1782,7 +1790,7 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
     }
     if (!Profitable)
       return false;
-    
+
     DEBUG(dbgs() << "SINK: Splitting edge\n");
     // We have a conditional edge and we're going to sink some instructions.
     // Insert a new block postdominating all blocks we're going to sink from.
@@ -1792,7 +1800,7 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
       return false;
     Changed = true;
   }
-  
+
   // Now that we've analyzed all potential sinking candidates, perform the
   // actual sink. We iteratively sink the last non-terminator of the source
   // blocks into their common successor unless doing so would require too
@@ -1818,7 +1826,7 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
       DEBUG(dbgs() << "SINK: stopping here, too many PHIs would be created!\n");
       break;
     }
-    
+
     if (!sinkLastInstruction(UnconditionalPreds))
       return Changed;
     NumSinkCommons++;
@@ -2070,6 +2078,9 @@ static bool SpeculativelyExecuteBB(BranchInst *BI, BasicBlock *ThenBB,
     Value *S = Builder.CreateSelect(
         BrCond, TrueV, FalseV, TrueV->getName() + "." + FalseV->getName(), BI);
     SpeculatedStore->setOperand(0, S);
+    SpeculatedStore->setDebugLoc(
+        DILocation::getMergedLocation(
+          BI->getDebugLoc(), SpeculatedStore->getDebugLoc()));
   }
 
   // Metadata can be dependent on the condition we are hoisting above.

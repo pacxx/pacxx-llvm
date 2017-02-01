@@ -867,9 +867,7 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
 
     // AVX-512 foldable instructions
     { X86::VBROADCASTSSZr,   X86::VBROADCASTSSZm,     TB_NO_REVERSE },
-    { X86::VBROADCASTSSZr_s, X86::VBROADCASTSSZm,     TB_NO_REVERSE },
     { X86::VBROADCASTSDZr,   X86::VBROADCASTSDZm,     TB_NO_REVERSE },
-    { X86::VBROADCASTSDZr_s, X86::VBROADCASTSDZm,     TB_NO_REVERSE },
     { X86::VMOV64toPQIZrr,   X86::VMOVQI2PQIZrm,      0 },
     { X86::VMOVZPQILo2PQIZrr,X86::VMOVQI2PQIZrm,      TB_NO_REVERSE },
     { X86::VMOVDI2SSZrr,     X86::VMOVDI2SSZrm,       0 },
@@ -907,9 +905,7 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
 
     // AVX-512 foldable instructions (256-bit versions)
     { X86::VBROADCASTSSZ256r,    X86::VBROADCASTSSZ256m,    TB_NO_REVERSE },
-    { X86::VBROADCASTSSZ256r_s,  X86::VBROADCASTSSZ256m,    TB_NO_REVERSE },
     { X86::VBROADCASTSDZ256r,    X86::VBROADCASTSDZ256m,    TB_NO_REVERSE },
-    { X86::VBROADCASTSDZ256r_s,  X86::VBROADCASTSDZ256m,    TB_NO_REVERSE },
     { X86::VMOVAPDZ256rr,        X86::VMOVAPDZ256rm,        TB_ALIGN_32 },
     { X86::VMOVAPSZ256rr,        X86::VMOVAPSZ256rm,        TB_ALIGN_32 },
     { X86::VMOVDQA32Z256rr,      X86::VMOVDQA32Z256rm,      TB_ALIGN_32 },
@@ -942,7 +938,6 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
 
     // AVX-512 foldable instructions (128-bit versions)
     { X86::VBROADCASTSSZ128r,    X86::VBROADCASTSSZ128m,    TB_NO_REVERSE },
-    { X86::VBROADCASTSSZ128r_s,  X86::VBROADCASTSSZ128m,    TB_NO_REVERSE },
     { X86::VMOVAPDZ128rr,        X86::VMOVAPDZ128rm,        TB_ALIGN_16 },
     { X86::VMOVAPSZ128rr,        X86::VMOVAPSZ128rm,        TB_ALIGN_16 },
     { X86::VMOVDQA32Z128rr,      X86::VMOVDQA32Z128rm,      TB_ALIGN_16 },
@@ -7049,11 +7044,9 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   // registers, since it is not usable as a write mask.
   // FIXME: A more advanced approach would be to choose the best input mask
   // register based on context.
-  case X86::KSET0B:
   case X86::KSET0W: return Expand2AddrKreg(MIB, get(X86::KXORWrr), X86::K0);
   case X86::KSET0D: return Expand2AddrKreg(MIB, get(X86::KXORDrr), X86::K0);
   case X86::KSET0Q: return Expand2AddrKreg(MIB, get(X86::KXORQrr), X86::K0);
-  case X86::KSET1B:
   case X86::KSET1W: return Expand2AddrKreg(MIB, get(X86::KXNORWrr), X86::K0);
   case X86::KSET1D: return Expand2AddrKreg(MIB, get(X86::KXNORDrr), X86::K0);
   case X86::KSET1Q: return Expand2AddrKreg(MIB, get(X86::KXNORQrr), X86::K0);
@@ -8426,165 +8419,6 @@ bool X86InstrInfo::shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,
   return true;
 }
 
-bool X86InstrInfo::shouldScheduleAdjacent(const MachineInstr &First,
-                                          const MachineInstr &Second) const {
-  // Check if this processor supports macro-fusion. Since this is a minor
-  // heuristic, we haven't specifically reserved a feature. hasAVX is a decent
-  // proxy for SandyBridge+.
-  if (!Subtarget.hasAVX())
-    return false;
-
-  enum {
-    FuseTest,
-    FuseCmp,
-    FuseInc
-  } FuseKind;
-
-  switch (Second.getOpcode()) {
-  default:
-    return false;
-  case X86::JE_1:
-  case X86::JNE_1:
-  case X86::JL_1:
-  case X86::JLE_1:
-  case X86::JG_1:
-  case X86::JGE_1:
-    FuseKind = FuseInc;
-    break;
-  case X86::JB_1:
-  case X86::JBE_1:
-  case X86::JA_1:
-  case X86::JAE_1:
-    FuseKind = FuseCmp;
-    break;
-  case X86::JS_1:
-  case X86::JNS_1:
-  case X86::JP_1:
-  case X86::JNP_1:
-  case X86::JO_1:
-  case X86::JNO_1:
-    FuseKind = FuseTest;
-    break;
-  }
-  switch (First.getOpcode()) {
-  default:
-    return false;
-  case X86::TEST8rr:
-  case X86::TEST16rr:
-  case X86::TEST32rr:
-  case X86::TEST64rr:
-  case X86::TEST8ri:
-  case X86::TEST16ri:
-  case X86::TEST32ri:
-  case X86::TEST32i32:
-  case X86::TEST64i32:
-  case X86::TEST64ri32:
-  case X86::TEST8rm:
-  case X86::TEST16rm:
-  case X86::TEST32rm:
-  case X86::TEST64rm:
-  case X86::TEST8ri_NOREX:
-  case X86::AND16i16:
-  case X86::AND16ri:
-  case X86::AND16ri8:
-  case X86::AND16rm:
-  case X86::AND16rr:
-  case X86::AND32i32:
-  case X86::AND32ri:
-  case X86::AND32ri8:
-  case X86::AND32rm:
-  case X86::AND32rr:
-  case X86::AND64i32:
-  case X86::AND64ri32:
-  case X86::AND64ri8:
-  case X86::AND64rm:
-  case X86::AND64rr:
-  case X86::AND8i8:
-  case X86::AND8ri:
-  case X86::AND8rm:
-  case X86::AND8rr:
-    return true;
-  case X86::CMP16i16:
-  case X86::CMP16ri:
-  case X86::CMP16ri8:
-  case X86::CMP16rm:
-  case X86::CMP16rr:
-  case X86::CMP32i32:
-  case X86::CMP32ri:
-  case X86::CMP32ri8:
-  case X86::CMP32rm:
-  case X86::CMP32rr:
-  case X86::CMP64i32:
-  case X86::CMP64ri32:
-  case X86::CMP64ri8:
-  case X86::CMP64rm:
-  case X86::CMP64rr:
-  case X86::CMP8i8:
-  case X86::CMP8ri:
-  case X86::CMP8rm:
-  case X86::CMP8rr:
-  case X86::ADD16i16:
-  case X86::ADD16ri:
-  case X86::ADD16ri8:
-  case X86::ADD16ri8_DB:
-  case X86::ADD16ri_DB:
-  case X86::ADD16rm:
-  case X86::ADD16rr:
-  case X86::ADD16rr_DB:
-  case X86::ADD32i32:
-  case X86::ADD32ri:
-  case X86::ADD32ri8:
-  case X86::ADD32ri8_DB:
-  case X86::ADD32ri_DB:
-  case X86::ADD32rm:
-  case X86::ADD32rr:
-  case X86::ADD32rr_DB:
-  case X86::ADD64i32:
-  case X86::ADD64ri32:
-  case X86::ADD64ri32_DB:
-  case X86::ADD64ri8:
-  case X86::ADD64ri8_DB:
-  case X86::ADD64rm:
-  case X86::ADD64rr:
-  case X86::ADD64rr_DB:
-  case X86::ADD8i8:
-  case X86::ADD8mi:
-  case X86::ADD8mr:
-  case X86::ADD8ri:
-  case X86::ADD8rm:
-  case X86::ADD8rr:
-  case X86::SUB16i16:
-  case X86::SUB16ri:
-  case X86::SUB16ri8:
-  case X86::SUB16rm:
-  case X86::SUB16rr:
-  case X86::SUB32i32:
-  case X86::SUB32ri:
-  case X86::SUB32ri8:
-  case X86::SUB32rm:
-  case X86::SUB32rr:
-  case X86::SUB64i32:
-  case X86::SUB64ri32:
-  case X86::SUB64ri8:
-  case X86::SUB64rm:
-  case X86::SUB64rr:
-  case X86::SUB8i8:
-  case X86::SUB8ri:
-  case X86::SUB8rm:
-  case X86::SUB8rr:
-    return FuseKind == FuseCmp || FuseKind == FuseInc;
-  case X86::INC16r:
-  case X86::INC32r:
-  case X86::INC64r:
-  case X86::INC8r:
-  case X86::DEC16r:
-  case X86::DEC32r:
-  case X86::DEC64r:
-  case X86::DEC8r:
-    return FuseKind == FuseInc;
-  }
-}
-
 bool X86InstrInfo::
 reverseBranchCondition(SmallVectorImpl<MachineOperand> &Cond) const {
   assert(Cond.size() == 1 && "Invalid X86 branch condition!");
@@ -8635,6 +8469,7 @@ static const uint16_t ReplaceableInstrs[][3] = {
   { X86::MOVUPSmr,   X86::MOVUPDmr,  X86::MOVDQUmr  },
   { X86::MOVUPSrm,   X86::MOVUPDrm,  X86::MOVDQUrm  },
   { X86::MOVLPSmr,   X86::MOVLPDmr,  X86::MOVPQI2QImr },
+  { X86::MOVSDmr,    X86::MOVSDmr,   X86::MOVPQI2QImr },
   { X86::MOVSSmr,    X86::MOVSSmr,   X86::MOVPDI2DImr },
   { X86::MOVSDrm,    X86::MOVSDrm,   X86::MOVQI2PQIrm },
   { X86::MOVSSrm,    X86::MOVSSrm,   X86::MOVDI2PDIrm },
@@ -8654,6 +8489,7 @@ static const uint16_t ReplaceableInstrs[][3] = {
   { X86::VMOVUPSmr,  X86::VMOVUPDmr,  X86::VMOVDQUmr  },
   { X86::VMOVUPSrm,  X86::VMOVUPDrm,  X86::VMOVDQUrm  },
   { X86::VMOVLPSmr,  X86::VMOVLPDmr,  X86::VMOVPQI2QImr },
+  { X86::VMOVSDmr,   X86::VMOVSDmr,   X86::VMOVPQI2QImr },
   { X86::VMOVSSmr,   X86::VMOVSSmr,   X86::VMOVPDI2DImr },
   { X86::VMOVSDrm,   X86::VMOVSDrm,   X86::VMOVQI2PQIrm },
   { X86::VMOVSSrm,   X86::VMOVSSrm,   X86::VMOVDI2PDIrm },
@@ -8676,7 +8512,7 @@ static const uint16_t ReplaceableInstrs[][3] = {
   // AVX512 support
   { X86::VMOVLPSZ128mr,  X86::VMOVLPDZ128mr,  X86::VMOVPQI2QIZmr  },
   { X86::VMOVNTPSZ128mr, X86::VMOVNTPDZ128mr, X86::VMOVNTDQZ128mr },
-  { X86::VMOVNTPSZ128mr, X86::VMOVNTPDZ128mr, X86::VMOVNTDQZ128mr },
+  { X86::VMOVNTPSZ256mr, X86::VMOVNTPDZ256mr, X86::VMOVNTDQZ256mr },
   { X86::VMOVNTPSZmr,    X86::VMOVNTPDZmr,    X86::VMOVNTDQZmr    },
   { X86::VMOVSDZmr,      X86::VMOVSDZmr,      X86::VMOVPQI2QIZmr  },
   { X86::VMOVSSZmr,      X86::VMOVSSZmr,      X86::VMOVPDI2DIZmr  },
@@ -8982,14 +8818,17 @@ X86InstrInfo::getExecutionDomain(const MachineInstr &MI) const {
       validDomains = Subtarget.hasAVX2() ? 0xe : 0x6;
     } else if (lookupAVX512(opcode, domain, ReplaceableInstrsAVX512)) {
       validDomains = 0xe;
-    } else if (lookupAVX512(opcode, domain, ReplaceableInstrsAVX512DQ)) {
-      validDomains = Subtarget.hasDQI() ? 0xe : 0x8;
-    } else if (const uint16_t *table = lookupAVX512(opcode, domain,
+    } else if (Subtarget.hasDQI() && lookupAVX512(opcode, domain,
+                                                  ReplaceableInstrsAVX512DQ)) {
+      validDomains = 0xe;
+    } else if (Subtarget.hasDQI()) {
+      if (const uint16_t *table = lookupAVX512(opcode, domain,
                                              ReplaceableInstrsAVX512DQMasked)) {
-      if (domain == 1 || (domain == 3 && table[3] == opcode))
-        validDomains = Subtarget.hasDQI() ? 0xa : 0x8;
-      else
-        validDomains = Subtarget.hasDQI() ? 0xc : 0x8;
+        if (domain == 1 || (domain == 3 && table[3] == opcode))
+          validDomains = 0xa;
+        else
+          validDomains = 0xc;
+      }
     }
   }
   return std::make_pair(domain, validDomains);

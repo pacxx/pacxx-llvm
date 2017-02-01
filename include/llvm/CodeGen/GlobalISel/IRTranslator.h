@@ -130,7 +130,9 @@ private:
   /// Translate an LLVM store instruction into generic IR.
   bool translateStore(const User &U, MachineIRBuilder &MIRBuilder);
 
-  bool translateMemcpy(const CallInst &CI, MachineIRBuilder &MIRBuilder);
+  /// Translate an LLVM string intrinsic (memcpy, memset, ...).
+  bool translateMemfunc(const CallInst &CI, MachineIRBuilder &MIRBuilder,
+                        unsigned Intrinsic);
 
   void getStackGuard(unsigned DstReg, MachineIRBuilder &MIRBuilder);
 
@@ -189,6 +191,8 @@ private:
   bool translateBr(const User &U, MachineIRBuilder &MIRBuilder);
 
   bool translateSwitch(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateIndirectBr(const User &U, MachineIRBuilder &MIRBuilder);
 
   bool translateExtractValue(const User &U, MachineIRBuilder &MIRBuilder);
 
@@ -304,9 +308,6 @@ private:
 
   // Stubs to keep the compiler happy while we implement the rest of the
   // translation.
-  bool translateIndirectBr(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
   bool translateResume(const User &U, MachineIRBuilder &MIRBuilder) {
     return false;
   }

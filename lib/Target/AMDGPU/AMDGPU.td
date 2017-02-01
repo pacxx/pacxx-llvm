@@ -305,6 +305,12 @@ def FeatureEnableSIScheduler : SubtargetFeature<"si-scheduler",
   "Enable SI Machine Scheduler"
 >;
 
+// Unless +-flat-for-global is specified, turn on FlatForGlobal for
+// all OS-es on VI and newer hardware to avoid assertion failures due
+// to missing ADDR64 variants of MUBUF instructions.
+// FIXME: moveToVALU should be able to handle converting addr64 MUBUF
+// instructions.
+
 def FeatureFlatForGlobal : SubtargetFeature<"flat-for-global",
   "FlatForGlobal",
   "true",
@@ -556,5 +562,6 @@ include "Processors.td"
 include "AMDGPUInstrInfo.td"
 include "AMDGPUIntrinsics.td"
 include "AMDGPURegisterInfo.td"
+include "AMDGPURegisterBanks.td"
 include "AMDGPUInstructions.td"
 include "AMDGPUCallingConv.td"

@@ -1,5 +1,5 @@
 ; RUN: llc -march=amdgcn -mcpu=tahiti -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GCN-SAFE -check-prefix=SI -check-prefix=FUNC %s
-; RUN: llc -enable-unsafe-fp-math -march=amdgcn -mcpu=tahiti -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GCN-NSZ -check-prefix=SI -check-prefix=FUNC %s
+; RUN: llc -enable-no-signed-zeros-fp-math -march=amdgcn -mcpu=tahiti -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GCN-NSZ -check-prefix=SI -check-prefix=FUNC %s
 
 ; --------------------------------------------------------------------------------
 ; fadd tests
@@ -1300,8 +1300,7 @@ define void @v_fneg_mul_legacy_multi_use_fneg_x_f32(float addrspace(1)* %out, fl
 
 ; GCN-LABEL: {{^}}v_fneg_sin_f32:
 ; GCN: {{buffer|flat}}_load_dword [[A:v[0-9]+]]
-; GCN: v_mov_b32_e32 [[K:v[0-9]+]], 0x3e22f983
-; GCN: v_mul_f32_e64 [[MUL:v[0-9]+]], [[K]], -[[A]]
+; GCN: v_mul_f32_e32 [[MUL:v[0-9]+]], 0xbe22f983, [[A]]
 ; GCN: v_fract_f32_e32 [[FRACT:v[0-9]+]], [[MUL]]
 ; GCN: v_sin_f32_e32 [[RESULT:v[0-9]+]], [[FRACT]]
 ; GCN: buffer_store_dword [[RESULT]]
@@ -1328,7 +1327,91 @@ define void @v_fneg_amdgcn_sin_f32(float addrspace(1)* %out, float addrspace(1)*
   %out.gep = getelementptr inbounds float, float addrspace(1)* %out, i64 %tid.ext
   %a = load volatile float, float addrspace(1)* %a.gep
   %sin = call float @llvm.amdgcn.sin.f32(float %a)
-  %fneg = fsub float -0.000000e+00, %sin
+  %fneg = fsub float -0.0, %sin
+  store float %fneg, float addrspace(1)* %out.gep
+  ret void
+}
+
+; --------------------------------------------------------------------------------
+; ftrunc tests
+; --------------------------------------------------------------------------------
+
+; GCN-LABEL: {{^}}v_fneg_trunc_f32:
+; GCN: {{buffer|flat}}_load_dword [[A:v[0-9]+]]
+; GCN: v_trunc_f32_e64 [[RESULT:v[0-9]+]], -[[A]]
+; GCN: buffer_store_dword [[RESULT]]
+define void @v_fneg_trunc_f32(float addrspace(1)* %out, float addrspace(1)* %a.ptr) #0 {
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %tid.ext = sext i32 %tid to i64
+  %a.gep = getelementptr inbounds float, float addrspace(1)* %a.ptr, i64 %tid.ext
+  %out.gep = getelementptr inbounds float, float addrspace(1)* %out, i64 %tid.ext
+  %a = load volatile float, float addrspace(1)* %a.gep
+  %trunc = call float @llvm.trunc.f32(float %a)
+  %fneg = fsub float -0.0, %trunc
+  store float %fneg, float addrspace(1)* %out.gep
+  ret void
+}
+
+; --------------------------------------------------------------------------------
+; fround tests
+; --------------------------------------------------------------------------------
+
+; GCN-LABEL: {{^}}v_fneg_round_f32:
+; GCN: {{buffer|flat}}_load_dword [[A:v[0-9]+]]
+; GCN: v_trunc_f32_e32
+; GCN: v_subrev_f32_e32
+; GCN: v_cndmask_b32
+; GCN-NSZ: v_sub_f32_e64 [[RESULT:v[0-9]+]], -v{{[0-9]+}}, v{{[0-9]+}}
+; GCN-SAFE: v_xor_b32_e32 [[RESULT:v[0-9]+]], 0x80000000, v{{[0-9]+}}
+; GCN: buffer_store_dword [[RESULT]]
+define void @v_fneg_round_f32(float addrspace(1)* %out, float addrspace(1)* %a.ptr) #0 {
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %tid.ext = sext i32 %tid to i64
+  %a.gep = getelementptr inbounds float, float addrspace(1)* %a.ptr, i64 %tid.ext
+  %out.gep = getelementptr inbounds float, float addrspace(1)* %out, i64 %tid.ext
+  %a = load volatile float, float addrspace(1)* %a.gep
+  %round = call float @llvm.round.f32(float %a)
+  %fneg = fsub float -0.0, %round
+  store float %fneg, float addrspace(1)* %out.gep
+  ret void
+}
+
+; --------------------------------------------------------------------------------
+; rint tests
+; --------------------------------------------------------------------------------
+
+; GCN-LABEL: {{^}}v_fneg_rint_f32:
+; GCN: {{buffer|flat}}_load_dword [[A:v[0-9]+]]
+; GCN: v_rndne_f32_e64 [[RESULT:v[0-9]+]], -[[A]]
+; GCN: buffer_store_dword [[RESULT]]
+define void @v_fneg_rint_f32(float addrspace(1)* %out, float addrspace(1)* %a.ptr) #0 {
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %tid.ext = sext i32 %tid to i64
+  %a.gep = getelementptr inbounds float, float addrspace(1)* %a.ptr, i64 %tid.ext
+  %out.gep = getelementptr inbounds float, float addrspace(1)* %out, i64 %tid.ext
+  %a = load volatile float, float addrspace(1)* %a.gep
+  %rint = call float @llvm.rint.f32(float %a)
+  %fneg = fsub float -0.0, %rint
+  store float %fneg, float addrspace(1)* %out.gep
+  ret void
+}
+
+; --------------------------------------------------------------------------------
+; nearbyint tests
+; --------------------------------------------------------------------------------
+
+; GCN-LABEL: {{^}}v_fneg_nearbyint_f32:
+; GCN: {{buffer|flat}}_load_dword [[A:v[0-9]+]]
+; GCN: v_rndne_f32_e64 [[RESULT:v[0-9]+]], -[[A]]
+; GCN: buffer_store_dword [[RESULT]]
+define void @v_fneg_nearbyint_f32(float addrspace(1)* %out, float addrspace(1)* %a.ptr) #0 {
+  %tid = call i32 @llvm.amdgcn.workitem.id.x()
+  %tid.ext = sext i32 %tid to i64
+  %a.gep = getelementptr inbounds float, float addrspace(1)* %a.ptr, i64 %tid.ext
+  %out.gep = getelementptr inbounds float, float addrspace(1)* %out, i64 %tid.ext
+  %a = load volatile float, float addrspace(1)* %a.gep
+  %nearbyint = call float @llvm.nearbyint.f32(float %a)
+  %fneg = fsub float -0.0, %nearbyint
   store float %fneg, float addrspace(1)* %out.gep
   ret void
 }
@@ -1337,6 +1420,10 @@ declare i32 @llvm.amdgcn.workitem.id.x() #1
 declare float @llvm.fma.f32(float, float, float) #1
 declare float @llvm.fmuladd.f32(float, float, float) #1
 declare float @llvm.sin.f32(float) #1
+declare float @llvm.trunc.f32(float) #1
+declare float @llvm.round.f32(float) #1
+declare float @llvm.rint.f32(float) #1
+declare float @llvm.nearbyint.f32(float) #1
 
 declare float @llvm.amdgcn.sin.f32(float) #1
 declare float @llvm.amdgcn.rcp.f32(float) #1
