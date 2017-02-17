@@ -54,10 +54,13 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ModuleSummaryIndexYAML.h"
 #include "llvm/Pass.h"
 #include "llvm/PassRegistry.h"
 #include "llvm/PassSupport.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/Utils/Evaluator.h"
@@ -71,6 +74,26 @@ using namespace llvm;
 using namespace wholeprogramdevirt;
 
 #define DEBUG_TYPE "wholeprogramdevirt"
+
+static cl::opt<PassSummaryAction> ClSummaryAction(
+    "wholeprogramdevirt-summary-action",
+    cl::desc("What to do with the summary when running this pass"),
+    cl::values(clEnumValN(PassSummaryAction::None, "none", "Do nothing"),
+               clEnumValN(PassSummaryAction::Import, "import",
+                          "Import typeid resolutions from summary and globals"),
+               clEnumValN(PassSummaryAction::Export, "export",
+                          "Export typeid resolutions to summary and globals")),
+    cl::Hidden);
+
+static cl::opt<std::string> ClReadSummary(
+    "wholeprogramdevirt-read-summary",
+    cl::desc("Read summary from given YAML file before running pass"),
+    cl::Hidden);
+
+static cl::opt<std::string> ClWriteSummary(
+    "wholeprogramdevirt-write-summary",
+    cl::desc("Write summary to given YAML file after running pass"),
+    cl::Hidden);
 
 // Find the minimum offset that we may store a value of size Size bits at. If
 // IsAfter is set, look for an offset before the object, otherwise look for an
@@ -259,15 +282,62 @@ struct VirtualCallSite {
   }
 };
 
+// Call site information collected for a specific VTableSlot and possibly a list
+// of constant integer arguments. The grouping by arguments is handled by the
+// VTableSlotInfo class.
+struct CallSiteInfo {
+  std::vector<VirtualCallSite> CallSites;
+};
+
+// Call site information collected for a specific VTableSlot.
+struct VTableSlotInfo {
+  // The set of call sites which do not have all constant integer arguments
+  // (excluding "this").
+  CallSiteInfo CSInfo;
+
+  // The set of call sites with all constant integer arguments (excluding
+  // "this"), grouped by argument list.
+  std::map<std::vector<uint64_t>, CallSiteInfo> ConstCSInfo;
+
+  void addCallSite(Value *VTable, CallSite CS, unsigned *NumUnsafeUses);
+
+private:
+  CallSiteInfo &findCallSiteInfo(CallSite CS);
+};
+
+CallSiteInfo &VTableSlotInfo::findCallSiteInfo(CallSite CS) {
+  std::vector<uint64_t> Args;
+  auto *CI = dyn_cast<IntegerType>(CS.getType());
+  if (!CI || CI->getBitWidth() > 64 || CS.arg_empty())
+    return CSInfo;
+  for (auto &&Arg : make_range(CS.arg_begin() + 1, CS.arg_end())) {
+    auto *CI = dyn_cast<ConstantInt>(Arg);
+    if (!CI || CI->getBitWidth() > 64)
+      return CSInfo;
+    Args.push_back(CI->getZExtValue());
+  }
+  return ConstCSInfo[Args];
+}
+
+void VTableSlotInfo::addCallSite(Value *VTable, CallSite CS,
+                                 unsigned *NumUnsafeUses) {
+  findCallSiteInfo(CS).CallSites.push_back({VTable, CS, NumUnsafeUses});
+}
+
 struct DevirtModule {
   Module &M;
+
+  PassSummaryAction Action;
+  ModuleSummaryIndex *Summary;
+
   IntegerType *Int8Ty;
   PointerType *Int8PtrTy;
   IntegerType *Int32Ty;
+  IntegerType *Int64Ty;
 
   bool RemarksEnabled;
 
-  MapVector<VTableSlot, std::vector<VirtualCallSite>> CallSlots;
+  MapVector<VTableSlot, VTableSlotInfo> CallSlots;
 
   // This map keeps track of the number of "unsafe" uses of a loaded function
   // pointer. The key is the associated llvm.type.test intrinsic call generated
@@ -279,10 +349,12 @@ struct DevirtModule {
   // true.
   std::map<CallInst *, unsigned> NumUnsafeUsesForTypeTest;
 
-  DevirtModule(Module &M)
-      : M(M), Int8Ty(Type::getInt8Ty(M.getContext())),
+  DevirtModule(Module &M, PassSummaryAction Action, ModuleSummaryIndex *Summary)
+      : M(M), Action(Action), Summary(Summary),
+        Int8Ty(Type::getInt8Ty(M.getContext())),
         Int8PtrTy(Type::getInt8PtrTy(M.getContext())),
         Int32Ty(Type::getInt32Ty(M.getContext())),
+        Int64Ty(Type::getInt64Ty(M.getContext())),
         RemarksEnabled(areRemarksEnabled()) {}
 
   bool areRemarksEnabled();
@@ -298,37 +370,63 @@ struct DevirtModule {
   tryFindVirtualCallTargets(std::vector<VirtualCallTarget> &TargetsForSlot,
                             const std::set<TypeMemberInfo> &TypeMemberInfos,
                             uint64_t ByteOffset);
+
+  void applySingleImplDevirt(VTableSlotInfo &SlotInfo, Constant *TheFn);
   bool trySingleImplDevirt(MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-                           MutableArrayRef<VirtualCallSite> CallSites);
+                           VTableSlotInfo &SlotInfo);
+
   bool tryEvaluateFunctionsWithArgs(
       MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-      ArrayRef<ConstantInt *> Args);
-  bool tryUniformRetValOpt(IntegerType *RetType,
-                           MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-                           MutableArrayRef<VirtualCallSite> CallSites);
+      ArrayRef<uint64_t> Args);
+
+  void applyUniformRetValOpt(CallSiteInfo &CSInfo, StringRef FnName,
+                             uint64_t TheRetVal);
+  bool tryUniformRetValOpt(MutableArrayRef<VirtualCallTarget> TargetsForSlot,
+                           CallSiteInfo &CSInfo);
+
+  void applyUniqueRetValOpt(CallSiteInfo &CSInfo, StringRef FnName, bool IsOne,
+                            Constant *UniqueMemberAddr);
   bool tryUniqueRetValOpt(unsigned BitWidth,
                           MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-                          MutableArrayRef<VirtualCallSite> CallSites);
+                          CallSiteInfo &CSInfo);
+
+  void applyVirtualConstProp(CallSiteInfo &CSInfo, StringRef FnName,
+                             Constant *Byte, Constant *Bit);
   bool tryVirtualConstProp(MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-                           ArrayRef<VirtualCallSite> CallSites);
+                           VTableSlotInfo &SlotInfo);
 
   void rebuildGlobal(VTableBits &B);
 
   bool run();
+
+  // Lower the module using the action and summary passed as command line
+  // arguments. For testing purposes only.
+  static bool runForTesting(Module &M);
 };
 
 struct WholeProgramDevirt : public ModulePass {
   static char ID;
 
-  WholeProgramDevirt() : ModulePass(ID) {
+  bool UseCommandLine = false;
+
+  PassSummaryAction Action;
+  ModuleSummaryIndex *Summary;
+
+  WholeProgramDevirt() : ModulePass(ID), UseCommandLine(true) {
+    initializeWholeProgramDevirtPass(*PassRegistry::getPassRegistry());
+  }
+
+  WholeProgramDevirt(PassSummaryAction Action, ModuleSummaryIndex *Summary)
+      : ModulePass(ID), Action(Action), Summary(Summary) {
     initializeWholeProgramDevirtPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module &M) override {
     if (skipModule(M))
       return false;
-
-    return DevirtModule(M).run();
+    if (UseCommandLine)
+      return DevirtModule::runForTesting(M);
+    return DevirtModule(M, Action, Summary).run();
   }
 };
 
@@ -338,15 +436,48 @@ INITIALIZE_PASS(WholeProgramDevirt, "wholeprogramdevirt",
                 "Whole program devirtualization", false, false)
 char WholeProgramDevirt::ID = 0;
 
-ModulePass *llvm::createWholeProgramDevirtPass() {
-  return new WholeProgramDevirt;
+ModulePass *llvm::createWholeProgramDevirtPass(PassSummaryAction Action,
+                                               ModuleSummaryIndex *Summary) {
+  return new WholeProgramDevirt(Action, Summary);
 }
 
 PreservedAnalyses WholeProgramDevirtPass::run(Module &M,
                                               ModuleAnalysisManager &) {
-  if (!DevirtModule(M).run())
+  if (!DevirtModule(M, PassSummaryAction::None, nullptr).run())
     return PreservedAnalyses::all();
   return PreservedAnalyses::none();
+}
+
+bool DevirtModule::runForTesting(Module &M) {
+  ModuleSummaryIndex Summary;
+
+  // Handle the command-line summary arguments. This code is for testing
+  // purposes only, so we handle errors directly.
+  if (!ClReadSummary.empty()) {
+    ExitOnError ExitOnErr("-wholeprogramdevirt-read-summary: " + ClReadSummary +
+                          ": ");
+    auto ReadSummaryFile =
+        ExitOnErr(errorOrToExpected(MemoryBuffer::getFile(ClReadSummary)));
+
+    yaml::Input In(ReadSummaryFile->getBuffer());
+    In >> Summary;
+    ExitOnErr(errorCodeToError(In.error()));
+  }
+
+  bool Changed = DevirtModule(M, ClSummaryAction, &Summary).run();
+
+  if (!ClWriteSummary.empty()) {
+    ExitOnError ExitOnErr(
+        "-wholeprogramdevirt-write-summary: " + ClWriteSummary + ": ");
+    std::error_code EC;
+    raw_fd_ostream OS(ClWriteSummary, EC, sys::fs::F_Text);
+    ExitOnErr(errorCodeToError(EC));
+
+    yaml::Output Out(OS);
+    Out << Summary;
+  }
+
+  return Changed;
 }
 
 void DevirtModule::buildTypeIdentifierMap(
@@ -443,9 +574,27 @@ bool DevirtModule::tryFindVirtualCallTargets(
   return !TargetsForSlot.empty();
 }
 
+void DevirtModule::applySingleImplDevirt(VTableSlotInfo &SlotInfo,
+                                         Constant *TheFn) {
+  auto Apply = [&](CallSiteInfo &CSInfo) {
+    for (auto &&VCallSite : CSInfo.CallSites) {
+      if (RemarksEnabled)
+        VCallSite.emitRemark("single-impl", TheFn->getName());
+      VCallSite.CS.setCalledFunction(ConstantExpr::getBitCast(
+          TheFn, VCallSite.CS.getCalledValue()->getType()));
+      // This use is no longer unsafe.
+      if (VCallSite.NumUnsafeUses)
+        --*VCallSite.NumUnsafeUses;
+    }
+  };
+  Apply(SlotInfo.CSInfo);
+  for (auto &P : SlotInfo.ConstCSInfo)
+    Apply(P.second);
+}
+
 bool DevirtModule::trySingleImplDevirt(
     MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-    MutableArrayRef<VirtualCallSite> CallSites) {
+    VTableSlotInfo &SlotInfo) {
   // See if the program contains a single implementation of this virtual
   // function.
   Function *TheFn = TargetsForSlot[0].Fn;
@@ -453,39 +602,34 @@ bool DevirtModule::trySingleImplDevirt(
     if (TheFn != Target.Fn)
       return false;
 
+  // If so, update each call site to call that implementation directly.
   if (RemarksEnabled)
     TargetsForSlot[0].WasDevirt = true;
-  // If so, update each call site to call that implementation directly.
-  for (auto &&VCallSite : CallSites) {
-    if (RemarksEnabled)
-      VCallSite.emitRemark("single-impl", TheFn->getName());
-    VCallSite.CS.setCalledFunction(ConstantExpr::getBitCast(
-        TheFn, VCallSite.CS.getCalledValue()->getType()));
-    // This use is no longer unsafe.
-    if (VCallSite.NumUnsafeUses)
-      --*VCallSite.NumUnsafeUses;
-  }
+  applySingleImplDevirt(SlotInfo, TheFn);
   return true;
 }
 
 bool DevirtModule::tryEvaluateFunctionsWithArgs(
     MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-    ArrayRef<ConstantInt *> Args) {
+    ArrayRef<uint64_t> Args) {
   // Evaluate each function and store the result in each target's RetVal
   // field.
   for (VirtualCallTarget &Target : TargetsForSlot) {
     if (Target.Fn->arg_size() != Args.size() + 1)
       return false;
-    for (unsigned I = 0; I != Args.size(); ++I)
-      if (Target.Fn->getFunctionType()->getParamType(I + 1) !=
-          Args[I]->getType())
-        return false;
 
     Evaluator Eval(M.getDataLayout(), nullptr);
     SmallVector<Constant *, 2> EvalArgs;
     EvalArgs.push_back(
         Constant::getNullValue(Target.Fn->getFunctionType()->getParamType(0)));
-    EvalArgs.insert(EvalArgs.end(), Args.begin(), Args.end());
+    for (unsigned I = 0; I != Args.size(); ++I) {
+      auto *ArgTy = dyn_cast<IntegerType>(
+          Target.Fn->getFunctionType()->getParamType(I + 1));
+      if (!ArgTy)
+        return false;
+      EvalArgs.push_back(ConstantInt::get(ArgTy, Args[I]));
+    }
+
     Constant *RetVal;
     if (!Eval.EvaluateFunction(Target.Fn, RetVal, EvalArgs) ||
         !isa<ConstantInt>(RetVal))
@@ -495,9 +639,16 @@ bool DevirtModule::tryEvaluateFunctionsWithArgs(
   return true;
 }
 
+void DevirtModule::applyUniformRetValOpt(CallSiteInfo &CSInfo, StringRef FnName,
+                                         uint64_t TheRetVal) {
+  for (auto Call : CSInfo.CallSites)
+    Call.replaceAndErase(
+        "uniform-ret-val", FnName, RemarksEnabled,
+        ConstantInt::get(cast<IntegerType>(Call.CS.getType()), TheRetVal));
+}
+
 bool DevirtModule::tryUniformRetValOpt(
-    IntegerType *RetType, MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-    MutableArrayRef<VirtualCallSite> CallSites) {
+    MutableArrayRef<VirtualCallTarget> TargetsForSlot, CallSiteInfo &CSInfo) {
   // Uniform return value optimization. If all functions return the same
   // constant, replace all calls with that constant.
   uint64_t TheRetVal = TargetsForSlot[0].RetVal;
@@ -505,19 +656,28 @@ bool DevirtModule::tryUniformRetValOpt(
     if (Target.RetVal != TheRetVal)
       return false;
 
-  auto TheRetValConst = ConstantInt::get(RetType, TheRetVal);
-  for (auto Call : CallSites)
-    Call.replaceAndErase("uniform-ret-val", TargetsForSlot[0].Fn->getName(),
-                         RemarksEnabled, TheRetValConst);
+  applyUniformRetValOpt(CSInfo, TargetsForSlot[0].Fn->getName(), TheRetVal);
   if (RemarksEnabled)
     for (auto &&Target : TargetsForSlot)
       Target.WasDevirt = true;
   return true;
 }
 
+void DevirtModule::applyUniqueRetValOpt(CallSiteInfo &CSInfo, StringRef FnName,
+                                        bool IsOne,
+                                        Constant *UniqueMemberAddr) {
+  for (auto &&Call : CSInfo.CallSites) {
+    IRBuilder<> B(Call.CS.getInstruction());
+    Value *Cmp = B.CreateICmp(IsOne ? ICmpInst::ICMP_EQ : ICmpInst::ICMP_NE,
+                              Call.VTable, UniqueMemberAddr);
+    Cmp = B.CreateZExt(Cmp, Call.CS->getType());
+    Call.replaceAndErase("unique-ret-val", FnName, RemarksEnabled, Cmp);
+  }
+}
+
 bool DevirtModule::tryUniqueRetValOpt(
     unsigned BitWidth, MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-    MutableArrayRef<VirtualCallSite> CallSites) {
+    CallSiteInfo &CSInfo) {
   // IsOne controls whether we look for a 0 or a 1.
   auto tryUniqueRetValOptFor = [&](bool IsOne) {
     const TypeMemberInfo *UniqueMember = nullptr;
@@ -534,15 +694,15 @@ bool DevirtModule::tryUniqueRetValOpt(
     assert(UniqueMember);
 
     // Replace each call with the comparison.
-    for (auto &&Call : CallSites) {
-      IRBuilder<> B(Call.CS.getInstruction());
-      Value *OneAddr = B.CreateBitCast(UniqueMember->Bits->GV, Int8PtrTy);
-      OneAddr = B.CreateConstGEP1_64(OneAddr, UniqueMember->Offset);
-      Value *Cmp = B.CreateICmp(IsOne ? ICmpInst::ICMP_EQ : ICmpInst::ICMP_NE,
-                                Call.VTable, OneAddr);
-      Call.replaceAndErase("unique-ret-val", TargetsForSlot[0].Fn->getName(),
-                           RemarksEnabled, Cmp);
-    }
+    Constant *UniqueMemberAddr =
+        ConstantExpr::getBitCast(UniqueMember->Bits->GV, Int8PtrTy);
+    UniqueMemberAddr = ConstantExpr::getGetElementPtr(
+        Int8Ty, UniqueMemberAddr,
+        ConstantInt::get(Int64Ty, UniqueMember->Offset));
+
+    applyUniqueRetValOpt(CSInfo, TargetsForSlot[0].Fn->getName(), IsOne,
+                         UniqueMemberAddr);
+
     // Update devirtualization statistics for targets.
     if (RemarksEnabled)
       for (auto &&Target : TargetsForSlot)
@@ -560,9 +720,29 @@ bool DevirtModule::tryUniqueRetValOpt(
   return false;
 }
 
+void DevirtModule::applyVirtualConstProp(CallSiteInfo &CSInfo, StringRef FnName,
+                                         Constant *Byte, Constant *Bit) {
+  for (auto Call : CSInfo.CallSites) {
+    auto *RetType = cast<IntegerType>(Call.CS.getType());
+    IRBuilder<> B(Call.CS.getInstruction());
+    Value *Addr = B.CreateGEP(Int8Ty, Call.VTable, Byte);
+    if (RetType->getBitWidth() == 1) {
+      Value *Bits = B.CreateLoad(Addr);
+      Value *BitsAndBit = B.CreateAnd(Bits, Bit);
+      auto IsBitSet = B.CreateICmpNE(BitsAndBit, ConstantInt::get(Int8Ty, 0));
+      Call.replaceAndErase("virtual-const-prop-1-bit", FnName, RemarksEnabled,
+                           IsBitSet);
+    } else {
+      Value *ValAddr = B.CreateBitCast(Addr, RetType->getPointerTo());
+      Value *Val = B.CreateLoad(RetType, ValAddr);
+      Call.replaceAndErase("virtual-const-prop", FnName, RemarksEnabled, Val);
+    }
+  }
+}
+
 bool DevirtModule::tryVirtualConstProp(
     MutableArrayRef<VirtualCallTarget> TargetsForSlot,
-    ArrayRef<VirtualCallSite> CallSites) {
+    VTableSlotInfo &SlotInfo) {
   // This only works if the function returns an integer.
   auto RetType = dyn_cast<IntegerType>(TargetsForSlot[0].Fn->getReturnType());
   if (!RetType)
@@ -571,52 +751,21 @@ bool DevirtModule::tryVirtualConstProp(
   if (BitWidth > 64)
     return false;
 
-  // Make sure that each function does not access memory, takes at least one
-  // argument, does not use its first argument (which we assume is 'this'),
-  // and has the same return type.
+  // Make sure that each function is defined, does not access memory, takes at
+  // least one argument, does not use its first argument (which we assume is
+  // 'this'), and has the same return type.
   for (VirtualCallTarget &Target : TargetsForSlot) {
-    if (!Target.Fn->doesNotAccessMemory() || Target.Fn->arg_empty() ||
-        !Target.Fn->arg_begin()->use_empty() ||
+    if (Target.Fn->isDeclaration() || !Target.Fn->doesNotAccessMemory() ||
+        Target.Fn->arg_empty() || !Target.Fn->arg_begin()->use_empty() ||
         Target.Fn->getReturnType() != RetType)
       return false;
   }
 
-  // Group call sites by the list of constant arguments they pass.
-  // The comparator ensures deterministic ordering.
-  struct ByAPIntValue {
-    bool operator()(const std::vector<ConstantInt *> &A,
-                    const std::vector<ConstantInt *> &B) const {
-      return std::lexicographical_compare(
-          A.begin(), A.end(), B.begin(), B.end(),
-          [](ConstantInt *AI, ConstantInt *BI) {
-            return AI->getValue().ult(BI->getValue());
-          });
-    }
-  };
-  std::map<std::vector<ConstantInt *>, std::vector<VirtualCallSite>,
-           ByAPIntValue>
-      VCallSitesByConstantArg;
-  for (auto &&VCallSite : CallSites) {
-    std::vector<ConstantInt *> Args;
-    if (VCallSite.CS.getType() != RetType)
-      continue;
-    for (auto &&Arg :
-         make_range(VCallSite.CS.arg_begin() + 1, VCallSite.CS.arg_end())) {
-      if (!isa<ConstantInt>(Arg))
-        break;
-      Args.push_back(cast<ConstantInt>(&Arg));
-    }
-    if (Args.size() + 1 != VCallSite.CS.arg_size())
-      continue;
-
-    VCallSitesByConstantArg[Args].push_back(VCallSite);
-  }
-
-  for (auto &&CSByConstantArg : VCallSitesByConstantArg) {
+  for (auto &&CSByConstantArg : SlotInfo.ConstCSInfo) {
     if (!tryEvaluateFunctionsWithArgs(TargetsForSlot, CSByConstantArg.first))
       continue;
 
-    if (tryUniformRetValOpt(RetType, TargetsForSlot, CSByConstantArg.second))
+    if (tryUniformRetValOpt(TargetsForSlot, CSByConstantArg.second))
       continue;
 
     if (tryUniqueRetValOpt(BitWidth, TargetsForSlot, CSByConstantArg.second))
@@ -660,25 +809,10 @@ bool DevirtModule::tryVirtualConstProp(
         Target.WasDevirt = true;
 
     // Rewrite each call to a load from OffsetByte/OffsetBit.
-    for (auto Call : CSByConstantArg.second) {
-      IRBuilder<> B(Call.CS.getInstruction());
-      Value *Addr = B.CreateConstGEP1_64(Call.VTable, OffsetByte);
-      if (BitWidth == 1) {
-        Value *Bits = B.CreateLoad(Addr);
-        Value *Bit = ConstantInt::get(Int8Ty, 1ULL << OffsetBit);
-        Value *BitsAndBit = B.CreateAnd(Bits, Bit);
-        auto IsBitSet = B.CreateICmpNE(BitsAndBit, ConstantInt::get(Int8Ty, 0));
-        Call.replaceAndErase("virtual-const-prop-1-bit",
-                             TargetsForSlot[0].Fn->getName(),
-                             RemarksEnabled, IsBitSet);
-      } else {
-        Value *ValAddr = B.CreateBitCast(Addr, RetType->getPointerTo());
-        Value *Val = B.CreateLoad(RetType, ValAddr);
-        Call.replaceAndErase("virtual-const-prop",
-                             TargetsForSlot[0].Fn->getName(),
-                             RemarksEnabled, Val);
-      }
-    }
+    Constant *ByteConst = ConstantInt::get(Int64Ty, OffsetByte);
+    Constant *BitConst = ConstantInt::get(Int8Ty, 1ULL << OffsetBit);
+    applyVirtualConstProp(CSByConstantArg.second,
+                          TargetsForSlot[0].Fn->getName(), ByteConst, BitConst);
   }
   return true;
 }
@@ -766,8 +900,8 @@ void DevirtModule::scanTypeTestUsers(Function *TypeTestFunc,
       Value *Ptr = CI->getArgOperand(0)->stripPointerCasts();
       if (SeenPtrs.insert(Ptr).second) {
         for (DevirtCallSite Call : DevirtCalls) {
-          CallSlots[{TypeId, Call.Offset}].push_back(
-              {CI->getArgOperand(0), Call.CS, nullptr});
+          CallSlots[{TypeId, Call.Offset}].addCallSite(CI->getArgOperand(0),
+                                                       Call.CS, nullptr);
         }
       }
     }
@@ -853,8 +987,8 @@ void DevirtModule::scanTypeCheckedLoadUsers(Function *TypeCheckedLoadFunc) {
     if (HasNonCallUses)
       ++NumUnsafeUses;
     for (DevirtCallSite Call : DevirtCalls) {
-      CallSlots[{TypeId, Call.Offset}].push_back(
-          {Ptr, Call.CS, &NumUnsafeUses});
+      CallSlots[{TypeId, Call.Offset}].addCallSite(Ptr, Call.CS,
+                                                   &NumUnsafeUses);
     }
 
     CI->eraseFromParent();

@@ -32,12 +32,18 @@ ARMLegalizerInfo::ARMLegalizerInfo() {
   const LLT s8 = LLT::scalar(8);
   const LLT s16 = LLT::scalar(16);
   const LLT s32 = LLT::scalar(32);
+  const LLT s64 = LLT::scalar(64);
 
   setAction({G_FRAME_INDEX, p0}, Legal);
 
-  for (auto Ty : {s1, s8, s16, s32})
+  for (auto Ty : {s1, s8, s16, s32, p0})
     setAction({G_LOAD, Ty}, Legal);
   setAction({G_LOAD, 1, p0}, Legal);
+
+  // FIXME: This is strictly for loading double-precision floating point values,
+  // if the hardware allows it. We rely on the instruction selector to complain
+  // otherwise.
+  setAction({G_LOAD, s64}, Legal);
 
   for (auto Ty : {s1, s8, s16, s32})
     setAction({G_ADD, Ty}, Legal);
@@ -47,6 +53,11 @@ ARMLegalizerInfo::ARMLegalizerInfo() {
     for (auto Ty : {s1, s8, s16})
       setAction({Op, 1, Ty}, Legal);
   }
+
+  // FIXME: This is a bit sloppy, but for now we'll just rely on the instruction
+  // selector to complain if it doesn't support floating point.
+  setAction({G_FADD, s32}, Legal);
+  setAction({G_FADD, s64}, Legal);
 
   computeTables();
 }

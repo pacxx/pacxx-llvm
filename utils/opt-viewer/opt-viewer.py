@@ -30,6 +30,7 @@ import shutil
 from pygments import highlight
 from pygments.lexers.c_cpp import CppLexer
 from pygments.formatters import HtmlFormatter
+import cgi
 
 p = subprocess.Popen(['c++filt', '-n'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 p_lock = Lock()
@@ -103,7 +104,7 @@ class Remark(yaml.YAMLObject):
         (key, value) = mapping.items()[0]
 
         if key == 'Caller' or key == 'Callee':
-            value = demangle(value)
+            value = cgi.escape(demangle(value))
 
         if dl and key != 'Caller':
             return "<a href={}>{}</a>".format(
@@ -182,7 +183,7 @@ class SourceFileRenderer:
 </html>
             '''.format(filename), file=self.stream)
 
-        self.html_formatter = HtmlFormatter()
+        self.html_formatter = HtmlFormatter(encoding='utf-8')
         self.cpp_lexer = CppLexer()
 
     def render_source_line(self, linenum, line):
@@ -207,6 +208,7 @@ class SourceFileRenderer:
         # replace everything else with spaces.
         indent = line[:r.Column - 1]
         indent = re.sub('\S', ' ', indent)
+
         print('''
 <tr>
 <td></td>
@@ -253,12 +255,13 @@ class IndexRenderer:
     def __init__(self, output_dir):
         self.stream = open(os.path.join(output_dir, 'index.html'), 'w')
 
-    def render_entry(self, r):
+    def render_entry(self, r, odd):
+        escaped_name = cgi.escape(r.DemangledFunctionName)
         print('''
 <tr>
-<td><a href={r.Link}>{r.DebugLocString}</a></td>
-<td>{r.RelativeHotness}</td>
-<td>{r.DemangledFunctionName}</td>
+<td class=\"column-entry-{odd}\"><a href={r.Link}>{r.DebugLocString}</a></td>
+<td class=\"column-entry-{odd}\">{r.RelativeHotness}</td>
+<td class=\"column-entry-{odd}\">{escaped_name}</td>
 <td class=\"column-entry-{r.color}\">{r.Pass}</td>
 </tr>'''.format(**locals()), file=self.stream)
 
@@ -277,8 +280,8 @@ class IndexRenderer:
 <td>Function</td>
 <td>Pass</td>
 </tr>''', file=self.stream)
-        for remark in all_remarks:
-            self.render_entry(remark)
+        for i, remark in enumerate(all_remarks):
+            self.render_entry(remark, i % 2)
         print('''
 </table>
 </body>
@@ -313,8 +316,8 @@ def _render_file(source_dir, output_dir, ctx, entry):
     SourceFileRenderer(source_dir, output_dir, filename).render(remarks)
 
 
-def gather_results(pool, filenames):
-    remarks = pool.map(get_remarks, filenames)
+def gather_results(pmap, filenames):
+    remarks = pmap(get_remarks, filenames)
 
     def merge_file_remarks(file_remarks_job, all_remarks, merged):
         for filename, d in file_remarks_job.iteritems():
@@ -345,7 +348,7 @@ def map_remarks(all_remarks):
                     context.caller_loc[caller] = arg['DebugLoc']
 
 
-def generate_report(pool, all_remarks, file_remarks, source_dir, output_dir):
+def generate_report(pmap, all_remarks, file_remarks, source_dir, output_dir):
     try:
         os.makedirs(output_dir)
     except OSError as e:
@@ -355,7 +358,7 @@ def generate_report(pool, all_remarks, file_remarks, source_dir, output_dir):
             raise
 
     _render_file_bound = functools.partial(_render_file, source_dir, output_dir, context)
-    pool.map(_render_file_bound, file_remarks.items())
+    pmap(_render_file_bound, file_remarks.items())
 
     if context.should_display_hotness():
         sorted_remarks = sorted(all_remarks.itervalues(), key=lambda r: (r.Hotness, r.__dict__), reverse=True)
@@ -388,9 +391,14 @@ if __name__ == '__main__':
         parser.print_help()
         sys.exit(1)
 
-    pool = Pool(processes=args.jobs)
-    all_remarks, file_remarks = gather_results(pool, args.yaml_files)
+    if args.jobs == 1:
+        pmap = map
+    else:
+        pool = Pool(processes=args.jobs)
+        pmap = pool.map
+
+    all_remarks, file_remarks = gather_results(pmap, args.yaml_files)
 
     map_remarks(all_remarks)
 
-    generate_report(pool, all_remarks, file_remarks, args.source_dir, args.output_dir)
+    generate_report(pmap, all_remarks, file_remarks, args.source_dir, args.output_dir)

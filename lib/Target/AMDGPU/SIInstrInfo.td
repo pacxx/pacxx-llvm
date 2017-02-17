@@ -619,6 +619,8 @@ def SIOperand {
 def SRCMODS {
   int NONE = 0;
   int NEG = 1;
+  int ABS = 2;
+  int NEG_ABS = 3;
 }
 
 def DSTCLAMP {
@@ -627,6 +629,11 @@ def DSTCLAMP {
 
 def DSTOMOD {
   int NONE = 0;
+}
+
+def TRAPTYPE {
+  int LLVM_TRAP = 1;
+  int LLVM_DEBUG_TRAP = 2;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1132,6 +1139,8 @@ def VOP_F64_I32 : VOPProfile <[f64, i32, untyped, untyped]>;
 def VOP_I32_F32 : VOPProfile <[i32, f32, untyped, untyped]>;
 def VOP_I32_F64 : VOPProfile <[i32, f64, untyped, untyped]>;
 def VOP_I32_I32 : VOPProfile <[i32, i32, untyped, untyped]>;
+def VOP_F16_F32 : VOPProfile <[f16, f32, untyped, untyped]>;
+def VOP_F32_F16 : VOPProfile <[f32, f16, untyped, untyped]>;
 
 def VOP_F32_F32_F16 : VOPProfile <[f32, f32, f16, untyped]>;
 def VOP_F32_F32_F32 : VOPProfile <[f32, f32, f32, untyped]>;

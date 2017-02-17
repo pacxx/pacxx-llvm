@@ -13,10 +13,14 @@
 
 #include "ARMRegisterBankInfo.h"
 #include "ARMInstrInfo.h" // For the register classes
+#include "ARMSubtarget.h"
 #include "llvm/CodeGen/GlobalISel/RegisterBank.h"
 #include "llvm/CodeGen/GlobalISel/RegisterBankInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+
+#define GET_TARGET_REGBANK_IMPL
+#include "ARMGenRegisterBank.inc"
 
 using namespace llvm;
 
@@ -29,46 +33,20 @@ using namespace llvm;
 // into an ARMGenRegisterBankInfo.def (similar to AArch64).
 namespace llvm {
 namespace ARM {
-const uint32_t GPRCoverageData[] = {
-    // Classes 0-31
-    (1u << ARM::GPRRegClassID) | (1u << ARM::GPRwithAPSRRegClassID) |
-        (1u << ARM::GPRnopcRegClassID) | (1u << ARM::rGPRRegClassID) |
-        (1u << ARM::hGPRRegClassID) | (1u << ARM::tGPRRegClassID) |
-        (1u << ARM::GPRnopc_and_hGPRRegClassID) |
-        (1u << ARM::hGPR_and_rGPRRegClassID) | (1u << ARM::tcGPRRegClassID) |
-        (1u << ARM::tGPR_and_tcGPRRegClassID) | (1u << ARM::GPRspRegClassID) |
-        (1u << ARM::hGPR_and_tcGPRRegClassID),
-    // Classes 32-63
-    0,
-    // Classes 64-96
-    0,
-    // FIXME: Some of the entries below this point can be safely removed once
-    // this is tablegenerated. It's only needed because of the hardcoded
-    // register class limit.
-    // Classes 97-128
-    0,
-    // Classes 129-160
-    0,
-    // Classes 161-192
-    0,
-    // Classes 193-224
-    0,
-};
-
-// FIXME: The 200 will be replaced by the number of register classes when this is
-//        tablegenerated.
-RegisterBank GPRRegBank(ARM::GPRRegBankID, "GPRB", 32, ARM::GPRCoverageData, 200);
-RegisterBank *RegBanks[] = {&GPRRegBank};
-
 RegisterBankInfo::PartialMapping GPRPartialMapping{0, 32, GPRRegBank};
+RegisterBankInfo::PartialMapping SPRPartialMapping{0, 32, FPRRegBank};
+RegisterBankInfo::PartialMapping DPRPartialMapping{0, 64, FPRRegBank};
 
+// FIXME: Add the mapping for S(2n+1) as {32, 64, FPRRegBank}
 RegisterBankInfo::ValueMapping ValueMappings[] = {
-    {&GPRPartialMapping, 1}, {&GPRPartialMapping, 1}, {&GPRPartialMapping, 1}};
+    {&GPRPartialMapping, 1}, {&GPRPartialMapping, 1}, {&GPRPartialMapping, 1},
+    {&SPRPartialMapping, 1}, {&SPRPartialMapping, 1}, {&SPRPartialMapping, 1},
+    {&DPRPartialMapping, 1}, {&DPRPartialMapping, 1}, {&DPRPartialMapping, 1}};
 } // end namespace arm
 } // end namespace llvm
 
 ARMRegisterBankInfo::ARMRegisterBankInfo(const TargetRegisterInfo &TRI)
-    : RegisterBankInfo(ARM::RegBanks, ARM::NumRegisterBanks) {
+    : ARMGenRegisterBankInfo() {
   static bool AlreadyInit = false;
   // We have only one set of register banks, whatever the subtarget
   // is. Therefore, the initialization of the RegBanks table should be
@@ -110,6 +88,11 @@ const RegisterBank &ARMRegisterBankInfo::getRegBankFromRegClass(
   case GPRnopcRegClassID:
   case tGPR_and_tcGPRRegClassID:
     return getRegBank(ARM::GPRRegBankID);
+  case SPR_8RegClassID:
+  case SPRRegClassID:
+  case DPR_8RegClassID:
+  case DPRRegClassID:
+    return getRegBank(ARM::FPRRegBankID);
   default:
     llvm_unreachable("Unsupported register kind");
   }
@@ -131,24 +114,76 @@ ARMRegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
 
   using namespace TargetOpcode;
 
+  const MachineFunction &MF = *MI.getParent()->getParent();
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
+  LLT Ty = MRI.getType(MI.getOperand(0).getReg());
+
   unsigned NumOperands = MI.getNumOperands();
   const ValueMapping *OperandsMapping = &ARM::ValueMappings[0];
 
   switch (Opc) {
   case G_ADD:
-  case G_LOAD:
   case G_SEXT:
   case G_ZEXT:
     // FIXME: We're abusing the fact that everything lives in a GPR for now; in
     // the real world we would use different mappings.
     OperandsMapping = &ARM::ValueMappings[0];
     break;
+  case G_LOAD:
+    OperandsMapping = Ty.getSizeInBits() == 64
+                          ? getOperandsMapping({&ARM::ValueMappings[6],
+                                                &ARM::ValueMappings[0]})
+                          : &ARM::ValueMappings[0];
+    break;
+  case G_FADD:
+    assert((Ty.getSizeInBits() == 32 || Ty.getSizeInBits() == 64) &&
+           "Unsupported size for G_FADD");
+    OperandsMapping = Ty.getSizeInBits() == 64 ? &ARM::ValueMappings[6]
+                                               : &ARM::ValueMappings[3];
+    break;
   case G_FRAME_INDEX:
     OperandsMapping = getOperandsMapping({&ARM::ValueMappings[0], nullptr});
     break;
+  case G_SEQUENCE: {
+    // We only support G_SEQUENCE for creating a double precision floating point
+    // value out of two GPRs.
+    LLT Ty1 = MRI.getType(MI.getOperand(1).getReg());
+    LLT Ty2 = MRI.getType(MI.getOperand(3).getReg());
+    if (Ty.getSizeInBits() != 64 || Ty1.getSizeInBits() != 32 ||
+        Ty2.getSizeInBits() != 32)
+      return InstructionMapping{};
+    OperandsMapping =
+        getOperandsMapping({&ARM::ValueMappings[6], &ARM::ValueMappings[0],
+                            nullptr, &ARM::ValueMappings[0], nullptr});
+    break;
+  }
+  case G_EXTRACT: {
+    // We only support G_EXTRACT for splitting a double precision floating point
+    // value into two GPRs.
+    LLT Ty1 = MRI.getType(MI.getOperand(1).getReg());
+    LLT Ty2 = MRI.getType(MI.getOperand(2).getReg());
+    if (Ty.getSizeInBits() != 32 || Ty1.getSizeInBits() != 32 ||
+        Ty2.getSizeInBits() != 64)
+      return InstructionMapping{};
+    OperandsMapping =
+        getOperandsMapping({&ARM::ValueMappings[0], &ARM::ValueMappings[0],
+                            &ARM::ValueMappings[6], nullptr, nullptr});
+    break;
+  }
   default:
     return InstructionMapping{};
   }
+
+#ifndef NDEBUG
+  for (unsigned i = 0; i < NumOperands; i++) {
+    for (const auto &Mapping : OperandsMapping[i]) {
+      assert(
+          (Mapping.RegBank->getID() != ARM::FPRRegBankID ||
+           MF.getSubtarget<ARMSubtarget>().hasVFP2()) &&
+          "Trying to use floating point register bank on target without vfp");
+    }
+  }
+#endif
 
   return InstructionMapping{DefaultMappingID, /*Cost=*/1, OperandsMapping,
                             NumOperands};

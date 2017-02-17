@@ -3743,20 +3743,24 @@ def : Pat<(X86MFence), (MFENCE)>;
 // SSE 1 & 2 - Load/Store XCSR register
 //===----------------------------------------------------------------------===//
 
-def VLDMXCSR : VPSI<0xAE, MRM2m, (outs), (ins i32mem:$src),
-                  "ldmxcsr\t$src", [(int_x86_sse_ldmxcsr addr:$src)],
-                  IIC_SSE_LDMXCSR>, VEX, Sched<[WriteLoad]>;
-def VSTMXCSR : VPSI<0xAE, MRM3m, (outs), (ins i32mem:$dst),
-                  "stmxcsr\t$dst", [(int_x86_sse_stmxcsr addr:$dst)],
-                  IIC_SSE_STMXCSR>, VEX, Sched<[WriteStore]>;
+let Defs = [MXCSR] in
+  def VLDMXCSR : VPSI<0xAE, MRM2m, (outs), (ins i32mem:$src),
+                 "ldmxcsr\t$src", [(int_x86_sse_ldmxcsr addr:$src)],
+                 IIC_SSE_LDMXCSR>, VEX, Sched<[WriteLoad]>;
+let Uses = [MXCSR] in
+  def VSTMXCSR : VPSI<0xAE, MRM3m, (outs), (ins i32mem:$dst),
+                 "stmxcsr\t$dst", [(int_x86_sse_stmxcsr addr:$dst)],
+                 IIC_SSE_STMXCSR>, VEX, Sched<[WriteStore]>;
 
 let Predicates = [UseSSE1] in {
-def LDMXCSR : I<0xAE, MRM2m, (outs), (ins i32mem:$src),
-                "ldmxcsr\t$src", [(int_x86_sse_ldmxcsr addr:$src)],
-                IIC_SSE_LDMXCSR>, TB, Sched<[WriteLoad]>;
-def STMXCSR : I<0xAE, MRM3m, (outs), (ins i32mem:$dst),
-                "stmxcsr\t$dst", [(int_x86_sse_stmxcsr addr:$dst)],
-                IIC_SSE_STMXCSR>, TB, Sched<[WriteStore]>;
+  let Defs = [MXCSR] in
+    def LDMXCSR : I<0xAE, MRM2m, (outs), (ins i32mem:$src),
+                  "ldmxcsr\t$src", [(int_x86_sse_ldmxcsr addr:$src)],
+                  IIC_SSE_LDMXCSR>, TB, Sched<[WriteLoad]>;
+  let Uses = [MXCSR] in
+    def STMXCSR : I<0xAE, MRM3m, (outs), (ins i32mem:$dst),
+                  "stmxcsr\t$dst", [(int_x86_sse_stmxcsr addr:$dst)],
+                  IIC_SSE_STMXCSR>, TB, Sched<[WriteStore]>;
 }
 
 //===---------------------------------------------------------------------===//
@@ -4739,12 +4743,12 @@ def MOVPQIto64rr : RS2I<0x7E, MRMDestReg, (outs GR64:$dst), (ins VR128:$src),
 } //SchedRW
 
 let isCodeGenOnly = 1, ForceDisassemble = 1, hasSideEffects = 0, mayStore = 1 in
-def VMOVPQIto64rm : VRS2I<0x7E, MRMDestMem, (outs),
+def VMOVPQIto64mr : VRS2I<0x7E, MRMDestMem, (outs),
                           (ins i64mem:$dst, VR128:$src),
                           "movq\t{$src, $dst|$dst, $src}",
                           [], IIC_SSE_MOVDQ>, VEX, Sched<[WriteStore]>;
 let isCodeGenOnly = 1, ForceDisassemble = 1, hasSideEffects = 0, mayStore = 1 in
-def MOVPQIto64rm : RS2I<0x7E, MRMDestMem, (outs), (ins i64mem:$dst, VR128:$src),
+def MOVPQIto64mr : RS2I<0x7E, MRMDestMem, (outs), (ins i64mem:$dst, VR128:$src),
                         "mov{d|q}\t{$src, $dst|$dst, $src}",
                         [], IIC_SSE_MOVDQ>, Sched<[WriteStore]>;
 } // ExeDomain = SSEPackedInt
@@ -6067,20 +6071,20 @@ multiclass SS41I_extract64<bits<8> opc, string OpcodeStr> {
                   "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
                  [(set GR64:$dst,
                   (extractelt (v2i64 VR128:$src1), imm:$src2))]>,
-                  Sched<[WriteShuffle]>, REX_W;
+                  Sched<[WriteShuffle]>;
   let SchedRW = [WriteShuffleLd, WriteRMW] in
   def mr : SS4AIi8<opc, MRMDestMem, (outs),
                  (ins i64mem:$dst, VR128:$src1, u8imm:$src2),
                  !strconcat(OpcodeStr,
                   "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
                  [(store (extractelt (v2i64 VR128:$src1), imm:$src2),
-                          addr:$dst)]>, REX_W;
+                          addr:$dst)]>;
 }
 
 let Predicates = [HasAVX, NoDQI] in
   defm VPEXTRQ : SS41I_extract64<0x16, "vpextrq">, VEX, VEX_W;
 
-defm PEXTRQ      : SS41I_extract64<0x16, "pextrq">;
+defm PEXTRQ      : SS41I_extract64<0x16, "pextrq">, REX_W;
 
 /// SS41I_extractf32 - SSE 4.1 extract 32 bits fp value to int reg or memory
 /// destination
@@ -6984,6 +6988,19 @@ let Constraints = "$src1 = $dst" in {
                                   SSE_DPPD_ITINS>;
 }
 
+// For insertion into the zero index (low half) of a 256-bit vector, it is
+// more efficient to generate a blend with immediate instead of an insert*128.
+let Predicates = [HasAVX] in {
+def : Pat<(insert_subvector (v4f64 VR256:$src1), (v2f64 VR128:$src2), (iPTR 0)),
+          (VBLENDPDYrri VR256:$src1,
+                        (INSERT_SUBREG (v4f64 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0x3)>;
+def : Pat<(insert_subvector (v8f32 VR256:$src1), (v4f32 VR128:$src2), (iPTR 0)),
+          (VBLENDPSYrri VR256:$src1,
+                        (INSERT_SUBREG (v8f32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+}
+
 /// SS41I_quaternary_int_avx - AVX SSE 4.1 with 4 operators
 multiclass SS41I_quaternary_int_avx<bits<8> opc, string OpcodeStr,
                                     RegisterClass RC, X86MemOperand x86memop,
@@ -7129,14 +7146,14 @@ let Uses = [XMM0], Constraints = "$src1 = $dst" in {
     def rr0 : SS48I<opc, MRMSrcReg, (outs VR128:$dst),
                     (ins VR128:$src1, VR128:$src2),
                     !strconcat(OpcodeStr,
-                     "\t{$src2, $dst|$dst, $src2}"),
+                     "\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}"),
                     [(set VR128:$dst, (IntId VR128:$src1, VR128:$src2, XMM0))],
                     itins.rr>, Sched<[itins.Sched]>;
 
     def rm0 : SS48I<opc, MRMSrcMem, (outs VR128:$dst),
                     (ins VR128:$src1, x86memop:$src2),
                     !strconcat(OpcodeStr,
-                     "\t{$src2, $dst|$dst, $src2}"),
+                     "\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}"),
                     [(set VR128:$dst,
                       (IntId VR128:$src1,
                        (bitconvert (mem_frag addr:$src2)), XMM0))],
@@ -7157,18 +7174,18 @@ defm PBLENDVB : SS41I_ternary_int<0x10, "pblendvb", memopv2i64, i128mem,
                                   DEFAULT_ITINS_VARBLENDSCHED>;
 
 // Aliases with the implicit xmm0 argument
-def : InstAlias<"blendvpd\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (BLENDVPDrr0 VR128:$dst, VR128:$src2)>;
-def : InstAlias<"blendvpd\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (BLENDVPDrm0 VR128:$dst, f128mem:$src2)>;
-def : InstAlias<"blendvps\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (BLENDVPSrr0 VR128:$dst, VR128:$src2)>;
-def : InstAlias<"blendvps\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (BLENDVPSrm0 VR128:$dst, f128mem:$src2)>;
-def : InstAlias<"pblendvb\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (PBLENDVBrr0 VR128:$dst, VR128:$src2)>;
-def : InstAlias<"pblendvb\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (PBLENDVBrm0 VR128:$dst, i128mem:$src2)>;
+def : InstAlias<"blendvpd\t{$src2, $dst|$dst, $src2}",
+                (BLENDVPDrr0 VR128:$dst, VR128:$src2), 0>;
+def : InstAlias<"blendvpd\t{$src2, $dst|$dst, $src2}",
+                (BLENDVPDrm0 VR128:$dst, f128mem:$src2), 0>;
+def : InstAlias<"blendvps\t{$src2, $dst|$dst, $src2}",
+                (BLENDVPSrr0 VR128:$dst, VR128:$src2), 0>;
+def : InstAlias<"blendvps\t{$src2, $dst|$dst, $src2}",
+                (BLENDVPSrm0 VR128:$dst, f128mem:$src2), 0>;
+def : InstAlias<"pblendvb\t{$src2, $dst|$dst, $src2}",
+                (PBLENDVBrr0 VR128:$dst, VR128:$src2), 0>;
+def : InstAlias<"pblendvb\t{$src2, $dst|$dst, $src2}",
+                (PBLENDVBrm0 VR128:$dst, i128mem:$src2), 0>;
 
 let Predicates = [UseSSE41] in {
   def : Pat<(v16i8 (vselect (v16i8 XMM0), (v16i8 VR128:$src1),
@@ -7479,14 +7496,18 @@ multiclass SHAI_binop<bits<8> Opc, string OpcodeStr, Intrinsic IntId,
                       bit UsesXMM0 = 0> {
   def rr : I<Opc, MRMSrcReg, (outs VR128:$dst),
              (ins VR128:$src1, VR128:$src2),
-             !strconcat(OpcodeStr, "\t{$src2, $dst|$dst, $src2}"),
+             !if(UsesXMM0,
+                 !strconcat(OpcodeStr, "\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}"),
+                 !strconcat(OpcodeStr, "\t{$src2, $dst|$dst, $src2}")),
              [!if(UsesXMM0,
                   (set VR128:$dst, (IntId VR128:$src1, VR128:$src2, XMM0)),
                   (set VR128:$dst, (IntId VR128:$src1, VR128:$src2)))]>, T8;
 
   def rm : I<Opc, MRMSrcMem, (outs VR128:$dst),
              (ins VR128:$src1, i128mem:$src2),
-             !strconcat(OpcodeStr, "\t{$src2, $dst|$dst, $src2}"),
+             !if(UsesXMM0,
+                 !strconcat(OpcodeStr, "\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}"),
+                 !strconcat(OpcodeStr, "\t{$src2, $dst|$dst, $src2}")),
              [!if(UsesXMM0,
                   (set VR128:$dst, (IntId VR128:$src1,
                     (bc_v4i32 (memopv2i64 addr:$src2)), XMM0)),
@@ -7521,10 +7542,10 @@ let Constraints = "$src1 = $dst", Predicates = [HasSHA] in {
 }
 
 // Aliases with explicit %xmm0
-def : InstAlias<"sha256rnds2\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (SHA256RNDS2rr VR128:$dst, VR128:$src2)>;
-def : InstAlias<"sha256rnds2\t{%xmm0, $src2, $dst|$dst, $src2, xmm0}",
-                (SHA256RNDS2rm VR128:$dst, i128mem:$src2)>;
+def : InstAlias<"sha256rnds2\t{$src2, $dst|$dst, $src2}",
+                (SHA256RNDS2rr VR128:$dst, VR128:$src2), 0>;
+def : InstAlias<"sha256rnds2\t{$src2, $dst|$dst, $src2}",
+                (SHA256RNDS2rm VR128:$dst, i128mem:$src2), 0>;
 
 //===----------------------------------------------------------------------===//
 // AES-NI Instructions
@@ -8056,6 +8077,7 @@ def : Pat<(v16i16 (X86VPerm2x128 VR256:$src1,
 //===----------------------------------------------------------------------===//
 // VZERO - Zero YMM registers
 //
+// Note, these instruction do not affect the YMM16-YMM31.
 let Defs = [YMM0, YMM1, YMM2, YMM3, YMM4, YMM5, YMM6, YMM7,
             YMM8, YMM9, YMM10, YMM11, YMM12, YMM13, YMM14, YMM15] in {
   // Zero All YMM registers
@@ -8172,6 +8194,46 @@ defm VPBLENDD : AVX2_binop_rmi<0x02, "vpblendd", X86Blendi, v4i32,
                                VR128, loadv2i64, i128mem>;
 defm VPBLENDDY : AVX2_binop_rmi<0x02, "vpblendd", X86Blendi, v8i32,
                                 VR256, loadv4i64, i256mem>, VEX_L;
+
+// For insertion into the zero index (low half) of a 256-bit vector, it is
+// more efficient to generate a blend with immediate instead of an insert*128.
+let Predicates = [HasAVX2] in {
+def : Pat<(insert_subvector (v8i32 VR256:$src1), (v4i32 VR128:$src2), (iPTR 0)),
+          (VPBLENDDYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+def : Pat<(insert_subvector (v4i64 VR256:$src1), (v2i64 VR128:$src2), (iPTR 0)),
+          (VPBLENDDYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+def : Pat<(insert_subvector (v16i16 VR256:$src1), (v8i16 VR128:$src2), (iPTR 0)),
+          (VPBLENDDYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+def : Pat<(insert_subvector (v32i8 VR256:$src1), (v16i8 VR128:$src2), (iPTR 0)),
+          (VPBLENDDYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+}
+
+let Predicates = [HasAVX1Only] in {
+def : Pat<(insert_subvector (v8i32 VR256:$src1), (v4i32 VR128:$src2), (iPTR 0)),
+          (VBLENDPSYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+def : Pat<(insert_subvector (v4i64 VR256:$src1), (v2i64 VR128:$src2), (iPTR 0)),
+          (VBLENDPSYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+def : Pat<(insert_subvector (v16i16 VR256:$src1), (v8i16 VR128:$src2), (iPTR 0)),
+          (VBLENDPSYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+def : Pat<(insert_subvector (v32i8 VR256:$src1), (v16i8 VR128:$src2), (iPTR 0)),
+          (VBLENDPSYrri VR256:$src1,
+                        (INSERT_SUBREG (v8i32 (IMPLICIT_DEF)),
+                                       VR128:$src2, sub_xmm), 0xf)>;
+}
 
 //===----------------------------------------------------------------------===//
 // VPBROADCAST - Load from memory and broadcast to all elements of the

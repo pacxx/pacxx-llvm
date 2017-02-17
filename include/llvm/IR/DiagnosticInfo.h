@@ -403,8 +403,8 @@ public:
     DebugLoc DLoc;
 
     explicit Argument(StringRef Str = "") : Key("String"), Val(Str) {}
-    Argument(StringRef Key, Value *V);
-    Argument(StringRef Key, Type *T);
+    Argument(StringRef Key, const Value *V);
+    Argument(StringRef Key, const Type *T);
     Argument(StringRef Key, int N);
     Argument(StringRef Key, unsigned N);
     Argument(StringRef Key, bool B) : Key(Key), Val(B ? "true" : "false") {}
@@ -891,6 +891,14 @@ public:
       : DiagnosticInfoIROptimization(DK_OptimizationFailure, DS_Warning,
                                      nullptr, Fn, DLoc, Msg) {}
 
+  /// \p PassName is the name of the pass emitting this diagnostic.  \p
+  /// RemarkName is a textual identifier for the remark (single-word,
+  /// camel-case).  \p DLoc is the debug location and \p CodeRegion is the
+  /// region that the optimization operates on (currently basic block is
+  /// supported).
+  DiagnosticInfoOptimizationFailure(const char *PassName, StringRef RemarkName,
+                                    const DebugLoc &DLoc, Value *CodeRegion);
+
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationFailure;
   }
@@ -926,19 +934,6 @@ public:
 
   void print(DiagnosticPrinter &DP) const override;
 };
-
-/// Emit a warning when loop vectorization is specified but fails. \p Fn is the
-/// function triggering the warning, \p DLoc is the debug location where the
-/// diagnostic is generated. \p Msg is the message string to use.
-void emitLoopVectorizeWarning(LLVMContext &Ctx, const Function &Fn,
-                              const DebugLoc &DLoc, const Twine &Msg);
-
-/// Emit a warning when loop interleaving is specified but fails. \p Fn is the
-/// function triggering the warning, \p DLoc is the debug location where the
-/// diagnostic is generated. \p Msg is the message string to use.
-void emitLoopInterleaveWarning(LLVMContext &Ctx, const Function &Fn,
-                               const DebugLoc &DLoc, const Twine &Msg);
-
 } // end namespace llvm
 
 #endif // LLVM_IR_DIAGNOSTICINFO_H

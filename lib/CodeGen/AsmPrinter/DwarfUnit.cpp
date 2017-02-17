@@ -672,7 +672,7 @@ DIE *DwarfUnit::getOrCreateContextDIE(const DIScope *Context) {
   return getDIE(Context);
 }
 
-DIE *DwarfUnit::createTypeDIE(const DICompositeType *Ty) {
+DIE *DwarfTypeUnit::createTypeDIE(const DICompositeType *Ty) {
   auto *Context = resolve(Ty->getScope());
   DIE *ContextDIE = getOrCreateContextDIE(Context);
 
@@ -1184,7 +1184,7 @@ void DwarfUnit::applySubprogramAttributes(const DISubprogram *SP, DIE &SPDie,
   // If -fdebug-info-for-profiling is enabled, need to emit the subprogram
   // and its source location.
   bool SkipSPSourceLocation = SkipSPAttributes &&
-                              !Asm->TM.Options.DebugInfoForProfiling;
+                              !CUNode->getDebugInfoForProfiling();
   if (!SkipSPSourceLocation)
     if (applySubprogramDefinitionAttributes(SP, SPDie))
       return;
@@ -1568,4 +1568,14 @@ bool DwarfTypeUnit::isDwoUnit() const {
   // Since there are no skeleton type units, all type units are dwo type units
   // when split DWARF is being used.
   return DD->useSplitDwarf();
+}
+
+void DwarfTypeUnit::addGlobalName(StringRef Name, const DIE &Die,
+                                  const DIScope *Context) {
+  getCU().addGlobalNameForTypeUnit(Name, Context);
+}
+
+void DwarfTypeUnit::addGlobalType(const DIType *Ty, const DIE &Die,
+                                  const DIScope *Context) {
+  getCU().addGlobalTypeUnitType(Ty, Context);
 }
