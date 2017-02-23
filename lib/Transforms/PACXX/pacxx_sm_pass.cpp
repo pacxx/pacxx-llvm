@@ -11,7 +11,8 @@ namespace llvm {
     void initializePACXXNativeSMTransformerPass(PassRegistry&);
 }
 
-PACXXNativeSMTransformer::PACXXNativeSMTransformer() : FunctionPass(ID) {
+PACXXNativeSMTransformer::PACXXNativeSMTransformer() : ModulePass(ID) {
+    __verbose("created sm pass\n");
     initializePACXXNativeSMTransformerPass(*PassRegistry::getPassRegistry());
 }
 
@@ -21,16 +22,27 @@ void PACXXNativeSMTransformer::releaseMemory() {}
 
 void PACXXNativeSMTransformer::getAnalysisUsage(AnalysisUsage &AU) const {}
 
-bool PACXXNativeSMTransformer::runOnFunction(Function &F) {
+bool PACXXNativeSMTransformer::runOnModule(Module &M) {
 
-    auto argIt = F.arg_end();
+    __verbose("Generating shared memory \n");
+
+    auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
+
+    for(auto &kernel : kernels) {
+        __verbose(kernel->getName().str());
+        runOnKernel(kernel);
+    }
+
+    return true;
+}
+
+void PACXXNativeSMTransformer::runOnKernel(Function *kernel) {
+    auto argIt = kernel->arg_end();
 
     // the sm_size is always the second last arg
     Value *sm_size = &*(--(--argIt));
 
-    createSharedMemoryBuffer(&F, sm_size);
-
-    return true;
+    createSharedMemoryBuffer(kernel, sm_size);
 }
 
 void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *sm_size) {
@@ -205,13 +217,10 @@ void PACXXNativeSMTransformer::replaceAllUsesInKernel(Function *kernel, Value *f
     return;
 }
 
+char PACXXNativeSMTransformer::ID = 0;
+
 namespace llvm {
     Pass* createPACXXNativeSMPass() { return new PACXXNativeSMTransformer(); }
 }
-
-char PACXXNativeSMTransformer::ID = 0;
-
-INITIALIZE_PASS_BEGIN(PACXXNativeSMTransformer, "native-sm", "creation of shared memory", true, true)
-INITIALIZE_PASS_END(PACXXNativeSMTransformer, "native-sm", "creation of shared memory", true, true)
 
 

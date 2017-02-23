@@ -30,7 +30,7 @@ using namespace llvm;
 using namespace std;
 using namespace pacxx;
 
-class PACXXNativeSMTransformer : public FunctionPass {
+class PACXXNativeSMTransformer : public ModulePass {
 
 public:
     static char ID;
@@ -43,7 +43,9 @@ public:
 
     void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-    bool runOnFunction(Function &F) override;
+    bool runOnModule(Module &M) override;
+
+    void runOnKernel(Function *kernel);
 
 private:
     struct ConstantUser {

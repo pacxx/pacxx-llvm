@@ -28,7 +28,7 @@ Pass *createPACXXIdRemoverPass();
 Pass *createSPMDVectorizerPass();
 Pass *createPACXXLivenessAnalyzerPass();
 Pass *createPACXXNativeBarrierPass();
-Pass* createPACXXNativeSMPass();
+Pass *createPACXXNativeSMPass();
 Pass *createPACXXNativeLinkerPass();
 }
 

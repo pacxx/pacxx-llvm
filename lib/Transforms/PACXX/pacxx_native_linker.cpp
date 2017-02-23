@@ -2,7 +2,6 @@
 
 #define PACXX_PASS_NAME "PACXXNativeLinker"
 #include "Log.h"
-#include "pacxx_sm_pass.h"
 #include "ModuleHelper.h"
 
 using namespace llvm;
@@ -42,6 +41,8 @@ namespace llvm {
         void replaceDummyWithKernelIfNeeded(Function *wrapper, Function *kernel, SmallVector<Value *, 8> &kernelArgs,
                                             bool vectorized, bool barrier);
         void removeDeadCalls(Function *wrapper, Value3 &blockId, Value3 &maxBlock, Value3 &maxId);
+
+        void markWrapperAsKernel(Module &M, Function *wrapper);
     };
 
     bool PACXXNativeLinker::runOnModule(Module &M) {
@@ -90,14 +91,12 @@ namespace llvm {
             vecFoo->eraseFromParent();
           }
         }
+
         F->eraseFromParent();
         foo->eraseFromParent();
 
-        __verbose("creating shared mem \n");
-        // At this point we inlined all kernels and can safely replace the shared mem global variable
-        //create shared memory buffer
-        PACXXNativeSMTransformer smTransformer;
-        smTransformer.runOnFunction(*wrapper);
+        // finally mark the created wrapper as a kernel
+        markWrapperAsKernel(M, wrapper);
       }
 
       Function *origFoo = M.getFunction("foo");
@@ -206,6 +205,8 @@ namespace llvm {
       BasicBlock *entry = BasicBlock::Create(ctx, "entry", wrappedF);
 
       *term = ReturnInst::Create(ctx, entry);
+
+
 
       return wrappedF;
     }
@@ -399,6 +400,17 @@ namespace llvm {
         __verbose("deleting \n");
         for (auto I : dead_calls)
           I->eraseFromParent();
+    }
+
+    void PACXXNativeLinker::markWrapperAsKernel(Module &M, Function *wrapper) {
+      LLVMContext &ctx = M.getContext();
+      NamedMDNode *MD = M.getOrInsertNamedMetadata("nvvm.annotations");
+      SmallVector<Metadata *, 3> MDVals;
+      MDVals.push_back(ConstantAsMetadata::get(wrapper));
+      MDVals.push_back(MDString::get(ctx, "kernel"));
+      MDVals.push_back(ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(ctx), 1)));
+
+      MD->addOperand(MDNode::get(ctx, MDVals));
     }
 
     char PACXXNativeLinker::ID = 0;

@@ -8,7 +8,7 @@ using namespace std;
 using namespace pacxx;
 
 
-class PACXXNativeBarrier : public llvm::ModulePass {
+class PACXXNativeBarrier : public ModulePass {
 
 public:
     static char ID;
