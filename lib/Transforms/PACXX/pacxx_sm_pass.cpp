@@ -219,6 +219,11 @@ void PACXXNativeSMTransformer::replaceAllUsesInKernel(Function *kernel, Value *f
 
 char PACXXNativeSMTransformer::ID = 0;
 
+INITIALIZE_PASS_BEGIN(PACXXNativeSMTransformer, "sm-transformer",
+                "Shared memory pass", true, true)
+INITIALIZE_PASS_END(PACXXNativeSMTransformer, "sm-transformer",
+                "Shared memory pass", true, true)
+
 namespace llvm {
     Pass* createPACXXNativeSMPass() { return new PACXXNativeSMTransformer(); }
 }
