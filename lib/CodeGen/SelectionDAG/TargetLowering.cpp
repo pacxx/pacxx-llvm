@@ -471,6 +471,21 @@ TargetLowering::TargetLoweringOpt::SimplifyDemandedBits(SDNode *User,
   return true;
 }
 
+bool TargetLowering::SimplifyDemandedBits(SDValue Op, APInt &DemandedMask,
+                                          DAGCombinerInfo &DCI) const {
+
+  SelectionDAG &DAG = DCI.DAG;
+  TargetLoweringOpt TLO(DAG, !DCI.isBeforeLegalize(),
+                        !DCI.isBeforeLegalizeOps());
+  APInt KnownZero, KnownOne;
+
+  bool Simplified = SimplifyDemandedBits(Op, DemandedMask, KnownZero, KnownOne,
+                                         TLO);
+  if (Simplified)
+    DCI.CommitTargetLoweringOpt(TLO);
+  return Simplified;
+}
+
 /// Look at Op. At this point, we know that only the DemandedMask bits of the
 /// result of Op are ever used downstream. If we can use this information to
 /// simplify Op, create a new simplified DAG node and return true, returning the
@@ -1099,7 +1114,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     EVT InVT = Op.getOperand(0).getValueType();
     unsigned InBits = InVT.getScalarSizeInBits();
     APInt InMask    = APInt::getLowBitsSet(BitWidth, InBits);
-    APInt InSignBit = APInt::getBitsSet(BitWidth, InBits - 1, InBits);
+    APInt InSignBit = APInt::getOneBitSet(BitWidth, InBits - 1);
     APInt NewBits   = ~InMask & NewMask;
 
     // If none of the top bits are demanded, convert this into an any_extend.

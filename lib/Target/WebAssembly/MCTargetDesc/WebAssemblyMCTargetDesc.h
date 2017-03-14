@@ -42,6 +42,9 @@ MCAsmBackend *createWebAssemblyAsmBackend(const Triple &TT);
 MCObjectWriter *createWebAssemblyELFObjectWriter(raw_pwrite_stream &OS,
                                                  bool Is64Bit, uint8_t OSABI);
 
+MCObjectWriter *createWebAssemblyWasmObjectWriter(raw_pwrite_stream &OS,
+                                                  bool Is64Bit);
+
 namespace WebAssembly {
 enum OperandType {
   /// Basic block label in a branch construct.
@@ -65,7 +68,9 @@ enum OperandType {
   /// p2align immediate for load and store address alignment.
   OPERAND_P2ALIGN,
   /// signature immediate for block/loop.
-  OPERAND_SIGNATURE
+  OPERAND_SIGNATURE,
+  /// type signature immediate for call_indirect.
+  OPERAND_TYPEINDEX,
 };
 } // end namespace WebAssembly
 

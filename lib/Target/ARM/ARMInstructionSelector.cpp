@@ -148,23 +148,19 @@ static bool selectExtract(MachineInstrBuilder &MIB, const ARMBaseInstrInfo &TII,
   (void)VReg0;
   assert(MRI.getType(VReg0).getSizeInBits() == 32 &&
          RBI.getRegBank(VReg0, MRI, TRI)->getID() == ARM::GPRRegBankID &&
-         "Unsupported operand for G_SEQUENCE");
+         "Unsupported operand for G_EXTRACT");
   unsigned VReg1 = MIB->getOperand(1).getReg();
   (void)VReg1;
-  assert(MRI.getType(VReg1).getSizeInBits() == 32 &&
-         RBI.getRegBank(VReg1, MRI, TRI)->getID() == ARM::GPRRegBankID &&
-         "Unsupported operand for G_SEQUENCE");
-  unsigned VReg2 = MIB->getOperand(2).getReg();
-  (void)VReg2;
-  assert(MRI.getType(VReg2).getSizeInBits() == 64 &&
-         RBI.getRegBank(VReg2, MRI, TRI)->getID() == ARM::FPRRegBankID &&
-         "Unsupported operand for G_SEQUENCE");
+  assert(MRI.getType(VReg1).getSizeInBits() == 64 &&
+         RBI.getRegBank(VReg1, MRI, TRI)->getID() == ARM::FPRRegBankID &&
+         "Unsupported operand for G_EXTRACT");
+  assert(MIB->getOperand(2).getImm() % 32 == 0 &&
+         "Unsupported operand for G_EXTRACT");
 
   // Remove the operands corresponding to the offsets.
-  MIB->RemoveOperand(4);
-  MIB->RemoveOperand(3);
+  MIB->getOperand(2).setImm(MIB->getOperand(2).getImm() / 32);
 
-  MIB->setDesc(TII.get(ARM::VMOVRRD));
+  MIB->setDesc(TII.get(ARM::VGETLNi32));
   MIB.add(predOps(ARMCC::AL));
 
   return true;
@@ -172,11 +168,13 @@ static bool selectExtract(MachineInstrBuilder &MIB, const ARMBaseInstrInfo &TII,
 
 /// Select the opcode for simple extensions (that translate to a single SXT/UXT
 /// instruction). Extension operations more complicated than that should not
-/// invoke this.
+/// invoke this. Returns the original opcode if it doesn't know how to select a
+/// better one.
 static unsigned selectSimpleExtOpc(unsigned Opc, unsigned Size) {
   using namespace TargetOpcode;
 
-  assert((Size == 8 || Size == 16) && "Unsupported size");
+  if (Size != 8 && Size != 16)
+    return Opc;
 
   if (Opc == G_SEXT)
     return Size == 8 ? ARM::SXTB : ARM::SXTH;
@@ -184,35 +182,42 @@ static unsigned selectSimpleExtOpc(unsigned Opc, unsigned Size) {
   if (Opc == G_ZEXT)
     return Size == 8 ? ARM::UXTB : ARM::UXTH;
 
-  llvm_unreachable("Unsupported opcode");
+  return Opc;
 }
 
-/// Select the opcode for simple loads. For types smaller than 32 bits, the
-/// value will be zero extended.
-static unsigned selectLoadOpCode(unsigned RegBank, unsigned Size) {
+/// Select the opcode for simple loads and stores. For types smaller than 32
+/// bits, the value will be zero extended. Returns the original opcode if it
+/// doesn't know how to select a better one.
+static unsigned selectLoadStoreOpCode(unsigned Opc, unsigned RegBank,
+                                      unsigned Size) {
+  bool isStore = Opc == TargetOpcode::G_STORE;
+
   if (RegBank == ARM::GPRRegBankID) {
     switch (Size) {
     case 1:
     case 8:
-      return ARM::LDRBi12;
+      return isStore ? ARM::STRBi12 : ARM::LDRBi12;
     case 16:
-      return ARM::LDRH;
+      return isStore ? ARM::STRH : ARM::LDRH;
     case 32:
-      return ARM::LDRi12;
+      return isStore ? ARM::STRi12 : ARM::LDRi12;
+    default:
+      return Opc;
     }
-
-    llvm_unreachable("Unsupported size");
   }
 
-  assert(RegBank == ARM::FPRRegBankID && "Unsupported register bank");
-  switch (Size) {
-  case 32:
-    return ARM::VLDRS;
-  case 64:
-    return ARM::VLDRD;
+  if (RegBank == ARM::FPRRegBankID) {
+    switch (Size) {
+    case 32:
+      return isStore ? ARM::VSTRS : ARM::VLDRS;
+    case 64:
+      return isStore ? ARM::VSTRD : ARM::VLDRD;
+    default:
+      return Opc;
+    }
   }
 
-  llvm_unreachable("Unsupported size");
+  return Opc;
 }
 
 bool ARMInstructionSelector::select(MachineInstr &I) const {
@@ -277,6 +282,8 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     case 8:
     case 16: {
       unsigned NewOpc = selectSimpleExtOpc(I.getOpcode(), SrcSize);
+      if (NewOpc == I.getOpcode())
+        return false;
       I.setDesc(TII.get(NewOpc));
       MIB.addImm(0).add(predOps(ARMCC::AL));
       break;
@@ -288,6 +295,7 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     break;
   }
   case G_ADD:
+  case G_GEP:
     I.setDesc(TII.get(ARM::ADDrr));
     MIB.add(predOps(ARMCC::AL)).add(condCodeOp());
     break;
@@ -301,26 +309,41 @@ bool ARMInstructionSelector::select(MachineInstr &I) const {
     I.setDesc(TII.get(ARM::ADDri));
     MIB.addImm(0).add(predOps(ARMCC::AL)).add(condCodeOp());
     break;
+  case G_CONSTANT: {
+    unsigned Reg = I.getOperand(0).getReg();
+    if (MRI.getType(Reg).getSizeInBits() != 32)
+      return false;
+
+    assert(RBI.getRegBank(Reg, MRI, TRI)->getID() == ARM::GPRRegBankID &&
+           "Expected constant to live in a GPR");
+    I.setDesc(TII.get(ARM::MOVi));
+    MIB.add(predOps(ARMCC::AL)).add(condCodeOp());
+    break;
+  }
+  case G_STORE:
   case G_LOAD: {
+    const auto &MemOp = **I.memoperands_begin();
+    if (MemOp.getOrdering() != AtomicOrdering::NotAtomic) {
+      DEBUG(dbgs() << "Atomic load/store not supported yet\n");
+      return false;
+    }
+
     unsigned Reg = I.getOperand(0).getReg();
     unsigned RegBank = RBI.getRegBank(Reg, MRI, TRI)->getID();
 
     LLT ValTy = MRI.getType(Reg);
     const auto ValSize = ValTy.getSizeInBits();
 
-    if (ValSize != 64 && ValSize != 32 && ValSize != 16 && ValSize != 8 &&
-        ValSize != 1)
+    assert((ValSize != 64 || TII.getSubtarget().hasVFP2()) &&
+           "Don't know how to load/store 64-bit value without VFP");
+
+    const auto NewOpc = selectLoadStoreOpCode(I.getOpcode(), RegBank, ValSize);
+    if (NewOpc == G_LOAD || NewOpc == G_STORE)
       return false;
 
-    assert((ValSize != 64 || RegBank == ARM::FPRRegBankID) &&
-           "64-bit values should live in the FPR");
-    assert((ValSize != 64 || TII.getSubtarget().hasVFP2()) &&
-           "Don't know how to load 64-bit value without VFP");
-
-    const auto NewOpc = selectLoadOpCode(RegBank, ValSize);
     I.setDesc(TII.get(NewOpc));
 
-    if (NewOpc == ARM::LDRH)
+    if (NewOpc == ARM::LDRH || NewOpc == ARM::STRH)
       // LDRH has a funny addressing mode (there's already a FIXME for it).
       MIB.addReg(0);
     MIB.addImm(0).add(predOps(ARMCC::AL));

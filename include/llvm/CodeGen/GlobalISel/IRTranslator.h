@@ -34,6 +34,7 @@ class Instruction;
 class MachineBasicBlock;
 class MachineFunction;
 class MachineInstr;
+class OptimizationRemarkEmitter;
 class MachineRegisterInfo;
 class TargetPassConfig;
 
@@ -142,6 +143,8 @@ private:
   bool translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
                                MachineIRBuilder &MIRBuilder);
 
+  bool translateInlineAsm(const CallInst &CI, MachineIRBuilder &MIRBuilder);
+
   /// Translate call instruction.
   /// \pre \p U is a call instruction.
   bool translateCall(const User &U, MachineIRBuilder &MIRBuilder);
@@ -204,6 +207,8 @@ private:
   /// this to succeed.
   /// \pre \p U is a return instruction.
   bool translateRet(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateFSub(const User &U, MachineIRBuilder &MIRBuilder);
 
   bool translateAdd(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_ADD, U, MIRBuilder);
@@ -287,9 +292,6 @@ private:
   bool translateFAdd(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_FADD, U, MIRBuilder);
   }
-  bool translateFSub(const User &U, MachineIRBuilder &MIRBuilder) {
-    return translateBinaryOp(TargetOpcode::G_FSUB, U, MIRBuilder);
-  }
   bool translateFMul(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_FMUL, U, MIRBuilder);
   }
@@ -301,6 +303,10 @@ private:
   }
 
   bool translateVAArg(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateInsertElement(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateExtractElement(const User &U, MachineIRBuilder &MIRBuilder);
 
   // Stubs to keep the compiler happy while we implement the rest of the
   // translation.
@@ -340,12 +346,6 @@ private:
   bool translateUserOp2(const User &U, MachineIRBuilder &MIRBuilder) {
     return false;
   }
-  bool translateExtractElement(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
-  bool translateInsertElement(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
   bool translateShuffleVector(const User &U, MachineIRBuilder &MIRBuilder) {
     return false;
   }
@@ -372,6 +372,9 @@ private:
 
   /// Current target configuration. Controls how the pass handles errors.
   const TargetPassConfig *TPC;
+
+  /// Current optimization remark emitter. Used to report failures.
+  std::unique_ptr<OptimizationRemarkEmitter> ORE;
 
   // * Insert all the code needed to materialize the constants
   // at the proper place. E.g., Entry block or dominator block

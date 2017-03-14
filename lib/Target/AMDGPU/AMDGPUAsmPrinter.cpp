@@ -381,6 +381,10 @@ void AMDGPUAsmPrinter::getSIProgramInfo(SIProgramInfo &ProgInfo,
         case AMDGPU::EXEC_HI:
         case AMDGPU::SCC:
         case AMDGPU::M0:
+        case AMDGPU::SRC_SHARED_BASE:
+        case AMDGPU::SRC_SHARED_LIMIT:
+        case AMDGPU::SRC_PRIVATE_BASE:
+        case AMDGPU::SRC_PRIVATE_LIMIT:
           continue;
 
         case AMDGPU::VCC:
@@ -582,7 +586,7 @@ void AMDGPUAsmPrinter::getSIProgramInfo(SIProgramInfo &ProgInfo,
   ProgInfo.IEEEMode = STM.enableIEEEBit(MF);
 
   // Make clamp modifier on NaN input returns 0.
-  ProgInfo.DX10Clamp = 1;
+  ProgInfo.DX10Clamp = STM.enableDX10Clamp();
 
   const MachineFrameInfo &FrameInfo = MF.getFrameInfo();
   ProgInfo.ScratchSize = FrameInfo.getStackSize();

@@ -644,12 +644,17 @@ bool AMDGPUTargetLowering::isCheapToSpeculateCtlz() const {
 
 bool AMDGPUTargetLowering::isFAbsFree(EVT VT) const {
   assert(VT.isFloatingPoint());
-  return VT == MVT::f32 || VT == MVT::f64 || (Subtarget->has16BitInsts() &&
-                                              VT == MVT::f16);
+
+  // Packed operations do not have a fabs modifier.
+  return VT == MVT::f32 || VT == MVT::f64 ||
+         (Subtarget->has16BitInsts() && VT == MVT::f16);
 }
 
 bool AMDGPUTargetLowering::isFNegFree(EVT VT) const {
-  return isFAbsFree(VT);
+  assert(VT.isFloatingPoint());
+  return VT == MVT::f32 || VT == MVT::f64 ||
+         (Subtarget->has16BitInsts() && VT == MVT::f16) ||
+         (Subtarget->hasVOP3PInsts() && VT == MVT::v2f16);
 }
 
 bool AMDGPUTargetLowering:: storeOfVectorConstantIsCheap(EVT MemVT,
@@ -1012,22 +1017,18 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   EVT VT = Op.getValueType();
 
   switch (IntrinsicID) {
-    default: return Op;
-    case AMDGPUIntrinsic::AMDGPU_clamp: // Legacy name.
-      return DAG.getNode(AMDGPUISD::CLAMP, DL, VT,
-                         Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
+  default: return Op;
+  case AMDGPUIntrinsic::AMDGPU_bfe_i32:
+    return DAG.getNode(AMDGPUISD::BFE_I32, DL, VT,
+                       Op.getOperand(1),
+                       Op.getOperand(2),
+                       Op.getOperand(3));
 
-    case AMDGPUIntrinsic::AMDGPU_bfe_i32:
-      return DAG.getNode(AMDGPUISD::BFE_I32, DL, VT,
-                         Op.getOperand(1),
-                         Op.getOperand(2),
-                         Op.getOperand(3));
-
-    case AMDGPUIntrinsic::AMDGPU_bfe_u32:
-      return DAG.getNode(AMDGPUISD::BFE_U32, DL, VT,
-                         Op.getOperand(1),
-                         Op.getOperand(2),
-                         Op.getOperand(3));
+  case AMDGPUIntrinsic::AMDGPU_bfe_u32:
+    return DAG.getNode(AMDGPUISD::BFE_U32, DL, VT,
+                       Op.getOperand(1),
+                       Op.getOperand(2),
+                       Op.getOperand(3));
   }
 }
 
@@ -1294,7 +1295,10 @@ SDValue AMDGPUTargetLowering::LowerDIVREM24(SDValue Op, SelectionDAG &DAG,
   SDValue fqneg = DAG.getNode(ISD::FNEG, DL, FltVT, fq);
 
   // float fr = mad(fqneg, fb, fa);
-  SDValue fr = DAG.getNode(ISD::FMAD, DL, FltVT, fqneg, fb, fa);
+  unsigned OpCode = Subtarget->hasFP32Denormals() ?
+                    (unsigned)AMDGPUISD::FMAD_FTZ :
+                    (unsigned)ISD::FMAD;
+  SDValue fr = DAG.getNode(OpCode, DL, FltVT, fqneg, fb, fa);
 
   // int iq = (int)fq;
   SDValue iq = DAG.getNode(ToInt, DL, IntVT, fq);
@@ -2445,6 +2449,28 @@ SDValue AMDGPUTargetLowering::performStoreCombine(SDNode *N,
                       SN->getBasePtr(), SN->getMemOperand());
 }
 
+SDValue AMDGPUTargetLowering::performClampCombine(SDNode *N,
+                                                  DAGCombinerInfo &DCI) const {
+  ConstantFPSDNode *CSrc = dyn_cast<ConstantFPSDNode>(N->getOperand(0));
+  if (!CSrc)
+    return SDValue();
+
+  const APFloat &F = CSrc->getValueAPF();
+  APFloat Zero = APFloat::getZero(F.getSemantics());
+  APFloat::cmpResult Cmp0 = F.compare(Zero);
+  if (Cmp0 == APFloat::cmpLessThan ||
+      (Cmp0 == APFloat::cmpUnordered && Subtarget->enableDX10Clamp())) {
+    return DCI.DAG.getConstantFP(Zero, SDLoc(N), N->getValueType(0));
+  }
+
+  APFloat One(F.getSemantics(), "1.0");
+  APFloat::cmpResult Cmp1 = F.compare(One);
+  if (Cmp1 == APFloat::cmpGreaterThan)
+    return DCI.DAG.getConstantFP(One, SDLoc(N), N->getValueType(0));
+
+  return SDValue(CSrc, 0);
+}
+
 /// Split the 64-bit value \p LHS into two 32-bit components, and perform the
 /// binary operation \p Opc to it with the corresponding constant operands.
 SDValue AMDGPUTargetLowering::splitBinaryBitConstantOpImpl(
@@ -3323,6 +3349,18 @@ SDValue AMDGPUTargetLowering::PerformDAGCombine(SDNode *N,
     return performLoadCombine(N, DCI);
   case ISD::STORE:
     return performStoreCombine(N, DCI);
+  case AMDGPUISD::CLAMP:
+    return performClampCombine(N, DCI);
+  case AMDGPUISD::RCP: {
+    if (const auto *CFP = dyn_cast<ConstantFPSDNode>(N->getOperand(0))) {
+      // XXX - Should this flush denormals?
+      const APFloat &Val = CFP->getValueAPF();
+      APFloat One(Val.getSemantics(), "1.0");
+      return DAG.getConstantFP(One / Val, SDLoc(N), N->getValueType(0));
+    }
+
+    break;
+  }
   }
   return SDValue();
 }
@@ -3396,6 +3434,7 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(DIV_SCALE)
   NODE_NAME_CASE(DIV_FMAS)
   NODE_NAME_CASE(DIV_FIXUP)
+  NODE_NAME_CASE(FMAD_FTZ)
   NODE_NAME_CASE(TRIG_PREOP)
   NODE_NAME_CASE(RCP)
   NODE_NAME_CASE(RSQ)
@@ -3438,6 +3477,7 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(CVT_F32_UBYTE1)
   NODE_NAME_CASE(CVT_F32_UBYTE2)
   NODE_NAME_CASE(CVT_F32_UBYTE3)
+  NODE_NAME_CASE(CVT_PKRTZ_F16_F32)
   NODE_NAME_CASE(BUILD_VERTICAL_VECTOR)
   NODE_NAME_CASE(CONST_DATA_PTR)
   NODE_NAME_CASE(PC_ADD_REL_OFFSET)

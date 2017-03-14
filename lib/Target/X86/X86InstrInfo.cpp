@@ -1385,8 +1385,6 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::PMULHRWrr,         X86::PMULHRWrm,         0 },
 
     // AVX 128-bit versions of foldable instructions
-    { X86::VCVTSD2SSrr,       X86::VCVTSD2SSrm,        0 },
-    { X86::Int_VCVTSD2SSrr,   X86::Int_VCVTSD2SSrm,    TB_NO_REVERSE },
     { X86::VCVTSI2SD64rr,     X86::VCVTSI2SD64rm,      0 },
     { X86::Int_VCVTSI2SD64rr, X86::Int_VCVTSI2SD64rm,  0 },
     { X86::VCVTSI2SDrr,       X86::VCVTSI2SDrm,        0 },
@@ -1395,8 +1393,6 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::Int_VCVTSI2SS64rr, X86::Int_VCVTSI2SS64rm,  0 },
     { X86::VCVTSI2SSrr,       X86::VCVTSI2SSrm,        0 },
     { X86::Int_VCVTSI2SSrr,   X86::Int_VCVTSI2SSrm,    0 },
-    { X86::VCVTSS2SDrr,       X86::VCVTSS2SDrm,        0 },
-    { X86::Int_VCVTSS2SDrr,   X86::Int_VCVTSS2SDrm,    TB_NO_REVERSE },
     { X86::VADDPDrr,          X86::VADDPDrm,           0 },
     { X86::VADDPSrr,          X86::VADDPSrm,           0 },
     { X86::VADDSDrr,          X86::VADDSDrm,           0 },
@@ -1777,7 +1773,7 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
 
     // XOP foldable instructions
     { X86::VPCMOVrrr,         X86::VPCMOVrmr,           0 },
-    { X86::VPCMOVrrrY,        X86::VPCMOVrmrY,          0 },
+    { X86::VPCMOVYrrr,        X86::VPCMOVYrmr,          0 },
     { X86::VPCOMBri,          X86::VPCOMBmi,            0 },
     { X86::VPCOMDri,          X86::VPCOMDmi,            0 },
     { X86::VPCOMQri,          X86::VPCOMQmi,            0 },
@@ -1787,9 +1783,9 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::VPCOMUQri,         X86::VPCOMUQmi,           0 },
     { X86::VPCOMUWri,         X86::VPCOMUWmi,           0 },
     { X86::VPERMIL2PDrr,      X86::VPERMIL2PDmr,        0 },
-    { X86::VPERMIL2PDrrY,     X86::VPERMIL2PDmrY,       0 },
+    { X86::VPERMIL2PDYrr,     X86::VPERMIL2PDYmr,       0 },
     { X86::VPERMIL2PSrr,      X86::VPERMIL2PSmr,        0 },
-    { X86::VPERMIL2PSrrY,     X86::VPERMIL2PSmrY,       0 },
+    { X86::VPERMIL2PSYrr,     X86::VPERMIL2PSYmr,       0 },
     { X86::VPMACSDDrr,        X86::VPMACSDDrm,          0 },
     { X86::VPMACSDQHrr,       X86::VPMACSDQHrm,         0 },
     { X86::VPMACSDQLrr,       X86::VPMACSDQLrm,         0 },
@@ -2478,11 +2474,11 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
 
     // XOP foldable instructions
     { X86::VPCMOVrrr,             X86::VPCMOVrrm,             0 },
-    { X86::VPCMOVrrrY,            X86::VPCMOVrrmY,            0 },
+    { X86::VPCMOVYrrr,            X86::VPCMOVYrrm,            0 },
     { X86::VPERMIL2PDrr,          X86::VPERMIL2PDrm,          0 },
-    { X86::VPERMIL2PDrrY,         X86::VPERMIL2PDrmY,         0 },
+    { X86::VPERMIL2PDYrr,         X86::VPERMIL2PDYrm,         0 },
     { X86::VPERMIL2PSrr,          X86::VPERMIL2PSrm,          0 },
-    { X86::VPERMIL2PSrrY,         X86::VPERMIL2PSrmY,         0 },
+    { X86::VPERMIL2PSYrr,         X86::VPERMIL2PSYrm,         0 },
     { X86::VPPERMrrr,             X86::VPPERMrrm,             0 },
 
     // AVX-512 instructions with 3 source operands.
@@ -5292,18 +5288,30 @@ MachineInstr *X86InstrInfo::commuteInstructionImpl(MachineInstr &MI, bool NewMI,
   case X86::VPTERNLOGQZrri:      case X86::VPTERNLOGQZrmi:
   case X86::VPTERNLOGQZ128rri:   case X86::VPTERNLOGQZ128rmi:
   case X86::VPTERNLOGQZ256rri:   case X86::VPTERNLOGQZ256rmi:
-  case X86::VPTERNLOGDZrrik:     case X86::VPTERNLOGDZrmik:
-  case X86::VPTERNLOGDZ128rrik:  case X86::VPTERNLOGDZ128rmik:
-  case X86::VPTERNLOGDZ256rrik:  case X86::VPTERNLOGDZ256rmik:
-  case X86::VPTERNLOGQZrrik:     case X86::VPTERNLOGQZrmik:
-  case X86::VPTERNLOGQZ128rrik:  case X86::VPTERNLOGQZ128rmik:
-  case X86::VPTERNLOGQZ256rrik:  case X86::VPTERNLOGQZ256rmik:
+  case X86::VPTERNLOGDZrrik:
+  case X86::VPTERNLOGDZ128rrik:
+  case X86::VPTERNLOGDZ256rrik:
+  case X86::VPTERNLOGQZrrik:
+  case X86::VPTERNLOGQZ128rrik:
+  case X86::VPTERNLOGQZ256rrik:
   case X86::VPTERNLOGDZrrikz:    case X86::VPTERNLOGDZrmikz:
   case X86::VPTERNLOGDZ128rrikz: case X86::VPTERNLOGDZ128rmikz:
   case X86::VPTERNLOGDZ256rrikz: case X86::VPTERNLOGDZ256rmikz:
   case X86::VPTERNLOGQZrrikz:    case X86::VPTERNLOGQZrmikz:
   case X86::VPTERNLOGQZ128rrikz: case X86::VPTERNLOGQZ128rmikz:
-  case X86::VPTERNLOGQZ256rrikz: case X86::VPTERNLOGQZ256rmikz: {
+  case X86::VPTERNLOGQZ256rrikz: case X86::VPTERNLOGQZ256rmikz:
+  case X86::VPTERNLOGDZ128rmbi:
+  case X86::VPTERNLOGDZ256rmbi:
+  case X86::VPTERNLOGDZrmbi:
+  case X86::VPTERNLOGQZ128rmbi:
+  case X86::VPTERNLOGQZ256rmbi:
+  case X86::VPTERNLOGQZrmbi:
+  case X86::VPTERNLOGDZ128rmbikz:
+  case X86::VPTERNLOGDZ256rmbikz:
+  case X86::VPTERNLOGDZrmbikz:
+  case X86::VPTERNLOGQZ128rmbikz:
+  case X86::VPTERNLOGQZ256rmbikz:
+  case X86::VPTERNLOGQZrmbikz: {
     auto &WorkingMI = cloneIfNew(MI);
     if (!commuteVPTERNLOG(WorkingMI, OpIdx1, OpIdx2))
       return nullptr;
@@ -5484,18 +5492,30 @@ bool X86InstrInfo::findCommutedOpIndices(MachineInstr &MI, unsigned &SrcOpIdx1,
   case X86::VPTERNLOGQZrri:      case X86::VPTERNLOGQZrmi:
   case X86::VPTERNLOGQZ128rri:   case X86::VPTERNLOGQZ128rmi:
   case X86::VPTERNLOGQZ256rri:   case X86::VPTERNLOGQZ256rmi:
-  case X86::VPTERNLOGDZrrik:     case X86::VPTERNLOGDZrmik:
-  case X86::VPTERNLOGDZ128rrik:  case X86::VPTERNLOGDZ128rmik:
-  case X86::VPTERNLOGDZ256rrik:  case X86::VPTERNLOGDZ256rmik:
-  case X86::VPTERNLOGQZrrik:     case X86::VPTERNLOGQZrmik:
-  case X86::VPTERNLOGQZ128rrik:  case X86::VPTERNLOGQZ128rmik:
-  case X86::VPTERNLOGQZ256rrik:  case X86::VPTERNLOGQZ256rmik:
+  case X86::VPTERNLOGDZrrik:
+  case X86::VPTERNLOGDZ128rrik:
+  case X86::VPTERNLOGDZ256rrik:
+  case X86::VPTERNLOGQZrrik:
+  case X86::VPTERNLOGQZ128rrik:
+  case X86::VPTERNLOGQZ256rrik:
   case X86::VPTERNLOGDZrrikz:    case X86::VPTERNLOGDZrmikz:
   case X86::VPTERNLOGDZ128rrikz: case X86::VPTERNLOGDZ128rmikz:
   case X86::VPTERNLOGDZ256rrikz: case X86::VPTERNLOGDZ256rmikz:
   case X86::VPTERNLOGQZrrikz:    case X86::VPTERNLOGQZrmikz:
   case X86::VPTERNLOGQZ128rrikz: case X86::VPTERNLOGQZ128rmikz:
   case X86::VPTERNLOGQZ256rrikz: case X86::VPTERNLOGQZ256rmikz:
+  case X86::VPTERNLOGDZ128rmbi:
+  case X86::VPTERNLOGDZ256rmbi:
+  case X86::VPTERNLOGDZrmbi:
+  case X86::VPTERNLOGQZ128rmbi:
+  case X86::VPTERNLOGQZ256rmbi:
+  case X86::VPTERNLOGQZrmbi:
+  case X86::VPTERNLOGDZ128rmbikz:
+  case X86::VPTERNLOGDZ256rmbikz:
+  case X86::VPTERNLOGDZrmbikz:
+  case X86::VPTERNLOGQZ128rmbikz:
+  case X86::VPTERNLOGQZ256rmbikz:
+  case X86::VPTERNLOGQZrmbikz:
     return findThreeSrcCommutedOpIndices(MI, SrcOpIdx1, SrcOpIdx2);
   default:
     const X86InstrFMA3Group *FMA3Group =
@@ -6305,6 +6325,7 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
       return X86::KMOVWrk;
     }
     if (X86::GR8RegClass.contains(DestReg)) {
+      assert(!isHReg(DestReg) && "Cannot move between mask and h-reg");
       DestReg = getX86SubSuperRegister(DestReg, 32);
       return Subtarget.hasDQI() ? X86::KMOVBrk : X86::KMOVWrk;
     }
@@ -6328,6 +6349,7 @@ static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
       return X86::KMOVWkr;
     }
     if (X86::GR8RegClass.contains(SrcReg)) {
+      assert(!isHReg(SrcReg) && "Cannot move between mask and h-reg");
       SrcReg = getX86SubSuperRegister(SrcReg, 32);
       return Subtarget.hasDQI() ? X86::KMOVBkr : X86::KMOVWkr;
     }
@@ -8141,11 +8163,15 @@ static bool hasUndefRegUpdate(unsigned Opcode) {
   case X86::VCVTUSI642SDZrrb_Int:
   case X86::VCVTUSI642SDZrm_Int:
   case X86::VCVTSD2SSZrr:
-  case X86::VCVTSD2SSZrrb:
+  case X86::VCVTSD2SSZrr_Int:
+  case X86::VCVTSD2SSZrrb_Int:
   case X86::VCVTSD2SSZrm:
+  case X86::VCVTSD2SSZrm_Int:
   case X86::VCVTSS2SDZrr:
-  case X86::VCVTSS2SDZrrb:
+  case X86::VCVTSS2SDZrr_Int:
+  case X86::VCVTSS2SDZrrb_Int:
   case X86::VCVTSS2SDZrm:
+  case X86::VCVTSS2SDZrm_Int:
   case X86::VRNDSCALESDr:
   case X86::VRNDSCALESDrb:
   case X86::VRNDSCALESDm:
@@ -10359,3 +10385,124 @@ namespace {
 char LDTLSCleanup::ID = 0;
 FunctionPass*
 llvm::createCleanupLocalDynamicTLSPass() { return new LDTLSCleanup(); }
+
+unsigned X86InstrInfo::getOutliningBenefit(size_t SequenceSize,
+                                           size_t Occurrences,
+                                           bool CanBeTailCall) const {
+  unsigned NotOutlinedSize = SequenceSize * Occurrences;
+  unsigned OutlinedSize;
+
+  // Is it a tail call?
+  if (CanBeTailCall) {
+    // If yes, we don't have to include a return instruction-- it's already in
+    // our sequence. So we have one occurrence of the sequence + #Occurrences
+    // calls.
+    OutlinedSize = SequenceSize + Occurrences;
+  } else {
+    // If not, add one for the return instruction.
+    OutlinedSize = (SequenceSize + 1) + Occurrences;
+  }
+
+  // Return the number of instructions saved by outlining this sequence.
+  return NotOutlinedSize > OutlinedSize ? NotOutlinedSize - OutlinedSize : 0;
+}
+
+bool X86InstrInfo::isFunctionSafeToOutlineFrom(MachineFunction &MF) const {
+  return MF.getFunction()->hasFnAttribute(Attribute::NoRedZone);
+}
+
+X86GenInstrInfo::MachineOutlinerInstrType
+X86InstrInfo::getOutliningType(MachineInstr &MI) const {
+
+  // Don't allow debug values to impact outlining type.
+  if (MI.isDebugValue() || MI.isIndirectDebugValue())
+    return MachineOutlinerInstrType::Invisible;
+
+  // Is this a tail call? If yes, we can outline as a tail call.
+  if (isTailCall(MI))
+    return MachineOutlinerInstrType::Legal;
+
+  // Is this the terminator of a basic block?
+  if (MI.isTerminator() || MI.isReturn()) {
+
+    // Does its parent have any successors in its MachineFunction?
+    if (MI.getParent()->succ_empty())
+        return MachineOutlinerInstrType::Legal;
+
+    // It does, so we can't tail call it.
+    return MachineOutlinerInstrType::Illegal;
+  }
+
+  // Don't outline anything that modifies or reads from the stack pointer.
+  //
+  // FIXME: There are instructions which are being manually built without
+  // explicit uses/defs so we also have to check the MCInstrDesc. We should be
+  // able to remove the extra checks once those are fixed up. For example,
+  // sometimes we might get something like %RAX<def> = POP64r 1. This won't be
+  // caught by modifiesRegister or readsRegister even though the instruction
+  // really ought to be formed so that modifiesRegister/readsRegister would
+  // catch it.
+  if (MI.modifiesRegister(X86::RSP, &RI) || MI.readsRegister(X86::RSP, &RI) ||
+      MI.getDesc().hasImplicitUseOfPhysReg(X86::RSP) ||
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RSP)) 
+    return MachineOutlinerInstrType::Illegal;
+
+  // Outlined calls change the instruction pointer, so don't read from it.
+  if (MI.readsRegister(X86::RIP, &RI) ||
+      MI.getDesc().hasImplicitUseOfPhysReg(X86::RIP) ||
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RIP))
+    return MachineOutlinerInstrType::Illegal;
+
+  // Positions can't safely be outlined.
+  if (MI.isPosition())
+    return MachineOutlinerInstrType::Illegal;
+
+  // Make sure none of the operands of this instruction do anything tricky.
+  for (const MachineOperand &MOP : MI.operands())
+    if (MOP.isCPI() || MOP.isJTI() || MOP.isCFIIndex() || MOP.isFI() ||
+        MOP.isTargetIndex())
+      return MachineOutlinerInstrType::Illegal;
+
+  return MachineOutlinerInstrType::Legal;
+}
+
+void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
+                                          MachineFunction &MF,
+                                          bool IsTailCall) const {
+
+  // If we're a tail call, we already have a return, so don't do anything.
+  if (IsTailCall)
+    return;
+
+  // We're a normal call, so our sequence doesn't have a return instruction.
+  // Add it in.
+  MachineInstr *retq = BuildMI(MF, DebugLoc(), get(X86::RETQ));
+  MBB.insert(MBB.end(), retq);
+}
+
+void X86InstrInfo::insertOutlinerPrologue(MachineBasicBlock &MBB,
+                                          MachineFunction &MF,
+                                          bool IsTailCall) const {
+  return;
+}
+
+MachineBasicBlock::iterator
+X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator &It,
+                                 MachineFunction &MF,
+                                 bool IsTailCall) const {
+  // Is it a tail call?
+  if (IsTailCall) {
+    // Yes, just insert a JMP.
+    It = MBB.insert(It,
+                  BuildMI(MF, DebugLoc(), get(X86::JMP_1))
+                      .addGlobalAddress(M.getNamedValue(MF.getName())));
+  } else {
+    // No, insert a call.
+    It = MBB.insert(It,
+                  BuildMI(MF, DebugLoc(), get(X86::CALL64pcrel32))
+                      .addGlobalAddress(M.getNamedValue(MF.getName())));
+  }
+
+  return It;
+}

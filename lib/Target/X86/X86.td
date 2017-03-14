@@ -238,11 +238,12 @@ def FeatureSlowIncDec : SubtargetFeature<"slow-incdec", "SlowIncDec", "true",
 def FeatureSoftFloat
     : SubtargetFeature<"soft-float", "UseSoftFloat", "true",
                        "Use software floating point features.">;
-// On at least some AMD processors, there is no performance hazard to writing
-// only the lower parts of a YMM register without clearing the upper part.
-def FeatureFastPartialYMMWrite
-    : SubtargetFeature<"fast-partial-ymm-write", "HasFastPartialYMMWrite",
-                       "true", "Partial writes to YMM registers are fast">;
+// On some X86 processors, there is no performance hazard to writing only the
+// lower parts of a YMM or ZMM register without clearing the upper part.
+def FeatureFastPartialYMMorZMMWrite
+    : SubtargetFeature<"fast-partial-ymm-or-zmm-write",
+                       "HasFastPartialYMMorZMMWrite",
+                       "true", "Partial writes to YMM/ZMM registers are fast">;
 // FeatureFastScalarFSQRT should be enabled if scalar FSQRT has shorter latency
 // than the corresponding NR code. FeatureFastVectorFSQRT should be enabled if
 // vector FSQRT has higher throughput than the corresponding NR code.
@@ -262,6 +263,15 @@ def FeatureFastLZCNT
     : SubtargetFeature<
           "fast-lzcnt", "HasFastLZCNT", "true",
           "LZCNT instructions are as fast as most simple integer ops">;
+
+
+// Sandy Bridge and newer processors can use SHLD with the same source on both
+// inputs to implement rotate to avoid the partial flag update of the normal
+// rotate instructions.
+def FeatureFastSHLDRotate
+    : SubtargetFeature<
+          "fast-shld-rotate", "HasFastSHLDRotate", "true",
+          "SHLD can be used as a faster rotate">;
 
 //===----------------------------------------------------------------------===//
 // X86 processors supported.
@@ -458,7 +468,8 @@ def SNBFeatures : ProcessorFeatures<[], [
   FeatureXSAVE,
   FeatureXSAVEOPT,
   FeatureLAHFSAHF,
-  FeatureFastScalarFSQRT
+  FeatureFastScalarFSQRT,
+  FeatureFastSHLDRotate
 ]>;
 
 class SandyBridgeProc<string Name> : ProcModel<Name, SandyBridgeModel,
@@ -535,7 +546,8 @@ class KnightsLandingProc<string Name> : ProcModel<Name, HaswellModel,
   FeatureLZCNT,
   FeatureBMI,
   FeatureBMI2,
-  FeatureFMA
+  FeatureFMA,
+  FeatureFastPartialYMMorZMMWrite
 ]>;
 def : KnightsLandingProc<"knl">;
 
@@ -649,7 +661,7 @@ def : ProcessorModel<"btver2", BtVer2Model, [
   FeatureXSAVEOPT,
   FeatureSlowSHLD,
   FeatureLAHFSAHF,
-  FeatureFastPartialYMMWrite
+  FeatureFastPartialYMMorZMMWrite
 ]>;
 
 // Bulldozer

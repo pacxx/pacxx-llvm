@@ -2113,13 +2113,29 @@ static unsigned computeNumSignBitsVectorConstant(const Value *V,
   return MinSignBits;
 }
 
+static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
+                                       const Query &Q);
+
+static unsigned ComputeNumSignBits(const Value *V, unsigned Depth,
+                                   const Query &Q) {
+  unsigned Result = ComputeNumSignBitsImpl(V, Depth, Q);
+  assert(Result > 0 && "At least one sign bit needs to be present!");
+  return Result;
+}
+
 /// Return the number of times the sign bit of the register is replicated into
 /// the other bits. We know that at least 1 bit is always equal to the sign bit
 /// (itself), but other cases can give us information. For example, immediately
 /// after an "ashr X, 2", we know that the top 3 bits are all equal to each
 /// other, so we return 3. For vectors, return the number of sign bits for the
 /// vector element with the mininum number of known sign bits.
-unsigned ComputeNumSignBits(const Value *V, unsigned Depth, const Query &Q) {
+static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
+                                       const Query &Q) {
+
+  // We return the minimum number of sign bits that are guaranteed to be present
+  // in V, so for undef we have to conservatively return 1.  We don't have the
+  // same behavior for poison though -- that's a FIXME today.
+
   unsigned TyBits = Q.DL.getTypeSizeInBits(V->getType()->getScalarType());
   unsigned Tmp, Tmp2;
   unsigned FirstAnswer = 1;
@@ -2195,7 +2211,10 @@ unsigned ComputeNumSignBits(const Value *V, unsigned Depth, const Query &Q) {
     // ashr X, C   -> adds C sign bits.  Vectors too.
     const APInt *ShAmt;
     if (match(U->getOperand(1), m_APInt(ShAmt))) {
-      Tmp += ShAmt->getZExtValue();
+      unsigned ShAmtLimited = ShAmt->getZExtValue();
+      if (ShAmtLimited >= TyBits)
+        break;  // Bad shift.
+      Tmp += ShAmtLimited;
       if (Tmp > TyBits) Tmp = TyBits;
     }
     return Tmp;
@@ -3762,6 +3781,8 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
     return false;
   if (isa<ReturnInst>(I))
     return false;
+  if (isa<UnreachableInst>(I))
+    return false;
 
   // Calls can throw, or contain an infinite loop, or kill the process.
   if (auto CS = ImmutableCallSite(I)) {
@@ -3810,79 +3831,33 @@ bool llvm::isGuaranteedToExecuteForEveryIteration(const Instruction *I,
 
 bool llvm::propagatesFullPoison(const Instruction *I) {
   switch (I->getOpcode()) {
-    case Instruction::Add:
-    case Instruction::Sub:
-    case Instruction::Xor:
-    case Instruction::Trunc:
-    case Instruction::BitCast:
-    case Instruction::AddrSpaceCast:
-      // These operations all propagate poison unconditionally. Note that poison
-      // is not any particular value, so xor or subtraction of poison with
-      // itself still yields poison, not zero.
-      return true;
+  case Instruction::Add:
+  case Instruction::Sub:
+  case Instruction::Xor:
+  case Instruction::Trunc:
+  case Instruction::BitCast:
+  case Instruction::AddrSpaceCast:
+  case Instruction::Mul:
+  case Instruction::Shl:
+  case Instruction::GetElementPtr:
+    // These operations all propagate poison unconditionally. Note that poison
+    // is not any particular value, so xor or subtraction of poison with
+    // itself still yields poison, not zero.
+    return true;
 
-    case Instruction::AShr:
-    case Instruction::SExt:
-      // For these operations, one bit of the input is replicated across
-      // multiple output bits. A replicated poison bit is still poison.
-      return true;
+  case Instruction::AShr:
+  case Instruction::SExt:
+    // For these operations, one bit of the input is replicated across
+    // multiple output bits. A replicated poison bit is still poison.
+    return true;
 
-    case Instruction::Shl: {
-      // Left shift *by* a poison value is poison. The number of
-      // positions to shift is unsigned, so no negative values are
-      // possible there. Left shift by zero places preserves poison. So
-      // it only remains to consider left shift of poison by a positive
-      // number of places.
-      //
-      // A left shift by a positive number of places leaves the lowest order bit
-      // non-poisoned. However, if such a shift has a no-wrap flag, then we can
-      // make the poison operand violate that flag, yielding a fresh full-poison
-      // value.
-      auto *OBO = cast<OverflowingBinaryOperator>(I);
-      return OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap();
-    }
+  case Instruction::ICmp:
+    // Comparing poison with any value yields poison.  This is why, for
+    // instance, x s< (x +nsw 1) can be folded to true.
+    return true;
 
-    case Instruction::Mul: {
-      // A multiplication by zero yields a non-poison zero result, so we need to
-      // rule out zero as an operand. Conservatively, multiplication by a
-      // non-zero constant is not multiplication by zero.
-      //
-      // Multiplication by a non-zero constant can leave some bits
-      // non-poisoned. For example, a multiplication by 2 leaves the lowest
-      // order bit unpoisoned. So we need to consider that.
-      //
-      // Multiplication by 1 preserves poison. If the multiplication has a
-      // no-wrap flag, then we can make the poison operand violate that flag
-      // when multiplied by any integer other than 0 and 1.
-      auto *OBO = cast<OverflowingBinaryOperator>(I);
-      if (OBO->hasNoUnsignedWrap() || OBO->hasNoSignedWrap()) {
-        for (Value *V : OBO->operands()) {
-          if (auto *CI = dyn_cast<ConstantInt>(V)) {
-            // A ConstantInt cannot yield poison, so we can assume that it is
-            // the other operand that is poison.
-            return !CI->isZero();
-          }
-        }
-      }
-      return false;
-    }
-
-    case Instruction::ICmp:
-      // Comparing poison with any value yields poison.  This is why, for
-      // instance, x s< (x +nsw 1) can be folded to true.
-      return true;
-
-    case Instruction::GetElementPtr:
-      // A GEP implicitly represents a sequence of additions, subtractions,
-      // truncations, sign extensions and multiplications. The multiplications
-      // are by the non-zero sizes of some set of types, so we do not have to be
-      // concerned with multiplication by zero. If the GEP is in-bounds, then
-      // these operations are implicitly no-signed-wrap so poison is propagated
-      // by the arguments above for Add, Sub, Trunc, SExt and Mul.
-      return cast<GEPOperator>(I)->isInBounds();
-
-    default:
-      return false;
+  default:
+    return false;
   }
 }
 

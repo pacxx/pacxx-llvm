@@ -51,6 +51,7 @@ public:
     SOUTHERN_ISLANDS,
     SEA_ISLANDS,
     VOLCANIC_ISLANDS,
+    GFX9,
   };
 
   enum {
@@ -64,6 +65,8 @@ public:
     ISAVersion8_0_3,
     ISAVersion8_0_4,
     ISAVersion8_1_0,
+    ISAVersion9_0_0,
+    ISAVersion9_0_1
   };
 
   enum TrapHandlerAbi {
@@ -71,15 +74,19 @@ public:
     TrapHandlerAbiHsa = 1
   };
 
-  enum TrapCode {
-    TrapCodeBreakPoint = 0,
-    TrapCodeLLVMTrap = 1,
-    TrapCodeLLVMDebugTrap = 2,
-    TrapCodeHSADebugTrap = 3
+  enum TrapID {
+    TrapIDHardwareReserved = 0,
+    TrapIDHSADebugTrap = 1,
+    TrapIDLLVMTrap = 2,
+    TrapIDLLVMDebugTrap = 3,
+    TrapIDDebugBreakpoint = 7,
+    TrapIDDebugReserved8 = 8,
+    TrapIDDebugReservedFE = 0xfe,
+    TrapIDDebugReservedFF = 0xff
   };
 
   enum TrapRegValues {
-    TrapCodeLLVMTrapRegValue = 1
+    LLVMTrapHandlerRegValue = 1
   };
 
 protected:
@@ -100,9 +107,11 @@ protected:
   bool FP32Denormals;
   bool FP64FP16Denormals;
   bool FPExceptions;
+  bool DX10Clamp;
   bool FlatForGlobal;
   bool UnalignedScratchAccess;
   bool UnalignedBufferAccess;
+  bool HasApertureRegs;
   bool EnableXNACK;
   bool TrapHandler;
   bool DebuggerInsertNops;
@@ -123,9 +132,11 @@ protected:
   bool GCN1Encoding;
   bool GCN3Encoding;
   bool CIInsts;
+  bool GFX9Insts;
   bool SGPRInitBug;
   bool HasSMemRealTime;
   bool Has16BitInsts;
+  bool HasVOP3PInsts;
   bool HasMovrel;
   bool HasVGPRIndexMode;
   bool HasScalarStores;
@@ -206,6 +217,10 @@ public:
     return Has16BitInsts;
   }
 
+  bool hasVOP3PInsts() const {
+    return HasVOP3PInsts;
+  }
+
   bool hasHWFP64() const {
     return FP64;
   }
@@ -261,6 +276,10 @@ public:
     return (getGeneration() >= EVERGREEN);
   }
 
+  bool hasMed3_16() const {
+    return getGeneration() >= GFX9;
+  }
+
   bool hasCARRY() const {
     return (getGeneration() >= EVERGREEN);
   }
@@ -289,10 +308,6 @@ public:
     return DumpCode;
   }
 
-  bool enableIEEEBit(const MachineFunction &MF) const {
-    return AMDGPU::isCompute(MF.getFunction()->getCallingConv());
-  }
-
   /// Return the amount of LDS that can be used that will not restrict the
   /// occupancy lower than WaveCount.
   unsigned getMaxLocalMemSizeWithWaveCount(unsigned WaveCount,
@@ -318,6 +333,14 @@ public:
     return FPExceptions;
   }
 
+  bool enableDX10Clamp() const {
+    return DX10Clamp;
+  }
+
+  bool enableIEEEBit(const MachineFunction &MF) const {
+    return AMDGPU::isCompute(MF.getFunction()->getCallingConv());
+  }
+
   bool useFlatForGlobal() const {
     return FlatForGlobal;
   }
@@ -328,6 +351,10 @@ public:
 
   bool hasUnalignedScratchAccess() const {
     return UnalignedScratchAccess;
+  }
+
+  bool hasApertureRegs() const {
+   return HasApertureRegs;
   }
 
   bool isTrapHandlerEnabled() const {
@@ -645,6 +672,14 @@ public:
     return getGeneration() != AMDGPUSubtarget::SOUTHERN_ISLANDS;
   }
 
+  bool hasSMovFedHazard() const {
+    return getGeneration() >= AMDGPUSubtarget::GFX9;
+  }
+
+  bool hasReadM0Hazard() const {
+    return getGeneration() >= AMDGPUSubtarget::GFX9;
+  }
+
   unsigned getKernArgSegmentSize(const MachineFunction &MF, unsigned ExplictArgBytes) const;
 
   /// Return the maximum number of waves per SIMD for kernels using \p SGPRs SGPRs
@@ -656,7 +691,13 @@ public:
   /// \returns True if waitcnt instruction is needed before barrier instruction,
   /// false otherwise.
   bool needWaitcntBeforeBarrier() const {
-    return true;
+    return getGeneration() < GFX9;
+  }
+
+  /// \returns true if the flat_scratch register should be initialized with the
+  /// pointer to the wave's scratch memory rather than a size and offset.
+  bool flatScratchIsPointer() const {
+    return getGeneration() >= GFX9;
   }
 
   /// \returns SGPR allocation granularity supported by the subtarget.

@@ -23,7 +23,7 @@ namespace wasm {
 // Object file magic string.
 const char WasmMagic[] = {'\0', 'a', 's', 'm'};
 // Wasm binary format version
-const uint32_t WasmVersion = 0xd;
+const uint32_t WasmVersion = 0x1;
 
 struct WasmObjectHeader {
   StringRef Magic;
@@ -79,6 +79,12 @@ enum : unsigned {
   WASM_OPCODE_I64_CONST  = 0x42,
   WASM_OPCODE_F32_CONST  = 0x43,
   WASM_OPCODE_F64_CONST  = 0x44,
+};
+
+#define WASM_RELOC(name, value) name = value,
+
+enum : unsigned {
+#include "WasmRelocs/WebAssembly.def"
 };
 
 } // end namespace wasm

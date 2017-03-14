@@ -44,6 +44,7 @@ class MCInstPrinter;
 class MCSection;
 class MCStreamer;
 class MCSymbolRefExpr;
+class MCSymbolWasm;
 class MCSubtargetInfo;
 class raw_ostream;
 class Twine;
@@ -487,6 +488,14 @@ public:
   /// This corresponds to an assembler statement such as:
   ///  .size symbol, expression
   virtual void emitELFSize(MCSymbol *Symbol, const MCExpr *Value);
+
+  /// \brief Emit an ELF .symver directive.
+  ///
+  /// This corresponds to an assembler statement such as:
+  ///  .symver _start, foo@@SOME_VERSION
+  /// \param Alias - The versioned alias (i.e. "foo@@SOME_VERSION")
+  /// \param Aliasee - The aliased symbol (i.e. "_start")
+  virtual void emitELFSymverDirective(MCSymbol *Alias, const MCSymbol *Aliasee);
 
   /// \brief Emit a Linker Optimization Hint (LOH) directive.
   /// \param Args - Arguments of the LOH.

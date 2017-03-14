@@ -363,6 +363,9 @@ public:
     return false;
   }
 
+  /// Returns if it's reasonable to merge stores to MemVT size.
+  virtual bool canMergeStoresTo(EVT MemVT) const { return true; }
+
   /// \brief Return true if it is cheap to speculate a call to intrinsic cttz.
   virtual bool isCheapToSpeculateCttz() const {
     return false;
@@ -395,16 +398,15 @@ public:
   /// \brief Return if the target supports combining a
   /// chain like:
   /// \code
-  ///   %andResult = and %val1, #imm-with-one-bit-set;
+  ///   %andResult = and %val1, #mask
   ///   %icmpResult = icmp %andResult, 0
-  ///   br i1 %icmpResult, label %dest1, label %dest2
   /// \endcode
   /// into a single machine instruction of a form like:
   /// \code
-  ///   brOnBitSet %register, #bitNumber, dest
+  ///   cc = test %register, #mask
   /// \endcode
-  bool isMaskAndBranchFoldingLegal() const {
-    return MaskAndBranchFoldingIsLegal;
+  virtual bool isMaskAndCmp0FoldingBeneficial(const Instruction &AndI) const {
+    return false;
   }
 
   /// Return true if the target should transform:
@@ -1389,6 +1391,13 @@ public:
       Action != TypeSplitVector;
   }
 
+  /// Return true if a select of constants (select Cond, C1, C2) should be
+  /// transformed into simple math ops with the condition value. For example:
+  /// select Cond, C1, C1-1 --> add (zext Cond), C1-1
+  virtual bool convertSelectOfConstantsToMath() const {
+    return false;
+  }
+
   //===--------------------------------------------------------------------===//
   // TargetLowering Configuration Methods - These methods should be invoked by
   // the derived class constructor to configure this object for the target.
@@ -2202,10 +2211,6 @@ protected:
   /// the branch is usually predicted right.
   bool PredictableSelectIsExpensive;
 
-  /// MaskAndBranchFoldingIsLegal - Indicates if the target supports folding
-  /// a mask of a single bit, a compare, and a branch into a single instruction.
-  bool MaskAndBranchFoldingIsLegal;
-
   /// \see enableExtLdPromotion.
   bool EnableExtLdPromotion;
 
@@ -2373,6 +2378,10 @@ public:
                             TargetLoweringOpt &TLO,
                             unsigned Depth = 0,
                             bool AssumeSingleUse = false) const;
+
+  /// Helper wrapper around SimplifyDemandedBits
+  bool SimplifyDemandedBits(SDValue Op, APInt &DemandedMask,
+                            DAGCombinerInfo &DCI) const;
 
   /// Determine which of the bits specified in Mask are known to be either zero
   /// or one and return them in the KnownZero/KnownOne bitsets.

@@ -199,6 +199,15 @@ const DIType *DbgVariable::getType() const {
   return Ty;
 }
 
+ArrayRef<DbgVariable::FrameIndexExpr> DbgVariable::getFrameIndexExprs() const {
+  std::sort(FrameIndexExprs.begin(), FrameIndexExprs.end(),
+            [](const FrameIndexExpr &A, const FrameIndexExpr &B) -> bool {
+              return A.Expr->getFragmentInfo()->OffsetInBits <
+                     B.Expr->getFragmentInfo()->OffsetInBits;
+            });
+  return FrameIndexExprs;
+}
+
 static const DwarfAccelTable::Atom TypeAtoms[] = {
     DwarfAccelTable::Atom(dwarf::DW_ATOM_die_offset, dwarf::DW_FORM_data4),
     DwarfAccelTable::Atom(dwarf::DW_ATOM_die_tag, dwarf::DW_FORM_data2),
@@ -535,7 +544,6 @@ void DwarfDebug::beginModule() {
       // The retained types array by design contains pointers to
       // MDNodes rather than DIRefs. Unique them here.
       if (DIType *RT = dyn_cast<DIType>(Ty))
-        if (!RT->isExternalTypeRef())
           // There is no point in force-emitting a forward declaration.
           CU.getOrCreateTypeDIE(RT);
     }

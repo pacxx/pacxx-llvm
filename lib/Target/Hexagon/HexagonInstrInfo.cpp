@@ -1413,9 +1413,19 @@ bool HexagonInstrInfo::DefinesPredicate(
   auto &HRI = getRegisterInfo();
   for (unsigned oper = 0; oper < MI.getNumOperands(); ++oper) {
     MachineOperand MO = MI.getOperand(oper);
-    if (MO.isReg() && MO.isDef()) {
+    if (MO.isReg()) {
+      if (!MO.isDef())
+        continue;
       const TargetRegisterClass* RC = HRI.getMinimalPhysRegClass(MO.getReg());
       if (RC == &Hexagon::PredRegsRegClass) {
+        Pred.push_back(MO);
+        return true;
+      }
+      continue;
+    } else if (MO.isRegMask()) {
+      for (unsigned PR : Hexagon::PredRegsRegClass) {
+        if (!MI.modifiesRegister(PR, &HRI))
+          continue;
         Pred.push_back(MO);
         return true;
       }
@@ -1424,7 +1434,7 @@ bool HexagonInstrInfo::DefinesPredicate(
   return false;
 }
 
-bool HexagonInstrInfo::isPredicable(MachineInstr &MI) const {
+bool HexagonInstrInfo::isPredicable(const MachineInstr &MI) const {
   return MI.getDesc().isPredicable();
 }
 
@@ -3009,10 +3019,12 @@ bool HexagonInstrInfo::producesStall(const MachineInstr &MI,
 
 bool HexagonInstrInfo::predCanBeUsedAsDotNew(const MachineInstr &MI,
       unsigned PredReg) const {
-  for (unsigned opNum = 0; opNum < MI.getNumOperands(); opNum++) {
-    const MachineOperand &MO = MI.getOperand(opNum);
+  for (const MachineOperand &MO : MI.operands()) {
+    // Predicate register must be explicitly defined.
+    if (MO.isRegMask() && MO.clobbersPhysReg(PredReg))
+      return false;
     if (MO.isReg() && MO.isDef() && MO.isImplicit() && (MO.getReg() == PredReg))
-      return false; // Predicate register must be explicitly defined.
+      return false;
   }
 
   // Hexagon Programmer's Reference says that decbin, memw_locked, and
@@ -3458,20 +3470,75 @@ int HexagonInstrInfo::getDotNewOp(const MachineInstr &MI) const {
 int HexagonInstrInfo::getDotNewPredJumpOp(const MachineInstr &MI,
       const MachineBranchProbabilityInfo *MBPI) const {
   // We assume that block can have at most two successors.
-  bool taken = false;
   const MachineBasicBlock *Src = MI.getParent();
   const MachineOperand &BrTarget = MI.getOperand(1);
-  const MachineBasicBlock *Dst = BrTarget.getMBB();
+  bool Taken = false;
+  const BranchProbability OneHalf(1, 2);
 
-  const BranchProbability Prediction = MBPI->getEdgeProbability(Src, Dst);
-  if (Prediction >= BranchProbability(1,2))
-    taken = true;
+  if (BrTarget.isMBB()) {
+    const MachineBasicBlock *Dst = BrTarget.getMBB();
+    Taken = MBPI->getEdgeProbability(Src, Dst) >= OneHalf;
+  } else {
+    // The branch target is not a basic block (most likely a function).
+    // Since BPI only gives probabilities for targets that are basic blocks,
+    // try to identify another target of this branch (potentially a fall-
+    // -through) and check the probability of that target.
+    //
+    // The only handled branch combinations are:
+    // - one conditional branch,
+    // - one conditional branch followed by one unconditional branch.
+    // Otherwise, assume not-taken.
+    assert(MI.isConditionalBranch());
+    const MachineBasicBlock &B = *MI.getParent();
+    bool SawCond = false, Bad = false;
+    for (const MachineInstr &I : B) {
+      if (!I.isBranch())
+        continue;
+      if (I.isConditionalBranch()) {
+        SawCond = true;
+        if (&I != &MI) {
+          Bad = true;
+          break;
+        }
+      }
+      if (I.isUnconditionalBranch() && !SawCond) {
+        Bad = true;
+        break;
+      }
+    }
+    if (!Bad) {
+      MachineBasicBlock::const_instr_iterator It(MI);
+      MachineBasicBlock::const_instr_iterator NextIt = std::next(It);
+      if (NextIt == B.instr_end()) {
+        // If this branch is the last, look for the fall-through block.
+        for (const MachineBasicBlock *SB : B.successors()) {
+          if (!B.isLayoutSuccessor(SB))
+            continue;
+          Taken = MBPI->getEdgeProbability(Src, SB) < OneHalf;
+          break;
+        }
+      } else {
+        assert(NextIt->isUnconditionalBranch());
+        // Find the first MBB operand and assume it's the target.
+        const MachineBasicBlock *BT = nullptr;
+        for (const MachineOperand &Op : NextIt->operands()) {
+          if (!Op.isMBB())
+            continue;
+          BT = Op.getMBB();
+          break;
+        }
+        Taken = BT && MBPI->getEdgeProbability(Src, BT) < OneHalf;
+      }
+    } // if (!Bad)
+  }
+
+  // The Taken flag should be set to something reasonable by this point.
 
   switch (MI.getOpcode()) {
   case Hexagon::J2_jumpt:
-    return taken ? Hexagon::J2_jumptnewpt : Hexagon::J2_jumptnew;
+    return Taken ? Hexagon::J2_jumptnewpt : Hexagon::J2_jumptnew;
   case Hexagon::J2_jumpf:
-    return taken ? Hexagon::J2_jumpfnewpt : Hexagon::J2_jumpfnew;
+    return Taken ? Hexagon::J2_jumpfnewpt : Hexagon::J2_jumpfnew;
 
   default:
     llvm_unreachable("Unexpected jump instruction.");
@@ -3481,26 +3548,46 @@ int HexagonInstrInfo::getDotNewPredJumpOp(const MachineInstr &MI,
 // Return .new predicate version for an instruction.
 int HexagonInstrInfo::getDotNewPredOp(const MachineInstr &MI,
       const MachineBranchProbabilityInfo *MBPI) const {
-  int NewOpcode = Hexagon::getPredNewOpcode(MI.getOpcode());
-  if (NewOpcode >= 0) // Valid predicate new instruction
-    return NewOpcode;
-
   switch (MI.getOpcode()) {
   // Condtional Jumps
   case Hexagon::J2_jumpt:
   case Hexagon::J2_jumpf:
     return getDotNewPredJumpOp(MI, MBPI);
-
-  default:
-    assert(0 && "Unknown .new type");
   }
-  return 0;
+
+  int NewOpcode = Hexagon::getPredNewOpcode(MI.getOpcode());
+  if (NewOpcode >= 0)
+    return NewOpcode;
+
+  dbgs() << "Cannot convert to .new: " << getName(MI.getOpcode()) << '\n';
+  llvm_unreachable(nullptr);
 }
 
-int HexagonInstrInfo::getDotOldOp(const int opc) const {
-  int NewOp = opc;
+int HexagonInstrInfo::getDotOldOp(const MachineInstr &MI) const {
+  int NewOp = MI.getOpcode();
   if (isPredicated(NewOp) && isPredicatedNew(NewOp)) { // Get predicate old form
     NewOp = Hexagon::getPredOldOpcode(NewOp);
+    const MachineFunction &MF = *MI.getParent()->getParent();
+    const HexagonSubtarget &HST = MF.getSubtarget<HexagonSubtarget>();
+    // All Hexagon architectures have prediction bits on dot-new branches,
+    // but only Hexagon V60+ has prediction bits on dot-old ones. Make sure
+    // to pick the right opcode when converting back to dot-old.
+    if (!HST.getFeatureBits()[Hexagon::ArchV60]) {
+      switch (NewOp) {
+      case Hexagon::J2_jumptpt:
+        NewOp = Hexagon::J2_jumpt;
+        break;
+      case Hexagon::J2_jumpfpt:
+        NewOp = Hexagon::J2_jumpf;
+        break;
+      case Hexagon::J2_jumprtpt:
+        NewOp = Hexagon::J2_jumprt;
+        break;
+      case Hexagon::J2_jumprfpt:
+        NewOp = Hexagon::J2_jumprf;
+        break;
+      }
+    }
     assert(NewOp >= 0 &&
            "Couldn't change predicate new instruction to its old form.");
   }

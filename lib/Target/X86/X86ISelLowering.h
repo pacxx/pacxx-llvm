@@ -204,12 +204,12 @@ namespace llvm {
       ADDSUB,
 
       //  FP vector ops with rounding mode.
-      FADD_RND,
-      FSUB_RND,
-      FMUL_RND,
-      FDIV_RND,
-      FMAX_RND,
-      FMIN_RND,
+      FADD_RND, FADDS_RND,
+      FSUB_RND, FSUBS_RND,
+      FMUL_RND, FMULS_RND,
+      FDIV_RND, FDIVS_RND,
+      FMAX_RND, FMAXS_RND,
+      FMIN_RND, FMINS_RND,
       FSQRT_RND, FSQRTS_RND,
 
       // FP vector get exponent.
@@ -250,6 +250,9 @@ namespace llvm {
 
       /// Commutative FMIN and FMAX.
       FMAXC, FMINC,
+
+      /// Scalar intrinsic floating point max and min.
+      FMAXS, FMINS,
 
       /// Floating point reciprocal-sqrt and reciprocal approximation.
       /// Note that these typically require refinement
@@ -446,8 +449,7 @@ namespace llvm {
       // Broadcast subvector to vector.
       SUBV_BROADCAST,
 
-      // Insert/Extract vector element.
-      VINSERT,
+      // Extract vector element.
       VEXTRACT,
 
       /// SSE4A Extraction and Insertion.
@@ -809,6 +811,8 @@ namespace llvm {
       return false;
     }
 
+    bool isMaskAndCmp0FoldingBeneficial(const Instruction &AndI) const override;
+
     bool hasAndNotCompare(SDValue Y) const override;
 
     /// Return the value type to use for ISD::SETCC.
@@ -987,6 +991,10 @@ namespace llvm {
     bool shouldConvertConstantLoadToIntImm(const APInt &Imm,
                                            Type *Ty) const override;
 
+    bool convertSelectOfConstantsToMath() const override {
+      return true;
+    }
+
     /// Return true if EXTRACT_SUBVECTOR is cheap for this result type
     /// with this index.
     bool isExtractSubvectorCheap(EVT ResVT, unsigned Index) const override;
@@ -1079,7 +1087,8 @@ namespace llvm {
                             CallingConv::ID CallConv, bool isVarArg,
                             const SmallVectorImpl<ISD::InputArg> &Ins,
                             const SDLoc &dl, SelectionDAG &DAG,
-                            SmallVectorImpl<SDValue> &InVals) const;
+                            SmallVectorImpl<SDValue> &InVals,
+                            uint32_t *RegMask) const;
     SDValue LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
                              const SmallVectorImpl<ISD::InputArg> &ArgInfo,
                              const SDLoc &dl, SelectionDAG &DAG,

@@ -207,8 +207,8 @@ protected:
   bool UseLeaForSP;
 
   /// True if there is no performance penalty to writing only the lower parts
-  /// of a YMM register without clearing the upper part.
-  bool HasFastPartialYMMWrite;
+  /// of a YMM or ZMM register without clearing the upper part.
+  bool HasFastPartialYMMorZMMWrite;
 
   /// True if hardware SQRTSS instruction is at least as fast (latency) as
   /// RSQRTSS followed by a Newton-Raphson iteration.
@@ -228,6 +228,9 @@ protected:
 
   /// True if LZCNT instruction is fast.
   bool HasFastLZCNT;
+
+  /// True if SHLD based rotate is fast.
+  bool HasFastSHLDRotate;
 
   /// True if the short functions should be padded to prevent
   /// a stall when returning too early.
@@ -462,10 +465,13 @@ public:
   bool hasSSEUnalignedMem() const { return HasSSEUnalignedMem; }
   bool hasCmpxchg16b() const { return HasCmpxchg16b; }
   bool useLeaForSP() const { return UseLeaForSP; }
-  bool hasFastPartialYMMWrite() const { return HasFastPartialYMMWrite; }
+  bool hasFastPartialYMMorZMMWrite() const {
+    return HasFastPartialYMMorZMMWrite;
+  }
   bool hasFastScalarFSQRT() const { return HasFastScalarFSQRT; }
   bool hasFastVectorFSQRT() const { return HasFastVectorFSQRT; }
   bool hasFastLZCNT() const { return HasFastLZCNT; }
+  bool hasFastSHLDRotate() const { return HasFastSHLDRotate; }
   bool hasSlowDivide32() const { return HasSlowDivide32; }
   bool hasSlowDivide64() const { return HasSlowDivide64; }
   bool padShortFunctions() const { return PadShortFunctions; }
@@ -514,6 +520,7 @@ public:
   bool isTargetNaCl32() const { return isTargetNaCl() && !is64Bit(); }
   bool isTargetNaCl64() const { return isTargetNaCl() && is64Bit(); }
   bool isTargetMCU() const { return TargetTriple.isOSIAMCU(); }
+  bool isTargetFuchsia() const { return TargetTriple.isOSFuchsia(); }
 
   bool isTargetWindowsMSVC() const {
     return TargetTriple.isWindowsMSVCEnvironment();

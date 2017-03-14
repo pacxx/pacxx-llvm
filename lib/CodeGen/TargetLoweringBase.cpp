@@ -838,7 +838,6 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
   HasExtractBitsInsn = false;
   JumpIsExpensive = JumpIsExpensiveOverride;
   PredictableSelectIsExpensive = false;
-  MaskAndBranchFoldingIsLegal = false;
   EnableExtLdPromotion = false;
   HasFloatingPointExceptions = true;
   StackPointerRegisterToSaveRestore = 0;
@@ -851,7 +850,7 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
   MinFunctionAlignment = 0;
   PrefFunctionAlignment = 0;
   PrefLoopAlignment = 0;
-  GatherAllAliasesMaxDepth = 6;
+  GatherAllAliasesMaxDepth = 18;
   MinStackArgumentAlignment = 1;
   // TODO: the default will be switched to 0 in the next commit, along
   // with the Target-specific changes necessary.
