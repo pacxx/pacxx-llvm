@@ -342,12 +342,6 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createFirstInfo(LLVMContext
     __verbose("Creating info for first barrier \n");
     SetVector<const Value *> livingValues;
     SmallVector<Type*, 8> params;
-    /*
-    for (auto I=kernel->arg_begin(), IE=kernel->arg_end(); I!=IE; ++I) {
-        livingValues.insert(&*I);
-        params.push_back((&*I)->getType());
-    }
-     */
 
     StructType* type = StructType::get(ctx, params, false);
 

@@ -882,6 +882,7 @@ WFVInterface::vectorizeFunction()
         FPM.add(createFunctionVectorizerPass());
 
         FPM.run(*tempF);
+        //WFV::writeFunctionToFile(*tempF, "mask.ll");
     }
     mInfo = nullptr; // PassManager has deleted mWFVInfo already.
 
