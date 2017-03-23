@@ -85,6 +85,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
         unsigned vectorWidth = determineVectorWidth(kernel, TTI->getRegisterBitWidth(true));
+        vectorWidth = 4;
 
         __verbose("registerWidth: ", TTI->getRegisterBitWidth(true));
         __verbose("vectorWidth: ", vectorWidth);
@@ -107,12 +108,13 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
             prepareForVectorization(kernel, wfv);
 
-            bool vectorized = wfv.run();
+            bool vectorized = false;
+            if(wfv.run())
+                vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
             //bool vectorized = wfv.analyze();
             __verbose("vectorized: ", vectorized);
 
             if (vectorized) {
-                modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
                 vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
                 kernel->addFnAttr("vectorized");
             } else
@@ -183,6 +185,21 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
 
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
+
+        // required to prevent modulo zero in the mandelbrot example
+        if(BinaryOperator *binOp = dyn_cast<BinaryOperator>(inst))
+            if(binOp->getOpcode() == BinaryOperator::URem || binOp->getOpcode() == BinaryOperator::SRem)
+                wfv.addSIMDSemantics(*inst,
+                                     false, //uniform
+                                     false, // varying
+                                     false,  // seq
+                                     true,  //seq guarded
+                                     false, // res uniform
+                                     false, // res vector
+                                     true, // res scalars
+                                     false, // aligned
+                                     false, // same
+                                     false); // consecutive
 
         // mark intrinsics
         if (auto CI = dyn_cast<CallInst>(inst)) {
@@ -259,6 +276,7 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     // creating a new foo wrapper, because every kernel could have a different vector width
     Function *vecFoo = createKernelSpecificFoo(M, F, kernel);
 
+
     BasicBlock* oldLoopHeader = determineOldLoopPreHeader(vecFoo);
     if(!oldLoopHeader)
         return false;
@@ -272,6 +290,7 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
         return false;
 
     modifyOldLoop(vecFoo);
+
 
     // construct required BasicBlocks
     BasicBlock* loopEnd = BasicBlock::Create(ctx, "loop-end", vecFoo, oldLoopHeader);
@@ -376,7 +395,6 @@ Function *SPMDVectorizer::createKernelSpecificFoo(Module &M, Function *F, Functi
         }
 
     auto DestI = vecFoo->arg_begin();
-    int i = 0;
     for (auto I = F->arg_begin(); I != F->arg_end(); ++I) {
         DestI->setName(I->getName().str());
         VMap[cast<Value>(I)] = cast<Value>(DestI++);
