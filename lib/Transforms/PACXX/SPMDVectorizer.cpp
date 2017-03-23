@@ -259,8 +259,6 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     // creating a new foo wrapper, because every kernel could have a different vector width
     Function *vecFoo = createKernelSpecificFoo(M, F, kernel);
 
-    vecFoo->dump();
-
     BasicBlock* oldLoopHeader = determineOldLoopPreHeader(vecFoo);
     if(!oldLoopHeader)
         return false;
