@@ -259,6 +259,8 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     // creating a new foo wrapper, because every kernel could have a different vector width
     Function *vecFoo = createKernelSpecificFoo(M, F, kernel);
 
+    vecFoo->dump();
+
     BasicBlock* oldLoopHeader = determineOldLoopPreHeader(vecFoo);
     if(!oldLoopHeader)
         return false;
@@ -378,7 +380,7 @@ Function *SPMDVectorizer::createKernelSpecificFoo(Module &M, Function *F, Functi
     auto DestI = vecFoo->arg_begin();
     int i = 0;
     for (auto I = F->arg_begin(); I != F->arg_end(); ++I) {
-        DestI->setName(string("arg") + to_string(++i));
+        DestI->setName(I->getName().str());
         VMap[cast<Value>(I)] = cast<Value>(DestI++);
     }
 
