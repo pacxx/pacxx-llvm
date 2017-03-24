@@ -24,6 +24,7 @@ using namespace llvm;
 using namespace std;
 using namespace pacxx;
 
+
 namespace {
 
     class SPMDVectorizer : public llvm::ModulePass {
@@ -85,7 +86,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
         unsigned vectorWidth = determineVectorWidth(kernel, TTI->getRegisterBitWidth(true));
-        vectorWidth = 4;
 
         __verbose("registerWidth: ", TTI->getRegisterBitWidth(true));
         __verbose("vectorWidth: ", vectorWidth);
