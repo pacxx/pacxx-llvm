@@ -3693,10 +3693,13 @@ MachineOperand *SIInstrInfo::getNamedOperand(MachineInstr &MI,
 uint64_t SIInstrInfo::getDefaultRsrcDataFormat() const {
   uint64_t RsrcDataFormat = AMDGPU::RSRC_DATA_FORMAT;
   if (ST.isAmdHsaOS()) {
-    RsrcDataFormat |= (1ULL << 56);
+    // Set ATC = 1. GFX9 doesn't have this bit.
+    if (ST.getGeneration() <= SISubtarget::VOLCANIC_ISLANDS)
+      RsrcDataFormat |= (1ULL << 56);
 
-    if (ST.getGeneration() >= SISubtarget::VOLCANIC_ISLANDS)
-      // Set MTYPE = 2
+    // Set MTYPE = 2 (MTYPE_UC = uncached). GFX9 doesn't have this.
+    // BTW, it disables TC L2 and therefore decreases performance.
+    if (ST.getGeneration() == SISubtarget::VOLCANIC_ISLANDS)
       RsrcDataFormat |= (2ULL << 59);
   }
 
@@ -3708,11 +3711,14 @@ uint64_t SIInstrInfo::getScratchRsrcWords23() const {
                     AMDGPU::RSRC_TID_ENABLE |
                     0xffffffff; // Size;
 
-  uint64_t EltSizeValue = Log2_32(ST.getMaxPrivateElementSize()) - 1;
+  // GFX9 doesn't have ELEMENT_SIZE.
+  if (ST.getGeneration() <= SISubtarget::VOLCANIC_ISLANDS) {
+    uint64_t EltSizeValue = Log2_32(ST.getMaxPrivateElementSize()) - 1;
+    Rsrc23 |= EltSizeValue << AMDGPU::RSRC_ELEMENT_SIZE_SHIFT;
+  }
 
-  Rsrc23 |= (EltSizeValue << AMDGPU::RSRC_ELEMENT_SIZE_SHIFT) |
-            // IndexStride = 64
-            (UINT64_C(3) << AMDGPU::RSRC_INDEX_STRIDE_SHIFT);
+  // IndexStride = 64.
+  Rsrc23 |= UINT64_C(3) << AMDGPU::RSRC_INDEX_STRIDE_SHIFT;
 
   // If TID_ENABLE is set, DATA_FORMAT specifies stride bits [14:17].
   // Clear them unless we want a huge stride.
@@ -3741,7 +3747,7 @@ unsigned SIInstrInfo::isStackAccess(const MachineInstr &MI,
     return AMDGPU::NoRegister;
 
   assert(!MI.memoperands_empty() &&
-         (*MI.memoperands_begin())->getAddrSpace() == AMDGPUAS::PRIVATE_ADDRESS);
+         (*MI.memoperands_begin())->getAddrSpace() == AMDGPUASI.PRIVATE_ADDRESS);
 
   FrameIndex = Addr->getIndex();
   return getNamedOperand(MI, AMDGPU::OpName::vdata)->getReg();
@@ -3797,16 +3803,11 @@ unsigned SIInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   if (DescSize != 0 && DescSize != 4)
     return DescSize;
 
-  if (Opc == AMDGPU::WAVE_BARRIER)
-    return 0;
-
   // 4-byte instructions may have a 32-bit literal encoded after them. Check
   // operands that coud ever be literals.
   if (isVALU(MI) || isSALU(MI)) {
-    if (isFixedSize(MI)) {
-      assert(DescSize == 4);
+    if (isFixedSize(MI))
       return DescSize;
-    }
 
     int Src0Idx = AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src0);
     if (Src0Idx == -1)
@@ -3829,7 +3830,6 @@ unsigned SIInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return 4;
 
   switch (Opc) {
-  case AMDGPU::SI_MASK_BRANCH:
   case TargetOpcode::IMPLICIT_DEF:
   case TargetOpcode::KILL:
   case TargetOpcode::DBG_VALUE:
@@ -3854,7 +3854,7 @@ bool SIInstrInfo::mayAccessFlatAddressSpace(const MachineInstr &MI) const {
     return true;
 
   for (const MachineMemOperand *MMO : MI.memoperands()) {
-    if (MMO->getAddrSpace() == AMDGPUAS::FLAT_ADDRESS)
+    if (MMO->getAddrSpace() == AMDGPUASI.FLAT_ADDRESS)
       return true;
   }
   return false;
