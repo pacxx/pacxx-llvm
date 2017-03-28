@@ -34,6 +34,7 @@ class Instruction;
 class MachineBasicBlock;
 class MachineFunction;
 class MachineInstr;
+class OptimizationRemarkEmitter;
 class MachineRegisterInfo;
 class TargetPassConfig;
 
@@ -142,6 +143,8 @@ private:
   bool translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
                                MachineIRBuilder &MIRBuilder);
 
+  bool translateInlineAsm(const CallInst &CI, MachineIRBuilder &MIRBuilder);
+
   /// Translate call instruction.
   /// \pre \p U is a call instruction.
   bool translateCall(const User &U, MachineIRBuilder &MIRBuilder);
@@ -154,11 +157,6 @@ private:
   /// given generic Opcode.
   bool translateCast(unsigned Opcode, const User &U,
                      MachineIRBuilder &MIRBuilder);
-
-  /// Translate static alloca instruction (i.e. one  of constant size and in the
-  /// first basic block).
-  bool translateStaticAlloca(const AllocaInst &Inst,
-                             MachineIRBuilder &MIRBuilder);
 
   /// Translate a phi instruction.
   bool translatePHI(const User &U, MachineIRBuilder &MIRBuilder);
@@ -202,11 +200,15 @@ private:
 
   bool translateGetElementPtr(const User &U, MachineIRBuilder &MIRBuilder);
 
+  bool translateAlloca(const User &U, MachineIRBuilder &MIRBuilder);
+
   /// Translate return (ret) instruction.
   /// The target needs to implement CallLowering::lowerReturn for
   /// this to succeed.
   /// \pre \p U is a return instruction.
   bool translateRet(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateFSub(const User &U, MachineIRBuilder &MIRBuilder);
 
   bool translateAdd(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_ADD, U, MIRBuilder);
@@ -238,9 +240,6 @@ private:
   }
   bool translateSRem(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_SREM, U, MIRBuilder);
-  }
-  bool translateAlloca(const User &U, MachineIRBuilder &MIRBuilder) {
-    return translateStaticAlloca(cast<AllocaInst>(U), MIRBuilder);
   }
   bool translateIntToPtr(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateCast(TargetOpcode::G_INTTOPTR, U, MIRBuilder);
@@ -293,9 +292,6 @@ private:
   bool translateFAdd(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_FADD, U, MIRBuilder);
   }
-  bool translateFSub(const User &U, MachineIRBuilder &MIRBuilder) {
-    return translateBinaryOp(TargetOpcode::G_FSUB, U, MIRBuilder);
-  }
   bool translateFMul(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_FMUL, U, MIRBuilder);
   }
@@ -305,6 +301,12 @@ private:
   bool translateFRem(const User &U, MachineIRBuilder &MIRBuilder) {
     return translateBinaryOp(TargetOpcode::G_FREM, U, MIRBuilder);
   }
+
+  bool translateVAArg(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateInsertElement(const User &U, MachineIRBuilder &MIRBuilder);
+
+  bool translateExtractElement(const User &U, MachineIRBuilder &MIRBuilder);
 
   // Stubs to keep the compiler happy while we implement the rest of the
   // translation.
@@ -344,15 +346,6 @@ private:
   bool translateUserOp2(const User &U, MachineIRBuilder &MIRBuilder) {
     return false;
   }
-  bool translateVAArg(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
-  bool translateExtractElement(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
-  bool translateInsertElement(const User &U, MachineIRBuilder &MIRBuilder) {
-    return false;
-  }
   bool translateShuffleVector(const User &U, MachineIRBuilder &MIRBuilder) {
     return false;
   }
@@ -379,6 +372,9 @@ private:
 
   /// Current target configuration. Controls how the pass handles errors.
   const TargetPassConfig *TPC;
+
+  /// Current optimization remark emitter. Used to report failures.
+  std::unique_ptr<OptimizationRemarkEmitter> ORE;
 
   // * Insert all the code needed to materialize the constants
   // at the proper place. E.g., Entry block or dominator block

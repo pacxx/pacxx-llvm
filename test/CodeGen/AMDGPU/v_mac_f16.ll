@@ -31,9 +31,10 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_same_add
+; GCN-LABEL: {{^}}mac_f16_same_add:
 ; SI:  v_mad_f32 v{{[0-9]}}, v{{[0-9]+}}, v{{[0-9]+}}, [[ADD:v[0-9]+]]
 ; SI:  v_mac_f32_e32 [[ADD]], v{{[0-9]+}}, v{{[0-9]+}}
+
 ; VI:  v_mad_f16 v{{[0-9]}}, v{{[0-9]+}}, v{{[0-9]+}}, [[ADD:v[0-9]+]]
 ; VI:  v_mac_f16_e32 [[ADD]], v{{[0-9]+}}, v{{[0-9]+}}
 ; GCN: s_endpgm
@@ -63,9 +64,12 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_neg_a
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+; GCN-LABEL: {{^}}mac_f16_neg_a:
+; SI: v_cvt_f32_f16_e32 [[CVT_A:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_B:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_C:v[0-9]+]], v{{[0-9]+}}
+; SI: v_mad_f32 v{{[0-9]+}}, -[[CVT_A]], [[CVT_B]], [[CVT_C]]
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
 ; GCN:    s_endpgm
@@ -87,9 +91,12 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_neg_b
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+; GCN-LABEL: {{^}}mac_f16_neg_b:
+; SI: v_cvt_f32_f16_e32 [[CVT_A:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_B:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_C:v[0-9]+]], v{{[0-9]+}}
+; SI: v_mad_f32 v{{[0-9]+}}, -[[CVT_A]], [[CVT_B]], [[CVT_C]]
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
 ; GCN:    s_endpgm
@@ -111,9 +118,12 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_neg_c
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
+; GCN-LABEL: {{^}}mac_f16_neg_c:
+; SI: v_cvt_f32_f16_e32
+; SI: v_cvt_f32_f16_e32
+; SI: v_cvt_f32_f16_e32
+; SI: v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
 ; GCN:    s_endpgm
@@ -207,13 +217,16 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_neg_a_unsafe_fp_math
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]}}
+; GCN-LABEL: {{^}}mac_f16_neg_a_nsz_fp_math:
+; SI: v_cvt_f32_f16_e32 [[CVT_A:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_B:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_C:v[0-9]+]], v{{[0-9]+}}
+; SI: v_mad_f32 v{{[0-9]+}}, -[[CVT_A]], [[CVT_B]], [[CVT_C]]
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]}}
 ; GCN:    s_endpgm
-define void @mac_f16_neg_a_unsafe_fp_math(
+define void @mac_f16_neg_a_nsz_fp_math(
     half addrspace(1)* %r,
     half addrspace(1)* %a,
     half addrspace(1)* %b,
@@ -231,13 +244,16 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_neg_b_unsafe_fp_math
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]}}
+; GCN-LABEL: {{^}}mac_f16_neg_b_nsz_fp_math:
+; SI: v_cvt_f32_f16_e32 [[CVT_A:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_B:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_C:v[0-9]+]], v{{[0-9]+}}
+; SI: v_mad_f32 v{{[0-9]+}}, -[[CVT_A]], [[CVT_B]], [[CVT_C]]
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]}}
 ; GCN:    s_endpgm
-define void @mac_f16_neg_b_unsafe_fp_math(
+define void @mac_f16_neg_b_nsz_fp_math(
     half addrspace(1)* %r,
     half addrspace(1)* %a,
     half addrspace(1)* %b,
@@ -255,13 +271,16 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_f16_neg_c_unsafe_fp_math
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]}}
+; GCN-LABEL: {{^}}mac_f16_neg_c_nsz_fp_math:
+; SI: v_cvt_f32_f16_e32 [[CVT_A:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_B:v[0-9]+]], v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT_C:v[0-9]+]], v{{[0-9]+}}
+; SI: v_mad_f32 v{{[0-9]+}}, [[CVT_A]], [[CVT_B]], -[[CVT_C]]
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]}}
 ; GCN:    s_endpgm
-define void @mac_f16_neg_c_unsafe_fp_math(
+define void @mac_f16_neg_c_nsz_fp_math(
     half addrspace(1)* %r,
     half addrspace(1)* %a,
     half addrspace(1)* %b,
@@ -279,7 +298,7 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16
+; GCN-LABEL: {{^}}mac_v2f16:
 ; GCN: {{buffer|flat}}_load_dword v[[A_V2_F16:[0-9]+]]
 ; GCN: {{buffer|flat}}_load_dword v[[B_V2_F16:[0-9]+]]
 ; GCN: {{buffer|flat}}_load_dword v[[C_V2_F16:[0-9]+]]
@@ -322,7 +341,7 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_same_add
+; GCN-LABEL: {{^}}mac_v2f16_same_add:
 ; SI:  v_mad_f32 v{{[0-9]}}, v{{[0-9]+}}, v{{[0-9]+}}, [[ADD0:v[0-9]+]]
 ; SI:  v_mad_f32 v{{[0-9]}}, v{{[0-9]+}}, v{{[0-9]+}}, [[ADD1:v[0-9]+]]
 ; SI:  v_mac_f32_e32 [[ADD0]], v{{[0-9]+}}, v{{[0-9]+}}
@@ -358,10 +377,13 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_a
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+; GCN-LABEL: {{^}}mac_v2f16_neg_a:
+; SI: v_cvt_f32_f16_e32 [[CVT0:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT1:v[0-9]+]], {{v[0-9]+}}
+
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -[[CVT0]], v{{[0-9]+}}, v{{[0-9]+}}
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, [[CVT1]], v{{[0-9]+}}
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
@@ -385,9 +407,12 @@ entry:
 }
 
 ; GCN-LABEL: {{^}}mac_v2f16_neg_b
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT0:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT1:v[0-9]+]], {{v[0-9]+}}
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -[[CVT0]], v{{[0-9]+}}, v{{[0-9]+}}
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, [[CVT1]], v{{[0-9]+}}
+
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
@@ -410,10 +435,17 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_c
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
-; SI:     v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
+; GCN-LABEL: {{^}}mac_v2f16_neg_c:
+; SI: v_cvt_f32_f16_e32 [[CVT0:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT1:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT2:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT3:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT4:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT5:v[0-9]+]], {{v[0-9]+}}
+
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -[[CVT2]]
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -[[CVT5]]
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
 ; VI:     v_mad_f16 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
@@ -464,7 +496,7 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_b_safe_fp_math
+; GCN-LABEL: {{^}}mac_v2f16_neg_b_safe_fp_math:
 ; SI:  v_sub_f32_e32 v[[NEG_A0:[0-9]+]], 0, v{{[0-9]+}}
 ; SI:  v_sub_f32_e32 v[[NEG_A1:[0-9]+]], 0, v{{[0-9]+}}
 ; SI:  v_mac_f32_e32 v{{[0-9]+}}, v[[NEG_A0]], v{{[0-9]+}}
@@ -492,7 +524,7 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_c_safe_fp_math
+; GCN-LABEL: {{^}}mac_v2f16_neg_c_safe_fp_math:
 ; SI:  v_sub_f32_e32 v[[NEG_A0:[0-9]+]], 0, v{{[0-9]+}}
 ; SI:  v_sub_f32_e32 v[[NEG_A1:[0-9]+]], 0, v{{[0-9]+}}
 ; SI:  v_mac_f32_e32 v[[NEG_A0]], v{{[0-9]+}}, v{{[0-9]+}}
@@ -520,15 +552,22 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_a_unsafe_fp_math
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
+; GCN-LABEL: {{^}}mac_v2f16_neg_a_nsz_fp_math:
+; SI: v_cvt_f32_f16_e32 [[CVT0:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT1:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT2:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT3:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT4:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT5:v[0-9]+]], {{v[0-9]+}}
+
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
 ; GCN:    s_endpgm
-define void @mac_v2f16_neg_a_unsafe_fp_math(
+define void @mac_v2f16_neg_a_nsz_fp_math(
     <2 x half> addrspace(1)* %r,
     <2 x half> addrspace(1)* %a,
     <2 x half> addrspace(1)* %b,
@@ -546,15 +585,22 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_b_unsafe_fp_math
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
-; SI:     v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
+; GCN-LABEL: {{^}}mac_v2f16_neg_b_nsz_fp_math:
+; SI: v_cvt_f32_f16_e32 [[CVT0:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT1:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT2:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT3:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT4:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT5:v[0-9]+]], {{v[0-9]+}}
+
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
 ; VI:     v_mad_f16 v{{[0-9]+}}, -v{{[0-9]+}}, v{{[0-9]+}}, v{{[-0-9]}}
 ; GCN:    s_endpgm
-define void @mac_v2f16_neg_b_unsafe_fp_math(
+define void @mac_v2f16_neg_b_nsz_fp_math(
     <2 x half> addrspace(1)* %r,
     <2 x half> addrspace(1)* %a,
     <2 x half> addrspace(1)* %b,
@@ -572,15 +618,22 @@ entry:
   ret void
 }
 
-; GCN-LABEL: {{^}}mac_v2f16_neg_c_unsafe_fp_math
-; SI-NOT: v_mac_f32
-; SI:     v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[-0-9]}}
-; SI:     v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[-0-9]}}
+; GCN-LABEL: {{^}}mac_v2f16_neg_c_nsz_fp_math:
+; SI: v_cvt_f32_f16_e32 [[CVT0:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT1:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT2:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT3:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT4:v[0-9]+]], {{v[0-9]+}}
+; SI: v_cvt_f32_f16_e32 [[CVT5:v[0-9]+]], {{v[0-9]+}}
+
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
+; SI-DAG: v_mad_f32 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[0-9]+}}
+
 ; VI-NOT: v_mac_f16
 ; VI:     v_mad_f16 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[-0-9]}}
 ; VI:     v_mad_f16 v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, -v{{[-0-9]}}
 ; GCN:    s_endpgm
-define void @mac_v2f16_neg_c_unsafe_fp_math(
+define void @mac_v2f16_neg_c_nsz_fp_math(
     <2 x half> addrspace(1)* %r,
     <2 x half> addrspace(1)* %a,
     <2 x half> addrspace(1)* %b,
@@ -598,5 +651,5 @@ entry:
   ret void
 }
 
-attributes #0 = { nounwind "unsafe-fp-math"="false" }
-attributes #1 = { nounwind "unsafe-fp-math"="true" }
+attributes #0 = { nounwind "no-signed-zeros-fp-math"="false" }
+attributes #1 = { nounwind "no-signed-zeros-fp-math"="true" }

@@ -11,12 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-def SDT_CMPFP0  : SDTypeProfile<0, 1, [SDTCisFP<0>]>;
+def SDT_CMPFP0  : SDTypeProfile<0, 2, [SDTCisFP<0>, SDTCisVT<1, i32>]>;
 def SDT_VMOVDRR : SDTypeProfile<1, 2, [SDTCisVT<0, f64>, SDTCisVT<1, i32>,
                                        SDTCisSameAs<1, 2>]>;
 
 def arm_fmstat : SDNode<"ARMISD::FMSTAT",  SDTNone, [SDNPInGlue, SDNPOutGlue]>;
-def arm_cmpfp  : SDNode<"ARMISD::CMPFP",   SDT_ARMCmp, [SDNPOutGlue]>;
+def arm_cmpfp  : SDNode<"ARMISD::CMPFP",   SDT_ARMFCmp, [SDNPOutGlue]>;
 def arm_cmpfp0 : SDNode<"ARMISD::CMPFPw0", SDT_CMPFP0, [SDNPOutGlue]>;
 def arm_fmdrr  : SDNode<"ARMISD::VMOVDRR", SDT_VMOVDRR>;
 
@@ -516,12 +516,12 @@ let Defs = [FPSCR_NZCV] in {
 def VCMPED : ADuI<0b11101, 0b11, 0b0100, 0b11, 0,
                   (outs), (ins DPR:$Dd, DPR:$Dm),
                   IIC_fpCMP64, "vcmpe", ".f64\t$Dd, $Dm",
-                  [(arm_cmpfp DPR:$Dd, (f64 DPR:$Dm))]>;
+                  [(arm_cmpfp DPR:$Dd, (f64 DPR:$Dm), (i32 1))]>;
 
 def VCMPES : ASuI<0b11101, 0b11, 0b0100, 0b11, 0,
                   (outs), (ins SPR:$Sd, SPR:$Sm),
                   IIC_fpCMP32, "vcmpe", ".f32\t$Sd, $Sm",
-                  [(arm_cmpfp SPR:$Sd, SPR:$Sm)]> {
+                  [(arm_cmpfp SPR:$Sd, SPR:$Sm, (i32 1))]> {
   // Some single precision VFP instructions may be executed on both NEON and
   // VFP pipelines on A8.
   let D = VFPNeonA8Domain;
@@ -532,17 +532,15 @@ def VCMPEH : AHuI<0b11101, 0b11, 0b0100, 0b11, 0,
                   IIC_fpCMP16, "vcmpe", ".f16\t$Sd, $Sm",
                   []>;
 
-
-// FIXME: Verify encoding after integrated assembler is working.
 def VCMPD  : ADuI<0b11101, 0b11, 0b0100, 0b01, 0,
                   (outs), (ins DPR:$Dd, DPR:$Dm),
                   IIC_fpCMP64, "vcmp", ".f64\t$Dd, $Dm",
-                  [/* For disassembly only; pattern left blank */]>;
+                  [(arm_cmpfp DPR:$Dd, (f64 DPR:$Dm), (i32 0))]>;
 
 def VCMPS  : ASuI<0b11101, 0b11, 0b0100, 0b01, 0,
                   (outs), (ins SPR:$Sd, SPR:$Sm),
                   IIC_fpCMP32, "vcmp", ".f32\t$Sd, $Sm",
-                  [/* For disassembly only; pattern left blank */]> {
+                  [(arm_cmpfp SPR:$Sd, SPR:$Sm, (i32 0))]> {
   // Some single precision VFP instructions may be executed on both NEON and
   // VFP pipelines on A8.
   let D = VFPNeonA8Domain;
@@ -581,7 +579,7 @@ let Defs = [FPSCR_NZCV] in {
 def VCMPEZD : ADuI<0b11101, 0b11, 0b0101, 0b11, 0,
                    (outs), (ins DPR:$Dd),
                    IIC_fpCMP64, "vcmpe", ".f64\t$Dd, #0",
-                   [(arm_cmpfp0 (f64 DPR:$Dd))]> {
+                   [(arm_cmpfp0 (f64 DPR:$Dd), (i32 1))]> {
   let Inst{3-0} = 0b0000;
   let Inst{5}   = 0;
 }
@@ -589,7 +587,7 @@ def VCMPEZD : ADuI<0b11101, 0b11, 0b0101, 0b11, 0,
 def VCMPEZS : ASuI<0b11101, 0b11, 0b0101, 0b11, 0,
                    (outs), (ins SPR:$Sd),
                    IIC_fpCMP32, "vcmpe", ".f32\t$Sd, #0",
-                   [(arm_cmpfp0 SPR:$Sd)]> {
+                   [(arm_cmpfp0 SPR:$Sd, (i32 1))]> {
   let Inst{3-0} = 0b0000;
   let Inst{5}   = 0;
 
@@ -606,11 +604,10 @@ def VCMPEZH : AHuI<0b11101, 0b11, 0b0101, 0b11, 0,
   let Inst{5}   = 0;
 }
 
-// FIXME: Verify encoding after integrated assembler is working.
 def VCMPZD  : ADuI<0b11101, 0b11, 0b0101, 0b01, 0,
                    (outs), (ins DPR:$Dd),
                    IIC_fpCMP64, "vcmp", ".f64\t$Dd, #0",
-                   [/* For disassembly only; pattern left blank */]> {
+                   [(arm_cmpfp0 (f64 DPR:$Dd), (i32 0))]> {
   let Inst{3-0} = 0b0000;
   let Inst{5}   = 0;
 }
@@ -618,7 +615,7 @@ def VCMPZD  : ADuI<0b11101, 0b11, 0b0101, 0b01, 0,
 def VCMPZS  : ASuI<0b11101, 0b11, 0b0101, 0b01, 0,
                    (outs), (ins SPR:$Sd),
                    IIC_fpCMP32, "vcmp", ".f32\t$Sd, #0",
-                   [/* For disassembly only; pattern left blank */]> {
+                   [(arm_cmpfp0 SPR:$Sd, (i32 0))]> {
   let Inst{3-0} = 0b0000;
   let Inst{5}   = 0;
 
@@ -680,7 +677,6 @@ def VCVTSD  : VFPAI<(outs SPR:$Sd), (ins DPR:$Dm), VFPUnaryFrm,
 
 // Between half, single and double-precision.  For disassembly only.
 
-// FIXME: Verify encoding after integrated assembler is working.
 def VCVTBHS: ASuI<0b11101, 0b11, 0b0010, 0b01, 0, (outs SPR:$Sd), (ins SPR:$Sm),
                  /* FIXME */ IIC_fpCVTSH, "vcvtb", ".f32.f16\t$Sd, $Sm",
                  [/* For disassembly only; pattern left blank */]>,
@@ -1513,7 +1509,6 @@ def VTOUIZH : AVConv1IsH_Encode<0b11101, 0b11, 0b1100, 0b1001,
 
 // And the Z bit '0' variants, i.e. use the rounding mode specified by FPSCR.
 let Uses = [FPSCR] in {
-// FIXME: Verify encoding after integrated assembler is working.
 def VTOSIRD : AVConv1IsD_Encode<0b11101, 0b11, 0b1101, 0b1011,
                                 (outs SPR:$Sd), (ins DPR:$Dm),
                                 IIC_fpCVTDI, "vcvtr", ".s32.f64\t$Sd, $Dm",

@@ -233,12 +233,12 @@ struct PACXXStaticEvalPass : public ModulePass {
       if (lhs.res == evaluated && rhs.res == evaluated) {
         switch (op.getOpcode()) {
         case BinaryOperator::Add:
-          eval_upper = APIntOps::add(lhs.upper, rhs.upper);
-          eval_lower = APIntOps::add(lhs.lower, rhs.lower);
+          eval_upper = lhs.upper + rhs.upper;
+          eval_lower = lhs.lower + rhs.lower;
           break;
         case BinaryOperator::Sub:
-          eval_upper = APIntOps::sub(lhs.upper, rhs.upper);
-          eval_lower = APIntOps::sub(lhs.lower, rhs.lower);
+          eval_upper = lhs.upper - rhs.upper;
+          eval_lower = lhs.lower - rhs.lower;
           break;
         case BinaryOperator::Mul:
           eval_upper = APIntOps::mul(lhs.upper, rhs.upper);
@@ -271,12 +271,12 @@ struct PACXXStaticEvalPass : public ModulePass {
               lhs.lower, static_cast<unsigned int>(*rhs.lower.getRawData()));
           break;
         case BinaryOperator::Or:
-          eval_upper = APIntOps::Or(lhs.upper, rhs.upper);
-          eval_lower = APIntOps::Or(lhs.lower, rhs.lower);
+          eval_upper = lhs.upper | rhs.upper;
+          eval_lower = lhs.lower | rhs.lower;
           break;
         case BinaryOperator::And:
-          eval_upper = APIntOps::And(lhs.upper, rhs.upper);
-          eval_lower = APIntOps::And(lhs.lower, rhs.lower);
+          eval_upper = lhs.upper & rhs.upper;
+          eval_lower = lhs.lower & rhs.lower;
           break;
         case BinaryOperator::AShr:
           eval_upper = APIntOps::ashr(

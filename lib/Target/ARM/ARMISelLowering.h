@@ -175,6 +175,8 @@ class InstrItineraryData;
       VMULLs,       // ...signed
       VMULLu,       // ...unsigned
 
+      SMULWB,       // Signed multiply word by half word, bottom
+      SMULWT,       // Signed multiply word by half word, top
       UMLAL,        // 64bit Unsigned Accumulate Multiply
       SMLAL,        // 64bit Signed Accumulate Multiply
       UMAAL,        // 64-bit Unsigned Accumulate Accumulate Multiply
@@ -500,6 +502,11 @@ class InstrItineraryData;
     bool canCombineStoreAndExtract(Type *VectorTy, Value *Idx,
                                    unsigned &Cost) const override;
 
+    bool canMergeStoresTo(EVT MemVT) const override {
+      // Do not merge to larger than i32.
+      return (MemVT.getSizeInBits() <= 32);
+    }
+
     bool isCheapToSpeculateCttz() const override;
     bool isCheapToSpeculateCtlz() const override;
 
@@ -698,7 +705,7 @@ class InstrItineraryData;
     SDValue getARMCmp(SDValue LHS, SDValue RHS, ISD::CondCode CC,
                       SDValue &ARMcc, SelectionDAG &DAG, const SDLoc &dl) const;
     SDValue getVFPCmp(SDValue LHS, SDValue RHS, SelectionDAG &DAG,
-                      const SDLoc &dl) const;
+                      const SDLoc &dl, bool InvalidOnQNaN) const;
     SDValue duplicateCmp(SDValue Cmp, SelectionDAG &DAG) const;
 
     SDValue OptimizeVFPBrcond(SDValue Op, SelectionDAG &DAG) const;
