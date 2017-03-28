@@ -325,8 +325,8 @@ FunctionVectorizer::cloneIntoSIMDPrototype(Function*          f_SIMD,
     //        SIMD declarations of our test suite and CloneFunctionInto() fires assertions
     //        because the alignments of f and f_SIMD do not match.
     //        Thus, we now delete all attributes of the target function before cloning.
-    SmallVector<AttributeSet, 4> attrSets;
-    AttributeSet fnAS = AttributeSet::get(*mInfo->mContext, attrSets);
+    SmallVector<AttributeList, 4> attrSets;
+    AttributeList fnAS = AttributeList::get(*mInfo->mContext, attrSets);
     f_SIMD->setAttributes(fnAS);
 
     //clone without optimizing (need exactly the same function for mask-mapping)

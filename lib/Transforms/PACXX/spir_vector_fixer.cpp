@@ -59,7 +59,7 @@ struct SPIRVectorFixer : public ModulePass {
 
     if (B) {
       B->setCallingConv(CallingConv::SPIR_FUNC);
-      B->setAttributes(AttributeSet{});
+      B->setAttributes(AttributeList{});
     }
 
     vector<CallInst *> calls;

@@ -456,7 +456,8 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     }
 
 
-    auto liveValueArg = --newFunc->arg_end();
+    auto liveValueArg = newFunc->arg_end();
+    --liveValueArg;
     liveValueArg->setName("native.struct");
     for (unsigned i = 0; i < livingValuesType->getNumElements(); ++i) {
         --liveValueArg;
@@ -507,7 +508,8 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     //manually map living values that are not correctly mapped
     __verbose("start manual remapping \n");
-    auto argIt = --newFunc->arg_end();
+    auto argIt = newFunc->arg_end();
+    --argIt;
     liveValueArg->setName("native.struct");
     for (unsigned i = 0; i < livingValuesType->getNumElements(); ++i) {
         --argIt;
@@ -586,7 +588,9 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info, ValueToVa
 
     Function *func = barrier->getParent()->getParent();
 
-    Value *storeTo = &*(--func->arg_end());
+    auto storeToIt = func->arg_end();
+    --storeToIt;
+    Value *storeTo = &*storeToIt;
 
     BitCastInst *cast = new BitCastInst(storeTo, PointerType::getUnqual(type), "", barrier);
 
@@ -932,7 +936,7 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
     Function *func = vectorized ? info._calledFunctions.second : info._calledFunctions.first;
 
     auto argIt = info._foo->arg_end();
-    unsigned numArgs = info._origKernel->getArgumentList().size();
+    unsigned numArgs = info._origKernel->arg_size();
     for(unsigned i = 0; i < numArgs; ++i)
         --argIt;
 

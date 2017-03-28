@@ -226,7 +226,7 @@ namespace llvm {
       BasicBlock *entry = &wrapper->front();
 
       // create the arguments from the char*
-      auto argIt = wrapper->getArgumentList().begin();
+      auto argIt = wrapper->arg_begin();
 
       //blockids
       bidx = &*argIt;
@@ -269,7 +269,9 @@ namespace llvm {
 
       size_t offset = 0;
 
-      for (auto &A : kernel->getArgumentList()) {
+      for(auto I = kernel->arg_begin(), E = kernel->arg_end(); I != E; ++I) {
+
+        auto &A = *I;
 
         auto arg_size = M->getDataLayout().getTypeAllocSize(A.getType());
         auto arg_alignment = M->getDataLayout().getPrefTypeAlignment(A.getType());

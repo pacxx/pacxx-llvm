@@ -245,7 +245,7 @@ WFVInfo::addSIMDMapping(const Function& scalarFunction,
 
     // Find out which arguments are UNIFORM and which are VARYING.
     SmallVector<bool, 4> uniformArgs;
-    uniformArgs.reserve(scalarFunction.getArgumentList().size());
+    uniformArgs.reserve(scalarFunction.arg_size());
 
     Function::const_arg_iterator scalarA = scalarFunction.arg_begin();
     Function::const_arg_iterator simdA   = simdFunction.arg_begin();

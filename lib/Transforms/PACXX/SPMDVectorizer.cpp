@@ -328,7 +328,7 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
             if(!(CI->getParent()->getParent() == vecFoo)) continue;
 
             auto argIt = vecFoo->arg_end();
-            unsigned numArgs = kernel->getArgumentList().size();
+            unsigned numArgs = kernel->arg_size();
             for(unsigned i = 0; i < numArgs; ++i)
                 --argIt;
 

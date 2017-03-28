@@ -112,7 +112,7 @@ FunctionInfoMap::add(const Function&             scalarFunction,
                      const bool                  mayHaveSideEffects,
                      const SmallVector<bool, 4>& uniformArguments)
 {
-    assert (uniformArguments.size() == scalarFunction.getArgumentList().size());
+    assert (uniformArguments.size() == scalarFunction.arg_size());
 
     if (maskIndex < -1 ||
         maskIndex > (int)scalarFunction.getFunctionType()->getNumParams())

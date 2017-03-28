@@ -638,7 +638,7 @@ setMetadata(Argument* arg, const char* const metaDataString)
             // first metadata element. This is required to prevent multiple
             // arguments pointing to the same metadata.
             SmallVector<Metadata*, 2> argInfos;
-            for (unsigned i=0, e=arg->getParent()->getArgumentList().size(); i!=e; ++i)
+            for (unsigned i=0, e=arg->getParent()->arg_size(); i!=e; ++i)
             {
                 MDNode* argNode = nullptr;
                 if (i == argIndex)
@@ -663,7 +663,7 @@ setMetadata(Argument* arg, const char* const metaDataString)
             return;
         }
 
-        assert (argInfo->getNumOperands() == arg->getParent()->getArgumentList().size());
+        assert (argInfo->getNumOperands() == arg->getParent()->arg_size());
         assert (isa<MDNode>(argInfo->getOperand(argIndex)));
 
         // Get metadata for the requested argument.
@@ -736,7 +736,7 @@ setMetadata(Argument* arg, const char* const metaDataString)
     // Create node referencing 'id' and 'metaDataString' for the current argument.
     // Create empty nodes for all other arguments.
     SmallVector<Metadata*, 2> argInfos;
-    for (unsigned i=0, e=arg->getParent()->getArgumentList().size(); i!=e; ++i)
+    for (unsigned i=0, e=arg->getParent()->arg_size(); i!=e; ++i)
     {
         MDNode* argNode = nullptr;
         if (i == argIndex)
@@ -792,7 +792,7 @@ hasMetadata(const Argument* arg)
     // There might be no argument metadata (= there is only block metadata).
     if (!argInfo) return false;
 
-    assert (argInfo->getNumOperands() == arg->getParent()->getArgumentList().size());
+    assert (argInfo->getNumOperands() == arg->getParent()->arg_size());
     assert (isa<MDNode>(argInfo->getOperand(argIndex)));
 
     // Get metadata for the requested argument.
@@ -851,7 +851,7 @@ hasMetadata(const Argument* arg, const char* const metaDataString)
     // There might be no argument metadata (= there is only block metadata).
     if (!argInfo) return false;
 
-    assert (argInfo->getNumOperands() == arg->getParent()->getArgumentList().size());
+    assert (argInfo->getNumOperands() == arg->getParent()->arg_size());
     assert (isa<MDNode>(argInfo->getOperand(argIndex)));
 
     // Get metadata for the requested argument.
@@ -923,7 +923,7 @@ removeMetadata(Argument* arg, const char* const metaDataString)
     // (= there is only block metadata).
     if (!argInfo) return;
 
-    assert (argInfo->getNumOperands() == arg->getParent()->getArgumentList().size());
+    assert (argInfo->getNumOperands() == arg->getParent()->arg_size());
     assert (isa<MDNode>(argInfo->getOperand(argIndex)));
 
     // Get metadata for the requested argument.
@@ -971,7 +971,7 @@ removeMetadata(Argument* arg, const char* const metaDataString)
 
         // If no argument has metadata anymore, remove the arg info metadata from the call.
         bool hasArgWithMetadata = false;
-        for (unsigned i=0, e=arg->getParent()->getArgumentList().size(); i!=e; ++i)
+        for (unsigned i=0, e=arg->getParent()->arg_size(); i!=e; ++i)
         {
             if (argInfo->getOperand(i) != nullMDN)
             {

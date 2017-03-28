@@ -341,7 +341,7 @@ WFV::findUniformArguments(const Function&          scalarFn,
                           const WFV::ValueInfoMap* valueInfoMap,
                           const int                maskIndex)
 {
-    uniformArgs.resize(scalarFn.getArgumentList().size());
+    uniformArgs.resize(scalarFn.arg_size());
 
     int i = 0;
     Function::const_arg_iterator A_SCALAR = scalarFn.arg_begin();

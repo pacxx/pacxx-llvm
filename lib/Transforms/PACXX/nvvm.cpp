@@ -79,8 +79,8 @@ struct NVVMPass : public ModulePass {
     cleanupDeadCode(&M);
 
     for (auto &F : M.getFunctionList()) {
-      AttributeSet attrs = F.getAttributes();
-      AttributeSet new_attrs;
+      AttributeList attrs = F.getAttributes();
+      AttributeList new_attrs;
       int idx = 0;
       for (unsigned x = 0; x != attrs.getNumSlots(); ++x)
         for (auto i = attrs.begin(x), e = attrs.end(x); i != e; ++i) {
@@ -112,7 +112,7 @@ struct NVVMPass : public ModulePass {
 
     for (auto &F : kernels) {
       F->setCallingConv(CallingConv::PTX_Kernel);
-      AttributeSet new_attrs;
+      AttributeList new_attrs;
       F->setAttributes(new_attrs);
     }
 

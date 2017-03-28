@@ -248,7 +248,7 @@ void PACXXReflection::ReflectionHandler::visitCallInst(CallInst &CI) {
             FunctionType::get(F->getReturnType(), Params, false);
         PRF = Function::Create(FTy, GlobalValue::LinkageTypes::ExternalLinkage,
                                "__pacxx_reflect", M);
-        PRF->setAttributes(AttributeSet{});
+        PRF->setAttributes(AttributeList{});
       }
       SmallVector<Value *, 1> args;
       args.push_back(
@@ -271,8 +271,10 @@ Function *PACXXReflection::ReflectionHandler::createCallStub(CallInst &CI,
 
   ValueToValueMapTy VMap;
   vector<Type *> argTy;
-  for (auto &arg : kernel->getArgumentList())
+  for(auto I = kernel->arg_begin(), E = kernel->arg_end(); I != E; ++I) {
+    auto &arg = *I;
     argTy.push_back(arg.getType());
+  }
 
   auto FTy = FunctionType::get(CI.getType(), argTy, false);
 
@@ -402,10 +404,11 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
 
   size_t argBufferSize = 0; 
   SmallVector<Value *, 5> callArgs;
-  auto &input = wrapper->getArgumentList().front();
+  auto &input = *wrapper->arg_begin();
   input.setName("arg0");
   unsigned offset = 0;
-  for (auto &argument : F->getArgumentList()) {
+  for(auto I = F->arg_begin(), E = F->arg_end(); I != E; ++I) {
+    auto &argument = *I;
     SmallVector<Value *, 3> idx;
     APInt off(64, offset);
     idx.push_back(
