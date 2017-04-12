@@ -11,6 +11,7 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPU_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPU_H
 
+#include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
@@ -47,6 +48,7 @@ FunctionPass *createSIFixControlFlowLiveIntervalsPass();
 FunctionPass *createSIFixSGPRCopiesPass();
 FunctionPass *createSIDebuggerInsertNopsPass();
 FunctionPass *createSIInsertWaitsPass();
+FunctionPass *createSIInsertWaitcntsPass();
 FunctionPass *createAMDGPUCodeGenPreparePass(const GCNTargetMachine *TM = nullptr);
 
 ModulePass *createAMDGPUAnnotateKernelFeaturesPass(const TargetMachine *TM = nullptr);
@@ -98,7 +100,7 @@ extern char &AMDGPUPromoteAllocaID;
 Pass *createAMDGPUStructurizeCFGPass();
 FunctionPass *createAMDGPUISelDag(TargetMachine &TM,
                                   CodeGenOpt::Level OptLevel);
-ModulePass *createAMDGPUAlwaysInlinePass();
+ModulePass *createAMDGPUAlwaysInlinePass(bool GlobalOpt = true);
 ModulePass *createAMDGPUOpenCLImageTypeLoweringPass();
 FunctionPass *createAMDGPUAnnotateUniformValues();
 
@@ -123,6 +125,9 @@ extern char &SIDebuggerInsertNopsID;
 
 void initializeSIInsertWaitsPass(PassRegistry&);
 extern char &SIInsertWaitsID;
+
+void initializeSIInsertWaitcntsPass(PassRegistry&);
+extern char &SIInsertWaitcntsID;
 
 void initializeAMDGPUUnifyDivergentExitNodesPass(PassRegistry&);
 extern char &AMDGPUUnifyDivergentExitNodesID;
@@ -154,7 +159,6 @@ enum TargetIndex {
 struct AMDGPUAS {
   // The following address space values depend on the triple environment.
   unsigned PRIVATE_ADDRESS;  ///< Address space for private memory.
-  unsigned CONSTANT_ADDRESS; ///< Address space for constant memory (VTX2)
   unsigned FLAT_ADDRESS;     ///< Address space for flat memory.
   unsigned REGION_ADDRESS;   ///< Address space for region memory.
 
@@ -162,6 +166,7 @@ struct AMDGPUAS {
   const static unsigned MAX_COMMON_ADDRESS = 5;
 
   const static unsigned GLOBAL_ADDRESS   = 1;  ///< Address space for global memory (RAT0, VTX0).
+  const static unsigned CONSTANT_ADDRESS = 2;  ///< Address space for constant memory (VTX2)
   const static unsigned LOCAL_ADDRESS    = 3;  ///< Address space for local memory.
   const static unsigned PARAM_D_ADDRESS  = 6;  ///< Address space for direct addressible parameter memory (CONST0)
   const static unsigned PARAM_I_ADDRESS  = 7;  ///< Address space for indirect addressible parameter memory (VTX1)

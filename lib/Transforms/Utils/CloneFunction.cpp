@@ -103,21 +103,23 @@ void llvm::CloneFunctionInto(Function *NewFunc, const Function *OldFunc,
                  ModuleLevelChanges ? RF_None : RF_NoModuleLevelChanges,
                  TypeMapper, Materializer));
 
+  SmallVector<AttributeSet, 4> AttrVec(NewFunc->arg_size() + 2);
   AttributeList OldAttrs = OldFunc->getAttributes();
+
+  // Copy the return attributes.
+  AttrVec[0] = OldAttrs.getRetAttributes();
+
   // Clone any argument attributes that are present in the VMap.
   for (const Argument &OldArg : OldFunc->args())
     if (Argument *NewArg = dyn_cast<Argument>(VMap[&OldArg])) {
-      AttributeList attrs = OldAttrs.getParamAttributes(OldArg.getArgNo() + 1);
-      if (attrs.getNumSlots() > 0)
-        NewArg->addAttr(attrs);
+      AttrVec[NewArg->getArgNo() + 1] =
+          OldAttrs.getParamAttributes(OldArg.getArgNo() + 1);
     }
 
-  NewFunc->setAttributes(
-      NewFunc->getAttributes()
-          .addAttributes(NewFunc->getContext(), AttributeList::ReturnIndex,
-                         OldAttrs.getRetAttributes())
-          .addAttributes(NewFunc->getContext(), AttributeList::FunctionIndex,
-                         OldAttrs.getFnAttributes()));
+  // Copy any function attributes.
+  AttrVec.back() = OldAttrs.getFnAttributes();
+
+  NewFunc->setAttributes(AttributeList::get(NewFunc->getContext(), AttrVec));
 
   SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
   OldFunc->getAllMetadata(MDs);
@@ -352,7 +354,7 @@ void PruningFunctionCloner::CloneBlock(const BasicBlock *BB,
       Cond = dyn_cast_or_null<ConstantInt>(V);
     }
     if (Cond) {     // Constant fold to uncond branch!
-      SwitchInst::ConstCaseIt Case = SI->findCaseValue(Cond);
+      SwitchInst::ConstCaseHandle Case = *SI->findCaseValue(Cond);
       BasicBlock *Dest = const_cast<BasicBlock*>(Case.getCaseSuccessor());
       VMap[OldTI] = BranchInst::Create(Dest, NewBB);
       ToClone.push_back(Dest);

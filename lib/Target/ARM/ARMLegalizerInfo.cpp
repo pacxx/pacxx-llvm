@@ -57,13 +57,20 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
 
   setAction({G_CONSTANT, s32}, Legal);
 
-  if (ST.hasVFP2()) {
+  if (!ST.useSoftFloat() && ST.hasVFP2()) {
     setAction({G_FADD, s32}, Legal);
     setAction({G_FADD, s64}, Legal);
 
     setAction({G_LOAD, s64}, Legal);
     setAction({G_STORE, s64}, Legal);
+  } else {
+    for (auto Ty : {s32, s64})
+      setAction({G_FADD, Ty}, Libcall);
   }
+
+  for (unsigned Op : {G_FREM, G_FPOW})
+    for (auto Ty : {s32, s64})
+      setAction({Op, Ty}, Libcall);
 
   computeTables();
 }

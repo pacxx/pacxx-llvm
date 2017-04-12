@@ -17,6 +17,7 @@
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPUISELLOWERING_H
 
 #include "AMDGPU.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/Target/TargetLowering.h"
 
 namespace llvm {
@@ -39,7 +40,6 @@ protected:
 
   SDValue LowerEXTRACT_SUBVECTOR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerCONCAT_VECTORS(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
   /// \brief Split a vector store into multiple scalar stores.
   /// \returns The resulting chain.
 
@@ -115,8 +115,6 @@ protected:
                                     SmallVectorImpl<SDValue> &Results) const;
   void analyzeFormalArgumentsCompute(CCState &State,
                               const SmallVectorImpl<ISD::InputArg> &Ins) const;
-  void AnalyzeFormalArguments(CCState &State,
-                              const SmallVectorImpl<ISD::InputArg> &Ins) const;
   void AnalyzeReturn(CCState &State,
                      const SmallVectorImpl<ISD::OutputArg> &Outs) const;
 
@@ -162,6 +160,7 @@ public:
   bool isCheapToSpeculateCttz() const override;
   bool isCheapToSpeculateCtlz() const override;
 
+  static CCAssignFn *CCAssignFnForCall(CallingConv::ID CC, bool IsVarArg);
   SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
                       const SmallVectorImpl<ISD::OutputArg> &Outs,
                       const SmallVectorImpl<SDValue> &OutVals, const SDLoc &DL,
@@ -202,10 +201,12 @@ public:
   void computeKnownBitsForTargetNode(const SDValue Op,
                                      APInt &KnownZero,
                                      APInt &KnownOne,
+                                     const APInt &DemandedElts,
                                      const SelectionDAG &DAG,
                                      unsigned Depth = 0) const override;
 
-  unsigned ComputeNumSignBitsForTargetNode(SDValue Op, const SelectionDAG &DAG,
+  unsigned ComputeNumSignBitsForTargetNode(SDValue Op, const APInt &DemandedElts,
+                                           const SelectionDAG &DAG,
                                            unsigned Depth = 0) const override;
 
   /// \brief Helper function that adds Reg to the LiveIn list of the DAG's
@@ -331,7 +332,6 @@ enum NodeType : unsigned {
   CONST_ADDRESS,
   REGISTER_LOAD,
   REGISTER_STORE,
-  LOAD_INPUT,
   SAMPLE,
   SAMPLEB,
   SAMPLED,
@@ -350,6 +350,9 @@ enum NodeType : unsigned {
   // Same as the standard node, except the high bits of the resulting integer
   // are known 0.
   FP_TO_FP16,
+
+  // Wrapper around fp16 results that are known to zero the high bits.
+  FP16_ZEXT,
 
   /// This node is for VLIW targets and it is used to represent a vector
   /// that is stored in consecutive registers with the same channel.

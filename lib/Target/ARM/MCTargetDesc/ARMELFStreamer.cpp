@@ -545,11 +545,13 @@ public:
   /// ARM streamer overrides it to add the appropriate mapping symbol ($d) if
   /// necessary.
   void EmitValueImpl(const MCExpr *Value, unsigned Size, SMLoc Loc) override {
-    if (const MCSymbolRefExpr *SRE = dyn_cast_or_null<MCSymbolRefExpr>(Value))
+    if (const MCSymbolRefExpr *SRE = dyn_cast_or_null<MCSymbolRefExpr>(Value)) {
       if (SRE->getKind() == MCSymbolRefExpr::VK_ARM_SBREL && !(Size == 4)) {
         getContext().reportError(Loc, "relocated expression must be 32-bit");
         return;
       }
+      getOrCreateDataFragment();
+    }
 
     EmitDataMappingSymbol();
     MCELFStreamer::EmitValueImpl(Value, Size, Loc);

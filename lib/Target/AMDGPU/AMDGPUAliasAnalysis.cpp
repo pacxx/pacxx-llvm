@@ -38,7 +38,8 @@ void AMDGPUAAWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 // Must match the table in getAliasResult.
-AMDGPUAAResult::ASAliasRulesTy::ASAliasRulesTy(AMDGPUAS AS_) : AS(AS_) {
+AMDGPUAAResult::ASAliasRulesTy::ASAliasRulesTy(AMDGPUAS AS_, Triple::ArchType Arch_)
+  : Arch(Arch_), AS(AS_) {
   // These arrarys are indexed by address space value
   // enum elements 0 ... to 5
   static const AliasResult ASAliasRulesPrivIsZero[6][6] = {
@@ -51,20 +52,20 @@ AMDGPUAAResult::ASAliasRulesTy::ASAliasRulesTy(AMDGPUAS AS_) : AS(AS_) {
   /* Region   */ {NoAlias , NoAlias , NoAlias , NoAlias , MayAlias, MayAlias}
   };
   static const AliasResult ASAliasRulesGenIsZero[6][6] = {
-  /*             Flat       Global    Region    Group     Constant  Private */
+  /*             Flat       Global    Constant  Group     Region    Private */
   /* Flat     */ {MayAlias, MayAlias, MayAlias, MayAlias, MayAlias, MayAlias},
   /* Global   */ {MayAlias, MayAlias, NoAlias , NoAlias , NoAlias , NoAlias},
-  /* Region   */ {NoAlias , NoAlias , MayAlias, NoAlias,  NoAlias , MayAlias},
+  /* Constant */ {MayAlias, NoAlias , MayAlias, NoAlias , NoAlias,  NoAlias},
   /* Group    */ {MayAlias, NoAlias , NoAlias , MayAlias, NoAlias , NoAlias},
-  /* Constant */ {MayAlias, NoAlias , NoAlias , NoAlias , MayAlias, NoAlias},
+  /* Region   */ {MayAlias, NoAlias , NoAlias , NoAlias,  MayAlias, NoAlias},
   /* Private  */ {MayAlias, NoAlias , NoAlias , NoAlias , NoAlias , MayAlias}
   };
   assert(AS.MAX_COMMON_ADDRESS <= 5);
   if (AS.FLAT_ADDRESS == 0) {
     assert(AS.GLOBAL_ADDRESS   == 1 &&
-           AS.REGION_ADDRESS   == 2 &&
+           AS.REGION_ADDRESS   == 4 &&
            AS.LOCAL_ADDRESS    == 3 &&
-           AS.CONSTANT_ADDRESS == 4 &&
+           AS.CONSTANT_ADDRESS == 2 &&
            AS.PRIVATE_ADDRESS  == 5);
     ASAliasRules = &ASAliasRulesGenIsZero;
   } else {
@@ -80,8 +81,12 @@ AMDGPUAAResult::ASAliasRulesTy::ASAliasRulesTy(AMDGPUAS AS_) : AS(AS_) {
 
 AliasResult AMDGPUAAResult::ASAliasRulesTy::getAliasResult(unsigned AS1,
     unsigned AS2) const {
-  if (AS1 > AS.MAX_COMMON_ADDRESS || AS2 > AS.MAX_COMMON_ADDRESS)
-    report_fatal_error("Pointer address space out of range");
+  if (AS1 > AS.MAX_COMMON_ADDRESS || AS2 > AS.MAX_COMMON_ADDRESS) {
+    if (Arch == Triple::amdgcn)
+      report_fatal_error("Pointer address space out of range");
+    return AS1 == AS2 ? MayAlias : NoAlias;
+  }
+
   return (*ASAliasRules)[AS1][AS2];
 }
 
@@ -93,14 +98,6 @@ AliasResult AMDGPUAAResult::alias(const MemoryLocation &LocA,
   AliasResult Result = ASAliasRules.getAliasResult(asA, asB);
   if (Result == NoAlias) return Result;
 
-  if (isa<Argument>(LocA.Ptr) && isa<Argument>(LocB.Ptr)) {
-    Type *T1 = cast<PointerType>(LocA.Ptr->getType())->getElementType();
-    Type *T2 = cast<PointerType>(LocB.Ptr->getType())->getElementType();
-
-    if ((T1->isVectorTy() && !T2->isVectorTy()) ||
-        (T2->isVectorTy() && !T1->isVectorTy()))
-      return NoAlias;
-  }
   // Forward the query to the next alias analysis.
   return AAResultBase::alias(LocA, LocB);
 }

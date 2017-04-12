@@ -36,19 +36,12 @@
 #include <cstring>
 #include <utility>
 
-#define GET_SUBTARGETINFO_ENUM
-#include "AMDGPUGenSubtargetInfo.inc"
-#undef GET_SUBTARGETINFO_ENUM
+#include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 
-#define GET_REGINFO_ENUM
-#include "AMDGPUGenRegisterInfo.inc"
-#undef GET_REGINFO_ENUM
 
 #define GET_INSTRINFO_NAMED_OPS
-#define GET_INSTRINFO_ENUM
 #include "AMDGPUGenInstrInfo.inc"
 #undef GET_INSTRINFO_NAMED_OPS
-#undef GET_INSTRINFO_ENUM
 
 namespace {
 
@@ -517,6 +510,10 @@ bool isCompute(CallingConv::ID cc) {
   return !isShader(cc) || cc == CallingConv::AMDGPU_CS;
 }
 
+bool isEntryFunctionCC(CallingConv::ID CC) {
+  return true;
+}
+
 bool isSI(const MCSubtargetInfo &STI) {
   return STI.getFeatureBits()[AMDGPU::FeatureSouthernIslands];
 }
@@ -772,13 +769,11 @@ AMDGPUAS getAMDGPUAS(Triple T) {
   AMDGPUAS AS;
   if (Env == "amdgiz" || Env == "amdgizcl") {
     AS.FLAT_ADDRESS     = 0;
-    AS.CONSTANT_ADDRESS = 4;
     AS.PRIVATE_ADDRESS  = 5;
-    AS.REGION_ADDRESS   = 2;
+    AS.REGION_ADDRESS   = 4;
   }
   else {
     AS.FLAT_ADDRESS     = 4;
-    AS.CONSTANT_ADDRESS = 2;
     AS.PRIVATE_ADDRESS  = 0;
     AS.REGION_ADDRESS   = 5;
    }

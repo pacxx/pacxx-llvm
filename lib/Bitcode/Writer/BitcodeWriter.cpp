@@ -476,7 +476,6 @@ public:
   void write();
 
 private:
-  void writeIndex();
   void writeModStrings();
   void writeCombinedValueSymbolTable();
   void writeCombinedGlobalValueSummary();
@@ -1336,6 +1335,8 @@ static uint64_t getOptimizationFlags(const Value *V) {
       Flags |= FastMathFlags::NoSignedZeros;
     if (FPMO->hasAllowReciprocal())
       Flags |= FastMathFlags::AllowReciprocal;
+    if (FPMO->hasAllowContract())
+      Flags |= FastMathFlags::AllowContract;
   }
 
   return Flags;
@@ -2577,7 +2578,7 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
       Vals.push_back(VE.getTypeID(SI.getCondition()->getType()));
       pushValue(SI.getCondition(), InstID, Vals);
       Vals.push_back(VE.getValueID(SI.getDefaultDest()));
-      for (SwitchInst::ConstCaseIt Case : SI.cases()) {
+      for (auto Case : SI.cases()) {
         Vals.push_back(VE.getValueID(Case.getCaseValue()));
         Vals.push_back(VE.getValueID(Case.getCaseSuccessor()));
       }
@@ -2923,13 +2924,6 @@ void ModuleBitcodeWriter::writeValueSymbolTable(
     NameVals.push_back(VE.getValueID(Name.getValue()));
 
     Function *F = dyn_cast<Function>(Name.getValue());
-    if (!F) {
-      // If value is an alias, need to get the aliased base object to
-      // see if it is a function.
-      auto *GA = dyn_cast<GlobalAlias>(Name.getValue());
-      if (GA && GA->getBaseObject())
-        F = dyn_cast<Function>(GA->getBaseObject());
-    }
 
     // VST_CODE_ENTRY:   [valueid, namechar x N]
     // VST_CODE_FNENTRY: [valueid, funcoffset, namechar x N]

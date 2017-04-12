@@ -149,8 +149,7 @@ namespace llvm {
       WrapperRIP,
 
       /// Copies a 64-bit value from the low word of an XMM vector
-      /// to an MMX vector.  If you think this is too close to the previous
-      /// mnemonic, so do I; blame Intel.
+      /// to an MMX vector.
       MOVDQ2Q,
 
       /// Copies a 32-bit value from the low word of a MMX
@@ -815,6 +814,10 @@ namespace llvm {
 
     bool hasAndNotCompare(SDValue Y) const override;
 
+    bool convertSetCCLogicToBitwiseLogic(EVT VT) const override {
+      return VT.isScalarInteger();
+    }
+
     /// Vector-sized comparisons are fast using PCMPEQ + PMOVMSK or PTEST.
     MVT hasFastEqualityCompare(unsigned NumBits) const override;
 
@@ -827,11 +830,13 @@ namespace llvm {
     void computeKnownBitsForTargetNode(const SDValue Op,
                                        APInt &KnownZero,
                                        APInt &KnownOne,
+                                       const APInt &DemandedElts,
                                        const SelectionDAG &DAG,
                                        unsigned Depth = 0) const override;
 
     /// Determine the number of bits in the operation that are sign bits.
     unsigned ComputeNumSignBitsForTargetNode(SDValue Op,
+                                             const APInt &DemandedElts,
                                              const SelectionDAG &DAG,
                                              unsigned Depth) const override;
 

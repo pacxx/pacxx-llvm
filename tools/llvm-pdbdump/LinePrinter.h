@@ -70,6 +70,8 @@ enum class PDB_ColorItem {
   None,
   Address,
   Type,
+  Comment,
+  Padding,
   Keyword,
   Offset,
   Identifier,
@@ -89,6 +91,7 @@ public:
 private:
   void applyColor(PDB_ColorItem C);
   raw_ostream &OS;
+  bool UseColor;
 };
 }
 }
