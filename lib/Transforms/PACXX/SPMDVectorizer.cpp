@@ -170,17 +170,23 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
     Module *M = kernel->getParent();
 
     for(auto &global : M->globals()) {
-        wfv.addSIMDSemantics(global,
-                             true, //uniform
-                             false, // varying
-                             false, //seq
-                             false, //seq guarded
-                             true, // res uniform
-                             false,  // res vector
-                             false, // res scalars
-                             false, //aligned
-                             true, // same
-                             false); // consecutive
+        for (User *user: global.users()) {
+            if (Instruction *Inst = dyn_cast<Instruction>(user)) {
+                if (Inst->getParent()->getParent() == kernel) {
+                    wfv.addSIMDSemantics(global,
+                                         true, //uniform
+                                         false, // varying
+                                         false, //seq
+                                         false, //seq guarded
+                                         true, // res uniform
+                                         false,  // res vector
+                                         false, // res scalars
+                                         false, //aligned
+                                         true, // same
+                                         false); // consecutive
+                }
+            }
+        }
     }
 
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
