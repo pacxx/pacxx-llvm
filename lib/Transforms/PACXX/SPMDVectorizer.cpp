@@ -184,6 +184,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
                                          false, //aligned
                                          true, // same
                                          false); // consecutive
+                    break;
                 }
             }
         }
