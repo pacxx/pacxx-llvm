@@ -83,6 +83,12 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
     for (auto kernel : kernels) {
 
+        if (auto MD = kernel->getMetadata("pacxx.target")){
+            auto Target = cast<MDString>(MD->getOperand(0).get());
+            if (Target->getString().equals("GPU"))
+                continue;
+        }
+
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
         unsigned vectorWidth = determineVectorWidth(kernel, TTI->getRegisterBitWidth(true));

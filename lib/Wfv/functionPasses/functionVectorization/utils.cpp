@@ -278,7 +278,7 @@ FunctionVectorizer::generateHorizontalPointerExtract(Value*         V,
     if(!newVal)
         return nullptr;
 
-    AllocaInst* newPtr = new AllocaInst(elementType->getContainedType(0),
+    AllocaInst* newPtr = new AllocaInst(elementType->getContainedType(0), 0,
                                         info.mConstInt32One,
                                         info.mAlignmentScalar,
                                         name,
@@ -692,7 +692,7 @@ FunctionVectorizer::generateHorizontalMerge(SmallVector<Value*, 8>& splitVals,
             WFV::setMetadata(mergedStructElem, WFV::WFV_METADATA_PACK_UNPACK);
 
             // allocate space for the new type
-            result = new AllocaInst(pType->getElementType(),
+            result = new AllocaInst(pType->getElementType(), 0,
                                     info.mConstInt32Zero,
                                     info.mAlignmentSIMD,
                                     "",

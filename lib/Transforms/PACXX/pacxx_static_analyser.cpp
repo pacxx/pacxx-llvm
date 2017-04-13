@@ -241,34 +241,30 @@ struct PACXXStaticEvalPass : public ModulePass {
           eval_lower = lhs.lower - rhs.lower;
           break;
         case BinaryOperator::Mul:
-          eval_upper = APIntOps::mul(lhs.upper, rhs.upper);
-          eval_lower = APIntOps::mul(lhs.lower, rhs.lower);
+          eval_upper = lhs.upper * rhs.upper;
+          eval_lower = lhs.lower * rhs.lower;
           break;
         case BinaryOperator::SRem:
-          eval_upper = APIntOps::srem(lhs.upper, rhs.upper);
-          eval_lower = APIntOps::srem(lhs.upper, rhs.upper);
+          eval_upper = lhs.upper.srem(rhs.upper);
+          eval_lower = lhs.lower.srem(rhs.lower);
           break;
         case BinaryOperator::SDiv:
           if (static_cast<long long>(*rhs.upper.getRawData()) != 0)
-            eval_upper = APIntOps::sdiv(lhs.upper, rhs.upper);
+            eval_upper = lhs.upper.sdiv(rhs.upper);
           else
             restype = unevaluated;
           if (static_cast<long long>(*rhs.lower.getRawData()) != 0)
-            eval_lower = APIntOps::sdiv(lhs.lower, rhs.lower);
+            eval_lower = lhs.upper.sdiv(rhs.lower);
           else
             restype = unevaluated;
           break;
         case BinaryOperator::Shl:
-          eval_upper = APIntOps::shl(
-              lhs.upper, static_cast<unsigned int>(*rhs.upper.getRawData()));
-          eval_lower = APIntOps::shl(
-              lhs.lower, static_cast<unsigned int>(*rhs.lower.getRawData()));
+          eval_upper = lhs.upper.shl(static_cast<unsigned int>(*rhs.upper.getRawData()));
+          eval_lower = lhs.lower.shl(static_cast<unsigned int>(*rhs.lower.getRawData()));
           break;
         case BinaryOperator::LShr:
-          eval_upper = APIntOps::lshr(
-              lhs.upper, static_cast<unsigned int>(*rhs.upper.getRawData()));
-          eval_lower = APIntOps::lshr(
-              lhs.lower, static_cast<unsigned int>(*rhs.lower.getRawData()));
+          eval_upper = lhs.upper.lshr(static_cast<unsigned int>(*rhs.upper.getRawData()));
+          eval_lower = lhs.lower.lshr(static_cast<unsigned int>(*rhs.lower.getRawData()));
           break;
         case BinaryOperator::Or:
           eval_upper = lhs.upper | rhs.upper;
@@ -279,18 +275,16 @@ struct PACXXStaticEvalPass : public ModulePass {
           eval_lower = lhs.lower & rhs.lower;
           break;
         case BinaryOperator::AShr:
-          eval_upper = APIntOps::ashr(
-              lhs.upper, static_cast<unsigned int>(*rhs.upper.getRawData()));
-          eval_lower = APIntOps::ashr(
-              lhs.lower, static_cast<unsigned int>(*rhs.lower.getRawData()));
+          eval_upper = lhs.upper.ashr(static_cast<unsigned int>(*rhs.upper.getRawData()));
+          eval_lower = lhs.lower.ashr(static_cast<unsigned int>(*rhs.lower.getRawData()));
           break;
         case BinaryOperator::URem:
           if (static_cast<long long>(*rhs.upper.getRawData()) != 0)
-            eval_upper = APIntOps::urem(lhs.upper, rhs.upper);
+            eval_upper = lhs.upper.urem(rhs.upper);
           else
             restype = unevaluated;
           if (static_cast<long long>(*rhs.lower.getRawData()) != 0)
-            eval_lower = APIntOps::urem(lhs.lower, rhs.lower);
+            eval_lower = lhs.lower.urem(rhs.lower);
           else
             restype = unevaluated;
           break;

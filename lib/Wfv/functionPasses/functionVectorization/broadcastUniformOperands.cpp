@@ -261,7 +261,7 @@ FunctionVectorizer::broadcastValue(Value*         oldVal,
             if(!newVal)
                 return nullptr;
 
-            AllocaInst* newPtr = new AllocaInst(newType->getContainedType(0),
+            AllocaInst* newPtr = new AllocaInst(newType->getContainedType(0), 0,
                                                 info.mConstInt32One,
                                                 info.mAlignmentSIMD,
                                                 "",

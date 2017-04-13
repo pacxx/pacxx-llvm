@@ -166,7 +166,7 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M,
     for (auto GV : globals) {
 
         Type *sm_type = GV->getType()->getElementType();
-        AllocaInst *sm_alloc = new AllocaInst(sm_type, nullptr,
+        AllocaInst *sm_alloc = new AllocaInst(sm_type, 0, nullptr,
                                               0, "internal_sm",
                                               sharedMemBB);
 
@@ -193,7 +193,7 @@ void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M,
 
         //calc number of elements
         BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
-        AllocaInst *sm_alloc = new AllocaInst(GV->getType(), div,
+        AllocaInst *sm_alloc = new AllocaInst(GV->getType(), 0, div,
                                               "external_sm", sharedMemBB);
 
         BitCastInst *cast = new BitCastInst(sm_alloc, GV->getType(), "cast", sharedMemBB);

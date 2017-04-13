@@ -262,7 +262,7 @@ namespace llvm {
       auto int8ptr_type = Type::getInt8PtrTy(ctx);
       auto int8ptr_align = M->getDataLayout().getPrefTypeAlignment(int8ptr_type);
 
-      auto *alloc_args = new AllocaInst(int8ptr_type, nullptr, int8ptr_align, (&*argIt)->getName(),
+      auto *alloc_args = new AllocaInst(int8ptr_type, 0, nullptr, int8ptr_align, (&*argIt)->getName(),
                                           constructKernelArgs);
       new StoreInst(&*argIt, alloc_args, false, int8ptr_align, constructKernelArgs);
       auto *args_load = new LoadInst(alloc_args, "args", false, int8ptr_align, constructKernelArgs);

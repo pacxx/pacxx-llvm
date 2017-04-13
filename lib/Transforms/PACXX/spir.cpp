@@ -137,7 +137,7 @@ struct SPIRPass : public ModulePass {
       for (auto &arg : F->args()) {
         if (arg.getType()->isPointerTy()) {
           if (arg.getType()->getPointerAddressSpace() == 0) {
-            auto AL = new AllocaInst(arg.getType(), "", II);
+            auto AL = new AllocaInst(arg.getType(), 0, "", II);
             auto SI = new StoreInst(&arg, AL, II);
             auto LI = new LoadInst(AL, "", II);
             arg.replaceAllUsesWith(LI);

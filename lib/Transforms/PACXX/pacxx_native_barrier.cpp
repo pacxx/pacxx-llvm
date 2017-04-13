@@ -649,17 +649,17 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Funct
 
     // mem for foo params
     auto argIt = newFoo->arg_begin();
-    AllocaInst *allocMax_x = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
+    AllocaInst *allocMax_x = new AllocaInst(argIt->getType(), 0, nullptr, dl.getPrefTypeAlignment(argIt->getType()),
                                            "", entry);
     new StoreInst(&*argIt, allocMax_x, entry);
     (argIt++)->setName("__maxx");
 
-    AllocaInst *allocMax_y = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
+    AllocaInst *allocMax_y = new AllocaInst(argIt->getType(), 0, nullptr, dl.getPrefTypeAlignment(argIt->getType()),
                                            "", entry);
     new StoreInst(&*argIt, allocMax_y, entry);
     (argIt++)->setName("__maxy");
 
-    AllocaInst *allocMax_z = new AllocaInst(argIt->getType(), nullptr, dl.getPrefTypeAlignment(argIt->getType()),
+    AllocaInst *allocMax_z = new AllocaInst(argIt->getType(), 0, nullptr, dl.getPrefTypeAlignment(argIt->getType()),
                                            "", entry);
     new StoreInst(&*argIt, allocMax_z, entry);
     (argIt++)->setName("__maxz");
@@ -668,7 +668,7 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *foo, Funct
 
     BranchInst::Create(allocBB, entry);
 
-    AllocaInst *allocSwitchParam = new AllocaInst(int32_type, nullptr,
+    AllocaInst *allocSwitchParam = new AllocaInst(int32_type, 0, nullptr,
                                                   dl.getPrefTypeAlignment(int32_type), "", allocBB);
     new StoreInst(ConstantInt::get(int32_type, 0), allocSwitchParam, allocBB);
 
@@ -745,7 +745,7 @@ AllocaInst *PACXXNativeBarrier::createMemForLivingValues(const DataLayout &dl, u
     Value *maxSize = ConstantInt::get(ctx, APInt(32, maxStructSize));
     Value *allocaSize = BinaryOperator::CreateMul(maxSize, numThreads, "allocSize", BB);
 
-    return new AllocaInst(i8_type, allocaSize, dl.getPrefTypeAlignment(i8_type), "livingMem", BB);
+    return new AllocaInst(i8_type, 0, allocaSize, dl.getPrefTypeAlignment(i8_type), "livingMem", BB);
 }
 
 BasicBlock *PACXXNativeBarrier::createCase(Module &M,
@@ -763,7 +763,7 @@ BasicBlock *PACXXNativeBarrier::createCase(Module &M,
     BasicBlock *caseEntry = BasicBlock::Create(ctx, "entryCase", newFoo);
 
     // alloc z
-    AllocaInst *alloc_z = new AllocaInst(int32_type, nullptr,
+    AllocaInst *alloc_z = new AllocaInst(int32_type, 0, nullptr,
                                                   dl.getPrefTypeAlignment(int32_type), "__z", caseEntry);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_z, caseEntry);
 
@@ -782,12 +782,12 @@ BasicBlock *PACXXNativeBarrier::createCase(Module &M,
     BasicBlock *end_y = BasicBlock::Create(ctx, "End_Y", newFoo);
 
     // alloc y
-    AllocaInst *alloc_y = new AllocaInst(int32_type, nullptr,
+    AllocaInst *alloc_y = new AllocaInst(int32_type, 0, nullptr,
                                                   dl.getPrefTypeAlignment(int32_type), "__y", loopHeader_z);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_y, loopHeader_z);
 
     // alloc x
-    AllocaInst *alloc_x = new AllocaInst(int32_type, nullptr,
+    AllocaInst *alloc_x = new AllocaInst(int32_type, 0, nullptr,
                                                   dl.getPrefTypeAlignment(int32_type), "__x", loopHeader_y);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_x, loopHeader_y);
 

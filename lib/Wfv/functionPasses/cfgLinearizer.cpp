@@ -58,11 +58,11 @@ SafelyDemoteRegToStack(Instruction &I, bool VolatileLoads,
   // Create a stack slot to hold the value.
   AllocaInst *Slot;
   if (AllocaPoint) {
-    Slot = new AllocaInst(I.getType(), nullptr,
+    Slot = new AllocaInst(I.getType(), 0, nullptr,
                           I.getName()+".reg2mem", AllocaPoint);
   } else {
     Function *F = I.getParent()->getParent();
-    Slot = new AllocaInst(I.getType(), nullptr, I.getName()+".reg2mem",
+    Slot = new AllocaInst(I.getType(), 0, nullptr, I.getName()+".reg2mem",
                           &*F->getEntryBlock().begin());
   }
 
@@ -122,11 +122,11 @@ AllocaInst * SafelyDemotePHIToStack(PHINode *P, Instruction *AllocaPoint) {
   // Create a stack slot to hold the value.
   AllocaInst *Slot;
   if (AllocaPoint) {
-    Slot = new AllocaInst(P->getType(), nullptr,
+    Slot = new AllocaInst(P->getType(), 0, nullptr,
                           P->getName()+".reg2mem", AllocaPoint);
   } else {
     Function *F = P->getParent()->getParent();
-    Slot = new AllocaInst(P->getType(), nullptr, P->getName()+".reg2mem",
+    Slot = new AllocaInst(P->getType(), 0, nullptr, P->getName()+".reg2mem",
                           &F->getEntryBlock().front());
   }
 
@@ -1283,7 +1283,7 @@ CFGLinearizer::linearize(Function*         f,
         // Create alloca
         Function* parentFn = clusters[0]->mEntry->getParent();
         Instruction* allocaPos = &*parentFn->getEntryBlock().getFirstInsertionPt();
-        idxAlloca = new AllocaInst(Type::getInt32Ty(*mInfo->mContext),
+        idxAlloca = new AllocaInst(Type::getInt32Ty(*mInfo->mContext), 0,
                                    nullptr,
                                    "alloca.idx",
                                    allocaPos);
@@ -1389,7 +1389,7 @@ CFGLinearizer::linearize(Function*         f,
                         for (SwitchInst::CaseIt it=sw->case_begin(),
                              E=sw->case_end(); it!=E; ++it)
                         {
-                            BasicBlock* caseTarget = it.getCaseSuccessor();
+                            BasicBlock* caseTarget = it->getCaseSuccessor();
                             if (uniqueTargets.count(caseTarget))
                             {
                                 duplicateTargets.insert(caseTarget);
@@ -1412,9 +1412,9 @@ CFGLinearizer::linearize(Function*         f,
                             for (SwitchInst::CaseIt it=sw->case_begin(),
                                  E=sw->case_end(); it!=E; ++it)
                             {
-                                BasicBlock* caseTarget = it.getCaseSuccessor();
+                                BasicBlock* caseTarget = it->getCaseSuccessor();
                                 if (duplicateTargets.count(caseTarget) &&
-                                    it.getCaseValue()->getSExtValue() < 0)
+                                    it->getCaseValue()->getSExtValue() < 0)
                                 {
                                     sw->removeCase(it);
                                     changed = true;
@@ -2185,7 +2185,7 @@ CFGLinearizer::repairOverlappingPaths(MemInfoMapType&   memInfos,
             LoadVecType*  newReloads = new LoadVecType();
             StoreVecType* newStores  = new StoreVecType();
 
-            AllocaInst* newAlloca = new AllocaInst(oldAlloca->getAllocatedType(),
+            AllocaInst* newAlloca = new AllocaInst(oldAlloca->getAllocatedType(), 0,
                                                    nullptr,
                                                    "alloca.tmp",
                                                    allocaPos);

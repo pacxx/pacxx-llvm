@@ -524,10 +524,10 @@ MaskAnalysis::createExitMasks(BasicBlock*              block,
                 ConstantInt*       caseDest = switchInst->findCaseDest(succBB);
                 SwitchInst::CaseIt caseIt   = switchInst->findCaseValue(caseDest);
 
-                assert (isa<ConstantInt>(caseIt.getCaseValue()) &&
+                assert (isa<ConstantInt>(caseIt->getCaseValue()) &&
                     "handling of non-constant int values in switch not implemented!");
 
-                ConstantInt* caseConst = cast<ConstantInt>(caseIt.getCaseValue());
+                ConstantInt* caseConst = cast<ConstantInt>(caseIt->getCaseValue());
                 Value*       cond      = switchInst->getCondition();
 
                 // Create comparison
@@ -636,10 +636,10 @@ MaskAnalysis::createExitMasks(BasicBlock*              block,
             ConstantInt*       caseDest = switchInst->findCaseDest(succBB);
             SwitchInst::CaseIt caseIt   = switchInst->findCaseValue(caseDest);
 
-            assert (isa<ConstantInt>(caseIt.getCaseValue()) &&
+            assert (isa<ConstantInt>(caseIt->getCaseValue()) &&
                     "handling of non-constant int values in switch not implemented!");
 
-            ConstantInt* caseConst = cast<ConstantInt>(caseIt.getCaseValue());
+            ConstantInt* caseConst = caseIt->getCaseValue();
             Value*       cond      = switchInst->getCondition();
 
             // Create comparison

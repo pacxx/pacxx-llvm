@@ -1310,6 +1310,7 @@ WFV::generateAlignedAlloc(Type*          targetType,
     assert (insertBefore);
 
     AllocaInst* structPtr = new AllocaInst(targetType,
+                                           0, // FIXME: always use address space 0?
                                            mInfo.mConstInt32Two,
                                            mInfo.mAlignmentSIMD,
                                            "",
