@@ -481,6 +481,9 @@ Value *SPMDVectorizer::determine_x(Function *F) {
 }
 
 char SPMDVectorizer::ID = 0;
+static RegisterPass<SPMDVectorizer> X("spmd", "PACXX: WFV integration pass", false, false);
+
+
 
 INITIALIZE_PASS_BEGIN(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
