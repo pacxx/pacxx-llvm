@@ -90,6 +90,7 @@ struct SPIRPass : public ModulePass {
     bool modified = true;
 
     unsigned ptrSize = M.getDataLayout().getPointerSizeInBits();
+
     if (ptrSize == 64) {
       M.setTargetTriple("spir64-unknown-unknown");
 
