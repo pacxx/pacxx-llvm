@@ -18,13 +18,13 @@
 #include "X86RegisterInfo.h"
 #include "X86Subtarget.h"
 #include "X86TargetMachine.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -39,11 +39,16 @@ using namespace llvm;
 
 namespace {
 
+#define GET_GLOBALISEL_PREDICATE_BITSET
+#include "X86GenGlobalISel.inc"
+#undef GET_GLOBALISEL_PREDICATE_BITSET
+
 class X86InstructionSelector : public InstructionSelector {
 public:
-  X86InstructionSelector(const X86Subtarget &STI,
+  X86InstructionSelector(const X86TargetMachine &TM, const X86Subtarget &STI,
                          const X86RegisterBankInfo &RBI);
 
+  void beginFunction(const MachineFunction &MF) override;
   bool select(MachineInstr &I) const override;
 
 private:
@@ -65,11 +70,22 @@ private:
                          MachineFunction &MF) const;
   bool selectFrameIndex(MachineInstr &I, MachineRegisterInfo &MRI,
                         MachineFunction &MF) const;
+  bool selectConstant(MachineInstr &I, MachineRegisterInfo &MRI,
+                      MachineFunction &MF) const;
+  bool selectTrunc(MachineInstr &I, MachineRegisterInfo &MRI,
+                   MachineFunction &MF) const;
 
+  const X86TargetMachine &TM;
   const X86Subtarget &STI;
   const X86InstrInfo &TII;
   const X86RegisterInfo &TRI;
   const X86RegisterBankInfo &RBI;
+  bool OptForSize;
+  bool OptForMinSize;
+
+  PredicateBitset AvailableFeatures;
+  PredicateBitset computeAvailableFeatures(const MachineFunction *MF,
+                                           const X86Subtarget *Subtarget) const;
 
 #define GET_GLOBALISEL_TEMPORARIES_DECL
 #include "X86GenGlobalISel.inc"
@@ -82,10 +98,12 @@ private:
 #include "X86GenGlobalISel.inc"
 #undef GET_GLOBALISEL_IMPL
 
-X86InstructionSelector::X86InstructionSelector(const X86Subtarget &STI,
+X86InstructionSelector::X86InstructionSelector(const X86TargetMachine &TM,
+                                               const X86Subtarget &STI,
                                                const X86RegisterBankInfo &RBI)
-    : InstructionSelector(), STI(STI), TII(*STI.getInstrInfo()),
-      TRI(*STI.getRegisterInfo()), RBI(RBI)
+    : InstructionSelector(), TM(TM), STI(STI), TII(*STI.getInstrInfo()),
+      TRI(*STI.getRegisterInfo()), RBI(RBI), OptForSize(false),
+      OptForMinSize(false), AvailableFeatures()
 #define GET_GLOBALISEL_TEMPORARIES_INIT
 #include "X86GenGlobalISel.inc"
 #undef GET_GLOBALISEL_TEMPORARIES_INIT
@@ -97,6 +115,10 @@ X86InstructionSelector::X86InstructionSelector(const X86Subtarget &STI,
 static const TargetRegisterClass *
 getRegClassForTypeOnBank(LLT Ty, const RegisterBank &RB) {
   if (RB.getID() == X86::GPRRegBankID) {
+    if (Ty.getSizeInBits() <= 8)
+      return &X86::GR8RegClass;
+    if (Ty.getSizeInBits() == 16)
+      return &X86::GR16RegClass;
     if (Ty.getSizeInBits() == 32)
       return &X86::GR32RegClass;
     if (Ty.getSizeInBits() == 64)
@@ -173,6 +195,12 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
   return true;
 }
 
+void X86InstructionSelector::beginFunction(const MachineFunction &MF) {
+  OptForSize = MF.getFunction()->optForSize();
+  OptForMinSize = MF.getFunction()->optForMinSize();
+  AvailableFeatures = computeAvailableFeatures(&MF, &STI);
+}
+
 bool X86InstructionSelector::select(MachineInstr &I) const {
   assert(I.getParent() && "Instruction should be in a basic block!");
   assert(I.getParent()->getParent() && "Instruction should be in a function!");
@@ -202,6 +230,10 @@ bool X86InstructionSelector::select(MachineInstr &I) const {
   if (selectLoadStoreOp(I, MRI, MF))
     return true;
   if (selectFrameIndex(I, MRI, MF))
+    return true;
+  if (selectConstant(I, MRI, MF))
+    return true;
+  if (selectTrunc(I, MRI, MF))
     return true;
 
   return selectImpl(I);
@@ -458,8 +490,109 @@ bool X86InstructionSelector::selectFrameIndex(MachineInstr &I,
   return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
 }
 
+bool X86InstructionSelector::selectConstant(MachineInstr &I,
+                                            MachineRegisterInfo &MRI,
+                                            MachineFunction &MF) const {
+  if (I.getOpcode() != TargetOpcode::G_CONSTANT)
+    return false;
+
+  const unsigned DefReg = I.getOperand(0).getReg();
+  LLT Ty = MRI.getType(DefReg);
+
+  assert(Ty.isScalar() && "invalid element type.");
+
+  uint64_t Val = 0;
+  if (I.getOperand(1).isCImm()) {
+    Val = I.getOperand(1).getCImm()->getZExtValue();
+    I.getOperand(1).ChangeToImmediate(Val);
+  } else if (I.getOperand(1).isImm()) {
+    Val = I.getOperand(1).getImm();
+  } else
+    llvm_unreachable("Unsupported operand type.");
+
+  unsigned NewOpc;
+  switch (Ty.getSizeInBits()) {
+  case 8:
+    NewOpc = X86::MOV8ri;
+    break;
+  case 16:
+    NewOpc = X86::MOV16ri;
+    break;
+  case 32:
+    NewOpc = X86::MOV32ri;
+    break;
+  case 64: {
+    // TODO: in case isUInt<32>(Val), X86::MOV32ri can be used
+    if (isInt<32>(Val))
+      NewOpc = X86::MOV64ri32;
+    else
+      NewOpc = X86::MOV64ri;
+    break;
+  }
+  default:
+    llvm_unreachable("Can't select G_CONSTANT, unsupported type.");
+  }
+
+  I.setDesc(TII.get(NewOpc));
+  return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+}
+
+bool X86InstructionSelector::selectTrunc(MachineInstr &I,
+                                         MachineRegisterInfo &MRI,
+                                         MachineFunction &MF) const {
+  if (I.getOpcode() != TargetOpcode::G_TRUNC)
+    return false;
+
+  const unsigned DstReg = I.getOperand(0).getReg();
+  const unsigned SrcReg = I.getOperand(1).getReg();
+
+  const LLT DstTy = MRI.getType(DstReg);
+  const LLT SrcTy = MRI.getType(SrcReg);
+
+  const RegisterBank &DstRB = *RBI.getRegBank(DstReg, MRI, TRI);
+  const RegisterBank &SrcRB = *RBI.getRegBank(SrcReg, MRI, TRI);
+
+  if (DstRB.getID() != SrcRB.getID()) {
+    DEBUG(dbgs() << "G_TRUNC input/output on different banks\n");
+    return false;
+  }
+
+  if (DstRB.getID() != X86::GPRRegBankID)
+    return false;
+
+  const TargetRegisterClass *DstRC = getRegClassForTypeOnBank(DstTy, DstRB);
+  if (!DstRC)
+    return false;
+
+  const TargetRegisterClass *SrcRC = getRegClassForTypeOnBank(SrcTy, SrcRB);
+  if (!SrcRC)
+    return false;
+
+  if (!RBI.constrainGenericRegister(SrcReg, *SrcRC, MRI) ||
+      !RBI.constrainGenericRegister(DstReg, *DstRC, MRI)) {
+    DEBUG(dbgs() << "Failed to constrain G_TRUNC\n");
+    return false;
+  }
+
+  if (DstRC == SrcRC) {
+    // Nothing to be done
+  } else if (DstRC == &X86::GR32RegClass) {
+    I.getOperand(1).setSubReg(X86::sub_32bit);
+  } else if (DstRC == &X86::GR16RegClass) {
+    I.getOperand(1).setSubReg(X86::sub_16bit);
+  } else if (DstRC == &X86::GR8RegClass) {
+    I.getOperand(1).setSubReg(X86::sub_8bit);
+  } else {
+    return false;
+  }
+
+  I.setDesc(TII.get(X86::COPY));
+  return true;
+}
+
 InstructionSelector *
-llvm::createX86InstructionSelector(X86Subtarget &Subtarget,
+llvm::createX86InstructionSelector(const X86TargetMachine &TM,
+                                   X86Subtarget &Subtarget,
                                    X86RegisterBankInfo &RBI) {
-  return new X86InstructionSelector(Subtarget, RBI);
+  return new X86InstructionSelector(TM, Subtarget, RBI);
 }

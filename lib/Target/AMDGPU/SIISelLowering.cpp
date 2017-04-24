@@ -461,6 +461,13 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::ZERO_EXTEND, MVT::v2i32, Expand);
     setOperationAction(ISD::SIGN_EXTEND, MVT::v2i32, Expand);
     setOperationAction(ISD::FP_EXTEND, MVT::v2f32, Expand);
+  } else {
+    setOperationAction(ISD::SELECT, MVT::v2i16, Custom);
+    setOperationAction(ISD::SELECT, MVT::v2f16, Custom);
+  }
+
+  for (MVT VT : { MVT::v4i16, MVT::v4f16, MVT::v2i8, MVT::v4i8, MVT::v8i8 }) {
+    setOperationAction(ISD::SELECT, VT, Custom);
   }
 
   setTargetDAGCombine(ISD::FADD);
@@ -2191,6 +2198,28 @@ void SITargetLowering::ReplaceNodeResults(SDNode *N,
       break;
     }
   }
+  case ISD::SELECT: {
+    SDLoc SL(N);
+    EVT VT = N->getValueType(0);
+    EVT NewVT = getEquivalentMemType(*DAG.getContext(), VT);
+    SDValue LHS = DAG.getNode(ISD::BITCAST, SL, NewVT, N->getOperand(1));
+    SDValue RHS = DAG.getNode(ISD::BITCAST, SL, NewVT, N->getOperand(2));
+
+    EVT SelectVT = NewVT;
+    if (NewVT.bitsLT(MVT::i32)) {
+      LHS = DAG.getNode(ISD::ANY_EXTEND, SL, MVT::i32, LHS);
+      RHS = DAG.getNode(ISD::ANY_EXTEND, SL, MVT::i32, RHS);
+      SelectVT = MVT::i32;
+    }
+
+    SDValue NewSelect = DAG.getNode(ISD::SELECT, SL, SelectVT,
+                                    N->getOperand(0), LHS, RHS);
+
+    if (NewVT != SelectVT)
+      NewSelect = DAG.getNode(ISD::TRUNCATE, SL, NewVT, NewSelect);
+    Results.push_back(DAG.getNode(ISD::BITCAST, SL, VT, NewSelect));
+    return;
+  }
   default:
     break;
   }
@@ -3381,9 +3410,11 @@ SDValue SITargetLowering::lowerFastUnsafeFDIV(SDValue Op,
   EVT VT = Op.getValueType();
   bool Unsafe = DAG.getTarget().Options.UnsafeFPMath;
 
+  if (!Unsafe && VT == MVT::f32 && Subtarget->hasFP32Denormals())
+    return SDValue();
+
   if (const ConstantFPSDNode *CLHS = dyn_cast<ConstantFPSDNode>(LHS)) {
-    if (Unsafe || (VT == MVT::f32 && !Subtarget->hasFP32Denormals()) ||
-        VT == MVT::f16) {
+    if (Unsafe || VT == MVT::f32 || VT == MVT::f16) {
       if (CLHS->isExactlyValue(1.0)) {
         // v_rcp_f32 and v_rsq_f32 do not support denormals, and according to
         // the CI documentation has a worst case error of 1 ulp.
@@ -4667,7 +4698,7 @@ SDValue SITargetLowering::performCvtF32UByteNCombine(SDNode *N,
   TargetLowering::TargetLoweringOpt TLO(DAG, !DCI.isBeforeLegalize(),
                                         !DCI.isBeforeLegalizeOps());
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  if (TLO.ShrinkDemandedConstant(Src, Demanded) ||
+  if (TLI.ShrinkDemandedConstant(Src, Demanded, TLO) ||
       TLI.SimplifyDemandedBits(Src, Demanded, KnownZero, KnownOne, TLO)) {
     DCI.CommitTargetLoweringOpt(TLO);
   }
@@ -4885,8 +4916,33 @@ static bool isFrameIndexOp(SDValue Op) {
 /// \brief Legalize target independent instructions (e.g. INSERT_SUBREG)
 /// with frame index operands.
 /// LLVM assumes that inputs are to these instructions are registers.
-void SITargetLowering::legalizeTargetIndependentNode(SDNode *Node,
-                                                     SelectionDAG &DAG) const {
+SDNode *SITargetLowering::legalizeTargetIndependentNode(SDNode *Node,
+                                                        SelectionDAG &DAG) const {
+  if (Node->getOpcode() == ISD::CopyToReg) {
+    RegisterSDNode *DestReg = cast<RegisterSDNode>(Node->getOperand(1));
+    SDValue SrcVal = Node->getOperand(2);
+
+    // Insert a copy to a VReg_1 virtual register so LowerI1Copies doesn't have
+    // to try understanding copies to physical registers.
+    if (SrcVal.getValueType() == MVT::i1 &&
+        TargetRegisterInfo::isPhysicalRegister(DestReg->getReg())) {
+      SDLoc SL(Node);
+      MachineRegisterInfo &MRI = DAG.getMachineFunction().getRegInfo();
+      SDValue VReg = DAG.getRegister(
+        MRI.createVirtualRegister(&AMDGPU::VReg_1RegClass), MVT::i1);
+
+      SDNode *Glued = Node->getGluedNode();
+      SDValue ToVReg
+        = DAG.getCopyToReg(Node->getOperand(0), SL, VReg, SrcVal,
+                         SDValue(Glued, Glued ? Glued->getNumValues() - 1 : 0));
+      SDValue ToResultReg
+        = DAG.getCopyToReg(ToVReg, SL, SDValue(DestReg, 0),
+                           VReg, ToVReg.getValue(1));
+      DAG.ReplaceAllUsesWith(Node, ToResultReg.getNode());
+      DAG.RemoveDeadNode(Node);
+      return ToResultReg.getNode();
+    }
+  }
 
   SmallVector<SDValue, 8> Ops;
   for (unsigned i = 0; i < Node->getNumOperands(); ++i) {
@@ -4902,6 +4958,7 @@ void SITargetLowering::legalizeTargetIndependentNode(SDNode *Node,
   }
 
   DAG.UpdateNodeOperands(Node, Ops);
+  return Node;
 }
 
 /// \brief Fold the instructions after selecting them.

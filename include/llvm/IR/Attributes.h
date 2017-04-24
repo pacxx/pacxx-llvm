@@ -213,7 +213,7 @@ class AttributeSet {
   template <typename Ty> friend struct DenseMapInfo;
 
 private:
-  AttributeSet(AttributeSetNode *ASN) : SetNode(ASN) {}
+  explicit AttributeSet(AttributeSetNode *ASN) : SetNode(ASN) {}
 
 public:
   /// AttributeSet is a trivially copyable value type.
@@ -242,7 +242,7 @@ public:
   uint64_t getDereferenceableBytes() const;
   uint64_t getDereferenceableOrNullBytes() const;
   std::pair<unsigned, Optional<unsigned>> getAllocSizeArgs() const;
-  std::string getAsString(bool InAttrGrp) const;
+  std::string getAsString(bool InAttrGrp = false) const;
 
   typedef const Attribute *iterator;
   iterator begin() const;
@@ -307,13 +307,11 @@ public:
   static AttributeList
   get(LLVMContext &C, ArrayRef<std::pair<unsigned, AttributeSet>> Attrs);
 
-  /// \brief Create an AttributeList from a vector of AttributeSetNodes. The
-  /// index of each set is implied by its position in the array \p Attrs:
-  ///   0      : Return attributes
-  /// 1 to n-1 : Argument attributes
-  ///   n      : Function attributes
-  /// Any element that has no entries should be left null.
-  static AttributeList get(LLVMContext &C, ArrayRef<AttributeSet> Attrs);
+  /// \brief Create an AttributeList from attribute sets for a function, its
+  /// return value, and all of its arguments.
+  static AttributeList get(LLVMContext &C, AttributeSet FnAttrs,
+                           AttributeSet RetAttrs,
+                           ArrayRef<AttributeSet> ArgAttrs);
 
   static AttributeList
   getImpl(LLVMContext &C,
@@ -357,9 +355,6 @@ public:
   /// attribute sets are immutable, this returns a new set.
   AttributeList addAttributes(LLVMContext &C, unsigned Index,
                               AttributeList Attrs) const;
-
-  AttributeList addAttributes(LLVMContext &C, unsigned Index,
-                              AttributeSet AS) const;
 
   AttributeList addAttributes(LLVMContext &C, unsigned Index,
                               const AttrBuilder &B) const;
@@ -420,8 +415,9 @@ public:
   /// \brief The attributes for the specified index are returned.
   AttributeSet getAttributes(unsigned Index) const;
 
-  /// \brief The attributes for the specified index are returned.
-  AttributeSet getParamAttributes(unsigned Index) const;
+  /// \brief The attributes for the argument or parameter at the given index are
+  /// returned.
+  AttributeSet getParamAttributes(unsigned ArgNo) const;
 
   /// \brief The attributes for the ret value are returned.
   AttributeSet getRetAttributes() const;
@@ -445,6 +441,9 @@ public:
   /// \brief Equivalent to hasAttribute(AttributeList::FunctionIndex, Kind) but
   /// may be faster.
   bool hasFnAttribute(StringRef Kind) const;
+
+  /// \brief Equivalent to hasAttribute(ArgNo + 1, Kind).
+  bool hasParamAttribute(unsigned ArgNo, Attribute::AttrKind Kind) const;
 
   /// \brief Return true if the specified attribute is set for at least one
   /// parameter or for the return value. If Index is not nullptr, the index

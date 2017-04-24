@@ -3616,18 +3616,13 @@ int X86InstrInfo::getSPAdjust(const MachineInstr &MI) const {
   const MachineFunction *MF = MI.getParent()->getParent();
   const TargetFrameLowering *TFI = MF->getSubtarget().getFrameLowering();
 
-  if (MI.getOpcode() == getCallFrameSetupOpcode() ||
-      MI.getOpcode() == getCallFrameDestroyOpcode()) {
+  if (isFrameInstr(MI)) {
     unsigned StackAlign = TFI->getStackAlignment();
-    int SPAdj =
-        (MI.getOperand(0).getImm() + StackAlign - 1) / StackAlign * StackAlign;
-
-    SPAdj -= MI.getOperand(1).getImm();
-
-    if (MI.getOpcode() == getCallFrameSetupOpcode())
-      return SPAdj;
-    else
-      return -SPAdj;
+    int SPAdj = alignTo(getFrameSize(MI), StackAlign);
+    SPAdj -= getFrameAdjustment(MI);
+    if (!isFrameSetup(MI))
+      SPAdj = -SPAdj;
+    return SPAdj;
   }
 
   // To know whether a call adjusts the stack, we need information
@@ -6608,28 +6603,36 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
     assert(X86::RFP80RegClass.hasSubClassEq(RC) && "Unknown 10-byte regclass");
     return load ? X86::LD_Fp80m : X86::ST_FpP80m;
   case 16: {
-    assert(X86::VR128XRegClass.hasSubClassEq(RC) && "Unknown 16-byte regclass");
-    // If stack is realigned we can use aligned stores.
-    if (isStackAligned)
-      return load ?
-        (HasVLX    ? X86::VMOVAPSZ128rm :
-         HasAVX512 ? X86::VMOVAPSZ128rm_NOVLX :
-         HasAVX    ? X86::VMOVAPSrm :
-                     X86::MOVAPSrm):
-        (HasVLX    ? X86::VMOVAPSZ128mr :
-         HasAVX512 ? X86::VMOVAPSZ128mr_NOVLX :
-         HasAVX    ? X86::VMOVAPSmr :
-                     X86::MOVAPSmr);
-    else
-      return load ?
-        (HasVLX    ? X86::VMOVUPSZ128rm :
-         HasAVX512 ? X86::VMOVUPSZ128rm_NOVLX :
-         HasAVX    ? X86::VMOVUPSrm :
-                     X86::MOVUPSrm):
-        (HasVLX    ? X86::VMOVUPSZ128mr :
-         HasAVX512 ? X86::VMOVUPSZ128mr_NOVLX :
-         HasAVX    ? X86::VMOVUPSmr :
-                     X86::MOVUPSmr);
+    if (X86::VR128XRegClass.hasSubClassEq(RC)) {
+      // If stack is realigned we can use aligned stores.
+      if (isStackAligned)
+        return load ?
+          (HasVLX    ? X86::VMOVAPSZ128rm :
+           HasAVX512 ? X86::VMOVAPSZ128rm_NOVLX :
+           HasAVX    ? X86::VMOVAPSrm :
+                       X86::MOVAPSrm):
+          (HasVLX    ? X86::VMOVAPSZ128mr :
+           HasAVX512 ? X86::VMOVAPSZ128mr_NOVLX :
+           HasAVX    ? X86::VMOVAPSmr :
+                       X86::MOVAPSmr);
+      else
+        return load ?
+          (HasVLX    ? X86::VMOVUPSZ128rm :
+           HasAVX512 ? X86::VMOVUPSZ128rm_NOVLX :
+           HasAVX    ? X86::VMOVUPSrm :
+                       X86::MOVUPSrm):
+          (HasVLX    ? X86::VMOVUPSZ128mr :
+           HasAVX512 ? X86::VMOVUPSZ128mr_NOVLX :
+           HasAVX    ? X86::VMOVUPSmr :
+                       X86::MOVUPSmr);
+    }
+    if (X86::BNDRRegClass.hasSubClassEq(RC)) {
+      if (STI.is64Bit())
+        return load ? X86::BNDMOVRM64rm : X86::BNDMOVMR64mr;
+      else
+        return load ? X86::BNDMOVRM32rm : X86::BNDMOVMR32mr;
+    }
+    llvm_unreachable("Unknown 16-byte regclass");
   }
   case 32:
     assert(X86::VR256XRegClass.hasSubClassEq(RC) && "Unknown 32-byte regclass");
@@ -8990,6 +8993,10 @@ X86InstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
       !HasSameOp(X86::AddrIndexReg) || !HasSameOp(X86::AddrSegmentReg))
     return false;
 
+  // Chain Operand must be the same.
+  if (!HasSameOp(5))
+    return false;
+
   // Now let's examine if the displacements are constants.
   auto Disp1 = dyn_cast<ConstantSDNode>(Load1->getOperand(X86::AddrDisp));
   auto Disp2 = dyn_cast<ConstantSDNode>(Load2->getOperand(X86::AddrDisp));
@@ -9515,7 +9522,7 @@ void X86InstrInfo::setExecutionDomain(MachineInstr &MI, unsigned Domain) const {
 }
 
 /// Return the noop instruction to use for a noop.
-void X86InstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+void X86InstrInfo::getNoop(MCInst &NopInst) const {
   NopInst.setOpcode(X86::NOOP);
 }
 
