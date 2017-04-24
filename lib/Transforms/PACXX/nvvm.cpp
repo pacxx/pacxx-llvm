@@ -46,7 +46,7 @@ struct NVVMPass : public ModulePass {
     bool modified = true;
     vector<Function *> deleted_functions;
 
-    unsigned ptrSize = M.getDataLayout()->getPointerSizeInBits();
+    unsigned ptrSize = M.getDataLayout().getPointerSizeInBits();
 
 
     if (ptrSize == 64){
