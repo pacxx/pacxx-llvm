@@ -1053,7 +1053,12 @@ FunctionVectorizer::generateNativeVectorFunctionCall(CallInst*       oldCall,
     // Attributes cannot directly be copied due to the additional mask parameter.
     const AttributeList& oldAttrSet = oldCall->getAttributes();
 
-    AttributeList attrs = AttributeList::get(*mInfo->mContext, nullptr, oldAttrSet.getRetAttributes(), nullptr);
+    SmallVector<AttributeSet, 3> arg_attrs;
+
+    for (unsigned int i = 0; oldCall->getNumArgOperands(); ++i)
+        arg_attrs.push_back(oldAttrSet.getParamAttributes(i));
+
+    AttributeList attrs = AttributeList::get(*mInfo->mContext, oldAttrSet.getFnAttributes(), oldAttrSet.getRetAttributes(), arg_attrs);
     unsigned oldAttrIdx = 1;
     unsigned newAttrIdx = 1;
 
