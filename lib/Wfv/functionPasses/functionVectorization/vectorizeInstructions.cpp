@@ -1055,7 +1055,7 @@ FunctionVectorizer::generateNativeVectorFunctionCall(CallInst*       oldCall,
 
     SmallVector<AttributeSet, 3> arg_attrs;
 
-    for (unsigned int i = 0; oldCall->getNumArgOperands(); ++i)
+    for (unsigned int i = 0; i < oldCall->getNumArgOperands(); ++i)
         arg_attrs.push_back(oldAttrSet.getParamAttributes(i));
 
     AttributeList attrs = AttributeList::get(*mInfo->mContext, oldAttrSet.getFnAttributes(), oldAttrSet.getRetAttributes(), arg_attrs);
