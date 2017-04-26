@@ -1064,7 +1064,7 @@ FunctionVectorizer::generateNativeVectorFunctionCall(CallInst*       oldCall,
 
     // Map arguments to vector function.
     // Generate dummies with correct types for operands on the fly if necessary.
-    // NOTE: We must not generate dummies for those values that are uniform
+    // NOTE: We must not generate dummies for those values that are uniFform
     //       parameters to the function!
     SmallVector<Value*, 4> args;
     Function::const_arg_iterator vecArg = simdFn.arg_begin();
