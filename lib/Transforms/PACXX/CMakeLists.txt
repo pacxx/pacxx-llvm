@@ -9,6 +9,7 @@ add_llvm_library(LLVMPACXXTransforms
   spir.cpp
   nvvm.cpp
   nvvm_reg.cpp
+  pacxx_target_select.cpp
   spir_vector_fixer.cpp
   pacxx_native_linker.cpp
   pacxx_redundant_id_remover.cpp

@@ -240,6 +240,7 @@ namespace {
       (void) llvm::createPACXXNativeLinkerPass();
       (void) llvm::createPACXXNativeSMPass();
 
+      (void) llvm::createPACXXTargetSelectPass({});
       (void) llvm::sys::RunningOnValgrind();
     }
   } ForcePassLinking; // Force link by creating a global definition.
