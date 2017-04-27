@@ -212,10 +212,13 @@ private:
     int switchIntrinsicThreadId(unsigned IID) {
       switch (IID) {
       case Intrinsic::nvvm_read_ptx_sreg_tid_x:
+      case Intrinsic::pacxx_read_tid_x:
         return 1;
       case Intrinsic::nvvm_read_ptx_sreg_tid_y:
+      case Intrinsic::pacxx_read_tid_y:
         return 2;
       case Intrinsic::nvvm_read_ptx_sreg_tid_z:
+      case Intrinsic::pacxx_read_tid_z:
         return 3;
       default:
         return 0;
@@ -225,10 +228,14 @@ private:
     int switchIntrinsicBlockDim(unsigned IID) {
       switch (IID) {
       case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
+      case Intrinsic::pacxx_read_ntid_x:
+
         return 1;
       case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
+      case Intrinsic::pacxx_read_ntid_y:
         return 2;
       case Intrinsic::nvvm_read_ptx_sreg_ntid_z:
+      case Intrinsic::pacxx_read_ntid_z:
         return 3;
       default:
         return 0;
@@ -238,10 +245,13 @@ private:
     int switchIntrinsicBlockId(unsigned IID) {
       switch (IID) {
       case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+      case Intrinsic::pacxx_read_ctaid_x:
         return 1;
       case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
+      case Intrinsic::pacxx_read_ctaid_y:
         return 2;
       case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+      case Intrinsic::pacxx_read_ctaid_z:
         return 3;
       default:
         return 0;

@@ -19,11 +19,11 @@ namespace pacxx {
 
                 switch (id) {
                     case X:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_x;
+                        return intrin_id == Intrinsic::pacxx_read_tid_x;
                     case Y:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_y;
+                        return intrin_id == Intrinsic::pacxx_read_tid_y;
                     case Z:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_z;
+                        return intrin_id == Intrinsic::pacxx_read_tid_z;
                     default:
                         __verbose("unsupported id specified. doing nothing");
                         return false;
@@ -39,11 +39,11 @@ namespace pacxx {
 
                 switch (id) {
                     case X:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
+                        return intrin_id == Intrinsic::pacxx_read_ctaid_x;
                     case Y:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
+                        return intrin_id == Intrinsic::pacxx_read_ctaid_y;
                     case Z:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_z;
+                        return intrin_id == Intrinsic::pacxx_read_ctaid_z;
                     default:
                         __verbose("unsupported id specified. doing nothing");
                         return false;
@@ -59,11 +59,11 @@ namespace pacxx {
 
                 switch (id) {
                     case X:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_x;
+                        return intrin_id == Intrinsic::pacxx_read_ntid_x;
                     case Y:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_y;
+                        return intrin_id == Intrinsic::pacxx_read_ntid_y;
                     case Z:
-                        return intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_z;
+                        return intrin_id == Intrinsic::pacxx_read_ntid_z;
                     default:
                         __verbose("unsupported id specified. doing nothing");
                         return false;
@@ -80,16 +80,16 @@ namespace pacxx {
 
             switch (id) {
                 case X:
-                    ntidID = Intrinsic::nvvm_read_ptx_sreg_ntid_x;
-                    ctaidID = Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
+                    ntidID = Intrinsic::pacxx_read_ntid_x;
+                    ctaidID = Intrinsic::pacxx_read_ctaid_x;
                     break;
                 case Y:
-                    ntidID = Intrinsic::nvvm_read_ptx_sreg_ntid_y;
-                    ctaidID = Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
+                    ntidID = Intrinsic::pacxx_read_ntid_y;
+                    ctaidID = Intrinsic::pacxx_read_ctaid_y;
                     break;
                 case Z:
-                    ntidID = Intrinsic::nvvm_read_ptx_sreg_ntid_z;
-                    ctaidID = Intrinsic::nvvm_read_ptx_sreg_ctaid_z;
+                    ntidID = Intrinsic::pacxx_read_ntid_z;
+                    ctaidID = Intrinsic::pacxx_read_ctaid_z;
                     break;
                 default:
                     __verbose("unsupported id specified. doing nothing");
@@ -116,13 +116,13 @@ namespace pacxx {
 
             switch (id) {
                 case X:
-                    tidID = Intrinsic::nvvm_read_ptx_sreg_tid_x; // initialization
+                    tidID = Intrinsic::pacxx_read_tid_x; // initialization
                     break;
                 case Y:
-                    tidID = Intrinsic::nvvm_read_ptx_sreg_tid_y;
+                    tidID = Intrinsic::pacxx_read_tid_y;
                     break;
                 case Z:
-                    tidID = Intrinsic::nvvm_read_ptx_sreg_tid_z;
+                    tidID = Intrinsic::pacxx_read_tid_z;
                     break;
                 default:
                     __verbose("unsupported id specified. doing nothing");

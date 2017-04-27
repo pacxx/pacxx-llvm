@@ -354,43 +354,43 @@ namespace llvm {
               auto called = CI->getCalledFunction();
               if (called && called->isIntrinsic()) {
                 auto intrin_id = called->getIntrinsicID();
-                if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_x) {
+                if (intrin_id == Intrinsic::pacxx_read_tid_x) {
                   auto LI = new LoadInst(idx, "idx", CI);
                   CI->replaceAllUsesWith(LI);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_y) {
+                } else if (intrin_id == Intrinsic::pacxx_read_tid_y) {
                   auto LI = new LoadInst(idy, "idy", CI);
                   CI->replaceAllUsesWith(LI);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_tid_z) {
+                } else if (intrin_id == Intrinsic::pacxx_read_tid_z) {
                   auto LI = new LoadInst(idz, "idz", CI);
                   CI->replaceAllUsesWith(LI);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_x) {
+                } else if (intrin_id == Intrinsic::pacxx_read_ctaid_x) {
                   CI->replaceAllUsesWith(blockId._x);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_y) {
+                } else if (intrin_id == Intrinsic::pacxx_read_ctaid_y) {
                   CI->replaceAllUsesWith(blockId._y);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ctaid_z) {
+                } else if (intrin_id == Intrinsic::pacxx_read_ctaid_z) {
                   CI->replaceAllUsesWith(blockId._z);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_x) {
+                } else if (intrin_id == Intrinsic::pacxx_read_nctaid_x) {
                   CI->replaceAllUsesWith(maxBlock._x);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_y) {
+                } else if (intrin_id == Intrinsic::pacxx_read_nctaid_y) {
                   CI->replaceAllUsesWith(maxBlock._y);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_nctaid_z) {
+                } else if (intrin_id == Intrinsic::pacxx_read_nctaid_z) {
                   CI->replaceAllUsesWith(maxBlock._z);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_x) {
+                } else if (intrin_id == Intrinsic::pacxx_read_ntid_x) {
                   CI->replaceAllUsesWith(maxId._x);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_y) {
+                } else if (intrin_id == Intrinsic::pacxx_read_ntid_y) {
                   CI->replaceAllUsesWith(maxId._y);
                   dead_calls.push_back(CI);
-                } else if (intrin_id == Intrinsic::nvvm_read_ptx_sreg_ntid_z) {
+                } else if (intrin_id == Intrinsic::pacxx_read_ntid_z) {
                   CI->replaceAllUsesWith(maxId._z);
                   dead_calls.push_back(CI);
                 }

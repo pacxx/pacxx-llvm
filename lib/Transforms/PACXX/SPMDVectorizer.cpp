@@ -215,7 +215,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
                 auto intrin_id = called->getIntrinsicID();
 
                 switch (intrin_id) {
-                    case Intrinsic::nvvm_read_ptx_sreg_tid_x: {
+                    case Intrinsic::pacxx_read_tid_x: {
                         wfv.addSIMDSemantics(*CI,
                                              false, //uniform
                                              true, // varying
@@ -229,17 +229,17 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
                                              true); // consecutive
                         break;
                     }
-                    case Intrinsic::nvvm_read_ptx_sreg_tid_y:
-                    case Intrinsic::nvvm_read_ptx_sreg_tid_z:
-                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
-                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
-                    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
-                    case Intrinsic::nvvm_read_ptx_sreg_nctaid_x:
-                    case Intrinsic::nvvm_read_ptx_sreg_nctaid_y:
-                    case Intrinsic::nvvm_read_ptx_sreg_nctaid_z:
-                    case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
-                    case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
-                    case Intrinsic::nvvm_read_ptx_sreg_ntid_z: {
+                    case Intrinsic::pacxx_read_tid_y:
+                    case Intrinsic::pacxx_read_tid_z:
+                    case Intrinsic::pacxx_read_ctaid_x:
+                    case Intrinsic::pacxx_read_ctaid_y:
+                    case Intrinsic::pacxx_read_ctaid_z:
+                    case Intrinsic::pacxx_read_nctaid_x:
+                    case Intrinsic::pacxx_read_nctaid_y:
+                    case Intrinsic::pacxx_read_nctaid_z:
+                    case Intrinsic::pacxx_read_ntid_x:
+                    case Intrinsic::pacxx_read_ntid_y:
+                    case Intrinsic::pacxx_read_ntid_z: {
                         wfv.addSIMDSemantics(*CI,
                                              true, //uniform
                                              false, // varying
