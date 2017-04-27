@@ -178,11 +178,13 @@ struct SPIRPass : public ModulePass {
         if (auto MD = M.getNamedMetadata("nvvm.annotations")) {
           for (unsigned i = 0; i != MD->getNumOperands(); ++i) {
             auto Op = MD->getOperand(i);
-            if (auto *KF = dyn_cast<Function>(
-                    dyn_cast<ValueAsMetadata>(Op->getOperand(0).get())
-                        ->getValue())) {
-              if (KF == F) {
-                Op->replaceOperandWith(0, ValueAsMetadata::get(NF));
+            if (Op->getOperand(0)) {
+              if (auto *KF = dyn_cast<Function>(
+                  dyn_cast<ValueAsMetadata>(Op->getOperand(0).get())
+                      ->getValue())) {
+                if (KF == F) {
+                  Op->replaceOperandWith(0, ValueAsMetadata::get(NF));
+                }
               }
             }
           }
