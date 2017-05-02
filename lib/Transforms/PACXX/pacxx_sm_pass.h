@@ -8,7 +8,6 @@
 #include "Log.h"
 
 #include "llvm/Pass.h"
-#include "llvm/LinkAllPasses.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -25,6 +24,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "../../IR/LLVMContextImpl.h"
+#include "ModuleHelper.h"
 
 using namespace llvm;
 using namespace std;

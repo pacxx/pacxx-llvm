@@ -1,6 +1,5 @@
 #include "ModuleHelper.h"
 
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "Log.h"
 
@@ -35,7 +34,7 @@ namespace {
 
     private:
 
-        bool supportedTarget(MDString *Target) {
+        bool supportedTarget(const MDString * const Target) {
             bool supported = false;
             for(auto &target : _targets) {
                if(Target->getString().str() == target)
@@ -44,7 +43,7 @@ namespace {
             return supported;
         }
 
-        SmallVector<std::string, 2> _targets;
+        const SmallVector<std::string, 2> _targets;
     };
 }
 

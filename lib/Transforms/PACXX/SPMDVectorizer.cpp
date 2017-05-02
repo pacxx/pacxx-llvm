@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include "Log.h"
 #include "llvm/Pass.h"
-#include "llvm/LinkAllPasses.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -17,8 +16,10 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "wfv/wfvInterface.h"
+#include "ModuleHelper.h"
 
 using namespace llvm;
 using namespace std;
