@@ -7,17 +7,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/DebugInfo/DWARF/DWARFAcceleratorTable.h"
 #include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
-#include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugAbbrev.h"
-#include "llvm/DebugInfo/DWARF/DWARFDebugAranges.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugArangeSet.h"
+#include "llvm/DebugInfo/DWARF/DWARFDebugAranges.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugFrame.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugLine.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugLoc.h"
@@ -29,6 +29,7 @@
 #include "llvm/DebugInfo/DWARF/DWARFGdbIndex.h"
 #include "llvm/DebugInfo/DWARF/DWARFSection.h"
 #include "llvm/DebugInfo/DWARF/DWARFUnitIndex.h"
+#include "llvm/DebugInfo/DWARF/DWARFVerifier.h"
 #include "llvm/Object/Decompressor.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
@@ -445,15 +446,105 @@ public:
     }
     return Success;
   }
+
+  bool HandleDebugLine() {
+    std::map<uint64_t, DWARFDie> StmtListToDie;
+    bool Success = true;
+    OS << "Verifying .debug_line...\n";
+    for (const auto &CU : DCtx.compile_units()) {
+      uint32_t LineTableOffset = 0;
+      auto CUDie = CU->getUnitDIE();
+      auto StmtFormValue = CUDie.find(DW_AT_stmt_list);
+      if (!StmtFormValue) {
+        // No line table for this compile unit.
+        continue;
+      }
+      // Get the attribute value as a section offset. No need to produce an
+      // error here if the encoding isn't correct because we validate this in
+      // the .debug_info verifier.
+      if (auto StmtSectionOffset = toSectionOffset(StmtFormValue)) {
+        LineTableOffset = *StmtSectionOffset;
+        if (LineTableOffset >= DCtx.getLineSection().Data.size()) {
+          // Make sure we don't get a valid line table back if the offset
+          // is wrong.
+          assert(DCtx.getLineTableForUnit(CU.get()) == nullptr);
+          // Skip this line table as it isn't valid. No need to create an error
+          // here because we validate this in the .debug_info verifier.
+          continue;
+        } else {
+          auto Iter = StmtListToDie.find(LineTableOffset);
+          if (Iter != StmtListToDie.end()) {
+            Success = false;
+            OS << "error: two compile unit DIEs, "
+               << format("0x%08" PRIx32, Iter->second.getOffset()) << " and "
+               << format("0x%08" PRIx32, CUDie.getOffset())
+               << ", have the same DW_AT_stmt_list section offset:\n";
+            Iter->second.dump(OS, 0);
+            CUDie.dump(OS, 0);
+            OS << '\n';
+            // Already verified this line table before, no need to do it again.
+            continue;
+          }
+          StmtListToDie[LineTableOffset] = CUDie;
+        }
+      }
+      auto LineTable = DCtx.getLineTableForUnit(CU.get());
+      if (!LineTable) {
+        Success = false;
+        OS << "error: .debug_line[" << format("0x%08" PRIx32, LineTableOffset)
+           << "] was not able to be parsed for CU:\n";
+        CUDie.dump(OS, 0);
+        OS << '\n';
+        continue;
+      }
+      uint32_t MaxFileIndex = LineTable->Prologue.FileNames.size();
+      uint64_t PrevAddress = 0;
+      uint32_t RowIndex = 0;
+      for (const auto &Row : LineTable->Rows) {
+        if (Row.Address < PrevAddress) {
+          Success = false;
+          OS << "error: .debug_line[" << format("0x%08" PRIx32, LineTableOffset)
+             << "] row[" << RowIndex
+             << "] decreases in address from previous row:\n";
+
+          DWARFDebugLine::Row::dumpTableHeader(OS);
+          if (RowIndex > 0)
+            LineTable->Rows[RowIndex - 1].dump(OS);
+          Row.dump(OS);
+          OS << '\n';
+        }
+
+        if (Row.File > MaxFileIndex) {
+          Success = false;
+          OS << "error: .debug_line[" << format("0x%08" PRIx32, LineTableOffset)
+             << "][" << RowIndex << "] has invalid file index " << Row.File
+             << " (valid values are [1," << MaxFileIndex << "]):\n";
+          DWARFDebugLine::Row::dumpTableHeader(OS);
+          Row.dump(OS);
+          OS << '\n';
+        }
+        if (Row.EndSequence)
+          PrevAddress = 0;
+        else
+          PrevAddress = Row.Address;
+        ++RowIndex;
+      }
+    }
+    return Success;
+  }
 };
   
 } // anonymous namespace
 
 bool DWARFContext::verify(raw_ostream &OS, DIDumpType DumpType) {
   bool Success = true;
-  Verifier verifier(OS, *this);
+  DWARFVerifier verifier(OS, *this);
   if (DumpType == DIDT_All || DumpType == DIDT_Info) {
-    if (!verifier.HandleDebugInfo())
+    if (!verifier.handleDebugInfo())
+      Success = false;
+  }
+  if (DumpType == DIDT_All || DumpType == DIDT_Line) {
+    if (!verifier.handleDebugLine())
       Success = false;
   }
   return Success;
@@ -600,6 +691,10 @@ DWARFContext::getLineTableForUnit(DWARFUnit *U) {
   // See if the line table is cached.
   if (const DWARFLineTable *lt = Line->getLineTable(stmtOffset))
     return lt;
+
+  // Make sure the offset is good before we try to parse.
+  if (stmtOffset >= U->getLineSection().size())
+    return nullptr;  
 
   // We have to parse it first.
   DataExtractor lineData(U->getLineSection(), isLittleEndian(),
@@ -862,6 +957,26 @@ static bool isRelocScattered(const object::ObjectFile &Obj,
   return MachObj->isRelocationScattered(RelocInfo);
 }
 
+Error DWARFContextInMemory::maybeDecompress(const SectionRef &Sec,
+                                            StringRef Name, StringRef &Data) {
+  if (!Decompressor::isCompressed(Sec))
+    return Error::success();
+
+  Expected<Decompressor> Decompressor =
+      Decompressor::create(Name, Data, IsLittleEndian, AddressSize == 8);
+  if (!Decompressor)
+    return Decompressor.takeError();
+
+  SmallString<32> Out;
+  if (auto Err = Decompressor->decompress(Out))
+    return Err;
+
+  UncompressedSections.emplace_back(std::move(Out));
+  Data = UncompressedSections.back();
+
+  return Error::success();
+}
+
 DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
     const LoadedObjectInfo *L)
     : IsLittleEndian(Obj.isLittleEndian()),
@@ -885,16 +1000,11 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
     if (!L || !L->getLoadedSectionContents(*RelocatedSection,data))
       Section.getContents(data);
 
-    if (Decompressor::isCompressed(Section)) {
-      Expected<Decompressor> Decompressor =
-          Decompressor::create(name, data, IsLittleEndian, AddressSize == 8);
-      if (!Decompressor)
-        continue;
-      SmallString<32> Out;
-      if (auto Err = Decompressor->decompress(Out))
-        continue;
-      UncompressedSections.emplace_back(std::move(Out));
-      data = UncompressedSections.back();
+    if (auto Err = maybeDecompress(Section, name, data)) {
+      errs() << "error: failed to decompress '" + name + "', " +
+                    toString(std::move(Err))
+             << '\n';
+      continue;
     }
 
     // Compressed sections names in GNU style starts from ".z",
