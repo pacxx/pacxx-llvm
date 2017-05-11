@@ -1,6 +1,7 @@
 //
 // Created by lars
-//
+/// Based on the paper Computing Liveness Sets for SSA-Form Programs by Florian Brandner,
+// Benoit Boissinot, Alain Darte, Benoit Dupont de Dinechin, Fabrice Rastelloss
 
 #ifndef LLVM_PACXX_LIVENESS_ANALYSIS_H
 #define LLVM_PACXX_LIVENESS_ANALYSIS_H
