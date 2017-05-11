@@ -319,7 +319,7 @@ bool PACXXNativeBarrier::isaBarrier(const Instruction *inst) {
         auto called = CI->getCalledFunction();
         if (called && called->isIntrinsic()) {
             auto intrin_id = called->getIntrinsicID();
-            if (intrin_id == Intrinsic::nvvm_barrier0)
+            if (intrin_id == Intrinsic::pacxx_barrier0)
                 return true;
         }
     }

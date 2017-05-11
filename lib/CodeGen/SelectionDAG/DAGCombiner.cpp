@@ -114,7 +114,7 @@ namespace {
     SmallPtrSet<SDNode *, 32> CombinedNodes;
 
     // AA - Used for DAG load/store alias analysis.
-    AliasAnalysis &AA;
+    AliasAnalysis *AA;
 
     /// When an instruction is simplified, add all users of the instruction to
     /// the work lists because they might get more simplified now.
@@ -242,6 +242,7 @@ namespace {
     SDValue visitUSUBO(SDNode *N);
     SDValue visitADDE(SDNode *N);
     SDValue visitADDCARRY(SDNode *N);
+    SDValue visitADDCARRYLike(SDValue N0, SDValue N1, SDValue CarryIn, SDNode *N);
     SDValue visitSUBE(SDNode *N);
     SDValue visitSUBCARRY(SDNode *N);
     SDValue visitMUL(SDNode *N);
@@ -495,9 +496,9 @@ namespace {
     SDValue distributeTruncateThroughAnd(SDNode *N);
 
   public:
-    DAGCombiner(SelectionDAG &D, AliasAnalysis &A, CodeGenOpt::Level OL)
+    DAGCombiner(SelectionDAG &D, AliasAnalysis *AA, CodeGenOpt::Level OL)
         : DAG(D), TLI(D.getTargetLoweringInfo()), Level(BeforeLegalizeTypes),
-          OptLevel(OL), LegalOperations(false), LegalTypes(false), AA(A) {
+          OptLevel(OL), LegalOperations(false), LegalTypes(false), AA(AA) {
       ForCodeSize = DAG.getMachineFunction().getFunction()->optForSize();
 
       MaximumLegalStoreInBits = 0;
@@ -2141,6 +2142,24 @@ SDValue DAGCombiner::visitADDCARRY(SDNode *N) {
   // fold (addcarry x, y, false) -> (uaddo x, y)
   if (isNullConstant(CarryIn))
     return DAG.getNode(ISD::UADDO, SDLoc(N), N->getVTList(), N0, N1);
+
+  if (SDValue Combined = visitADDCARRYLike(N0, N1, CarryIn, N))
+    return Combined;
+
+  if (SDValue Combined = visitADDCARRYLike(N1, N0, CarryIn, N))
+    return Combined;
+
+  return SDValue();
+}
+
+SDValue DAGCombiner::visitADDCARRYLike(SDValue N0, SDValue N1, SDValue CarryIn,
+                                       SDNode *N) {
+  // Iff the flag result is dead:
+  // (addcarry (add|uaddo X, Y), 0, Carry) -> (addcarry X, Y, Carry)
+  if ((N0.getOpcode() == ISD::ADD || N0.getOpcode() == ISD::UADDO) &&
+      isNullConstant(N1) && !N->hasAnyUseOfValue(1))
+    return DAG.getNode(ISD::ADDCARRY, SDLoc(N), N->getVTList(),
+                       N0.getOperand(0), N0.getOperand(1), CarryIn);
 
   return SDValue();
 }
@@ -5294,6 +5313,17 @@ SDValue DAGCombiner::visitSHL(SDNode *N) {
     }
   }
 
+  // If the target supports masking y in (shl, y),
+  // fold (shl x, (and y, ((1 << numbits(x)) - 1))) -> (shl x, y)
+  if (TLI.isOperationLegal(ISD::SHL, VT) &&
+      TLI.supportsModuloShift(ISD::SHL, VT) && N1->getOpcode() == ISD::AND) {
+    if (ConstantSDNode *Mask = isConstOrConstSplat(N1->getOperand(1))) {
+      if (Mask->getZExtValue() == OpSizeInBits - 1) {
+        return DAG.getNode(ISD::SHL, SDLoc(N), VT, N0, N1->getOperand(0));
+      }
+    }
+  }
+
   ConstantSDNode *N1C = isConstOrConstSplat(N1);
 
   // fold (shl c1, c2) -> c1<<c2
@@ -5492,6 +5522,17 @@ SDValue DAGCombiner::visitSRA(SDNode *N) {
   EVT VT = N0.getValueType();
   unsigned OpSizeInBits = VT.getScalarSizeInBits();
 
+  // If the target supports masking y in (sra, y),
+  // fold (sra x, (and y, ((1 << numbits(x)) - 1))) -> (sra x, y)
+  if (TLI.isOperationLegal(ISD::SRA, VT) &&
+      TLI.supportsModuloShift(ISD::SRA, VT) && N1->getOpcode() == ISD::AND) {
+    if (ConstantSDNode *Mask = isConstOrConstSplat(N1->getOperand(1))) {
+      if (Mask->getZExtValue() == OpSizeInBits - 1) {
+        return DAG.getNode(ISD::SRA, SDLoc(N), VT, N0, N1->getOperand(0));
+      }
+    }
+  }
+
   // Arithmetic shifting an all-sign-bit value is a no-op.
   if (DAG.ComputeNumSignBits(N0) == OpSizeInBits)
     return N0;
@@ -5649,6 +5690,17 @@ SDValue DAGCombiner::visitSRL(SDNode *N) {
   SDValue N1 = N->getOperand(1);
   EVT VT = N0.getValueType();
   unsigned OpSizeInBits = VT.getScalarSizeInBits();
+
+  // If the target supports masking y in (srl, y),
+  // fold (srl x, (and y, ((1 << numbits(x)) - 1))) -> (srl x, y)
+  if (TLI.isOperationLegal(ISD::SRL, VT) &&
+      TLI.supportsModuloShift(ISD::SRL, VT) && N1->getOpcode() == ISD::AND) {
+    if (ConstantSDNode *Mask = isConstOrConstSplat(N1->getOperand(1))) {
+      if (Mask->getZExtValue() == OpSizeInBits - 1) {
+        return DAG.getNode(ISD::SRL, SDLoc(N), VT, N0, N1->getOperand(0));
+      }
+    }
+  }
 
   // fold vector ops
   if (VT.isVector())
@@ -6636,6 +6688,9 @@ SDValue DAGCombiner::visitVSELECT(SDNode *N) {
 
     if (isAbs) {
       EVT VT = LHS.getValueType();
+      if (TLI.isOperationLegalOrCustom(ISD::ABS, VT))
+        return DAG.getNode(ISD::ABS, DL, VT, LHS);
+
       SDValue Shift = DAG.getNode(
           ISD::SRA, DL, VT, LHS,
           DAG.getConstant(VT.getScalarSizeInBits() - 1, DL, VT));
@@ -9417,6 +9472,14 @@ SDValue DAGCombiner::visitFMULForFMADistributiveCombine(SDNode *N) {
   return SDValue();
 }
 
+static bool isFMulNegTwo(SDValue &N) {
+  if (N.getOpcode() != ISD::FMUL)
+    return false;
+  if (ConstantFPSDNode *CFP = isConstOrConstSplatFP(N.getOperand(1)))
+    return CFP->isExactlyValue(-2.0);
+  return false;
+}
+
 SDValue DAGCombiner::visitFADD(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
@@ -9454,6 +9517,16 @@ SDValue DAGCombiner::visitFADD(SDNode *N) {
       isNegatibleForFree(N0, LegalOperations, TLI, &Options) == 2)
     return DAG.getNode(ISD::FSUB, DL, VT, N1,
                        GetNegatedExpression(N0, DAG, LegalOperations), Flags);
+
+  // fold (fadd A, (fmul B, -2.0)) -> (fsub A, (fadd B, B))
+  // fold (fadd (fmul B, -2.0), A) -> (fsub A, (fadd B, B))
+  if ((isFMulNegTwo(N0) && N0.hasOneUse()) ||
+      (isFMulNegTwo(N1) && N1.hasOneUse())) {
+    bool N1IsFMul = isFMulNegTwo(N1);
+    SDValue AddOp = N1IsFMul ? N1.getOperand(0) : N0.getOperand(0);
+    SDValue Add = DAG.getNode(ISD::FADD, DL, VT, AddOp, AddOp, Flags);
+    return DAG.getNode(ISD::FSUB, DL, VT, N1IsFMul ? N0 : N1, Add, Flags);
+  }
 
   // FIXME: Auto-upgrade the target/function-level option.
   if (Options.NoSignedZerosFPMath || N->getFlags().hasNoSignedZeros()) {
@@ -14795,6 +14868,55 @@ SDValue combineTruncationShuffle(ShuffleVectorSDNode *SVN, SelectionDAG &DAG) {
   return SDValue();
 }
 
+// Combine shuffles of splat-shuffles of the form:
+// shuffle (shuffle V, undef, splat-mask), undef, M
+// If splat-mask contains undef elements, we need to be careful about
+// introducing undef's in the folded mask which are not the result of composing
+// the masks of the shuffles.
+static SDValue combineShuffleOfSplat(ArrayRef<int> UserMask,
+                                     ShuffleVectorSDNode *Splat,
+                                     SelectionDAG &DAG) {
+  ArrayRef<int> SplatMask = Splat->getMask();
+  assert(UserMask.size() == SplatMask.size() && "Mask length mismatch");
+
+  // Prefer simplifying to the splat-shuffle, if possible. This is legal if
+  // every undef mask element in the splat-shuffle has a corresponding undef
+  // element in the user-shuffle's mask or if the composition of mask elements
+  // would result in undef.
+  // Examples for (shuffle (shuffle v, undef, SplatMask), undef, UserMask):
+  // * UserMask=[0,2,u,u], SplatMask=[2,u,2,u] -> [2,2,u,u]
+  //   In this case it is not legal to simplify to the splat-shuffle because we
+  //   may be exposing the users of the shuffle an undef element at index 1
+  //   which was not there before the combine.
+  // * UserMask=[0,u,2,u], SplatMask=[2,u,2,u] -> [2,u,2,u]
+  //   In this case the composition of masks yields SplatMask, so it's ok to
+  //   simplify to the splat-shuffle.
+  // * UserMask=[3,u,2,u], SplatMask=[2,u,2,u] -> [u,u,2,u]
+  //   In this case the composed mask includes all undef elements of SplatMask
+  //   and in addition sets element zero to undef. It is safe to simplify to
+  //   the splat-shuffle.
+  auto CanSimplifyToExistingSplat = [](ArrayRef<int> UserMask,
+                                       ArrayRef<int> SplatMask) {
+    for (unsigned i = 0, e = UserMask.size(); i != e; ++i)
+      if (UserMask[i] != -1 && SplatMask[i] == -1 &&
+          SplatMask[UserMask[i]] != -1)
+        return false;
+    return true;
+  };
+  if (CanSimplifyToExistingSplat(UserMask, SplatMask))
+    return SDValue(Splat, 0);
+
+  // Create a new shuffle with a mask that is composed of the two shuffles'
+  // masks.
+  SmallVector<int, 32> NewMask;
+  for (int Idx : UserMask)
+    NewMask.push_back(Idx == -1 ? -1 : SplatMask[Idx]);
+
+  return DAG.getVectorShuffle(Splat->getValueType(0), SDLoc(Splat),
+                              Splat->getOperand(0), Splat->getOperand(1),
+                              NewMask);
+}
+
 SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
   EVT VT = N->getValueType(0);
   unsigned NumElts = VT.getVectorNumElements();
@@ -14840,6 +14962,11 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
     if (Changed)
       return DAG.getVectorShuffle(VT, SDLoc(N), N0, N1, NewMask);
   }
+
+  // A shuffle of a single vector that is a splat can always be folded.
+  if (auto *N0Shuf = dyn_cast<ShuffleVectorSDNode>(N0))
+    if (N1->isUndef() && N0Shuf->isSplat())
+      return combineShuffleOfSplat(SVN->getMask(), N0Shuf, DAG);
 
   // If it is a splat, check if the argument vector is another splat or a
   // build_vector.
@@ -16308,17 +16435,17 @@ bool DAGCombiner::isAlias(LSBaseSDNode *Op0, LSBaseSDNode *Op1) const {
     UseAA = false;
 #endif
 
-  if (UseAA &&
+  if (UseAA && AA &&
       Op0->getMemOperand()->getValue() && Op1->getMemOperand()->getValue()) {
     // Use alias analysis information.
     int64_t MinOffset = std::min(SrcValOffset0, SrcValOffset1);
     int64_t Overlap0 = NumBytes0 + SrcValOffset0 - MinOffset;
     int64_t Overlap1 = NumBytes1 + SrcValOffset1 - MinOffset;
     AliasResult AAResult =
-        AA.alias(MemoryLocation(Op0->getMemOperand()->getValue(), Overlap0,
-                                UseTBAA ? Op0->getAAInfo() : AAMDNodes()),
-                 MemoryLocation(Op1->getMemOperand()->getValue(), Overlap1,
-                                UseTBAA ? Op1->getAAInfo() : AAMDNodes()));
+        AA->alias(MemoryLocation(Op0->getMemOperand()->getValue(), Overlap0,
+                                 UseTBAA ? Op0->getAAInfo() : AAMDNodes()),
+                  MemoryLocation(Op1->getMemOperand()->getValue(), Overlap1,
+                                 UseTBAA ? Op1->getAAInfo() : AAMDNodes()) );
     if (AAResult == NoAlias)
       return false;
   }
@@ -16532,7 +16659,7 @@ bool DAGCombiner::findBetterNeighborChains(StoreSDNode *St) {
 }
 
 /// This is the entry point for the file.
-void SelectionDAG::Combine(CombineLevel Level, AliasAnalysis &AA,
+void SelectionDAG::Combine(CombineLevel Level, AliasAnalysis *AA,
                            CodeGenOpt::Level OptLevel) {
   /// This is the main entry point to this class.
   DAGCombiner(*this, AA, OptLevel).Run(Level);

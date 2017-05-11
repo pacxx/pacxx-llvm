@@ -31,6 +31,7 @@ Pass *createPACXXLivenessAnalyzerPass();
 Pass *createPACXXNativeBarrierPass();
 Pass *createPACXXNativeSMPass();
 Pass *createPACXXNativeLinkerPass();
+Pass *createPACXXIntrinsicSchedulerPass();
 }
 
 namespace pacxx {

@@ -65,12 +65,14 @@ private:
                       MachineFunction &MF) const;
   bool selectLoadStoreOp(MachineInstr &I, MachineRegisterInfo &MRI,
                          MachineFunction &MF) const;
-  bool selectFrameIndex(MachineInstr &I, MachineRegisterInfo &MRI,
-                        MachineFunction &MF) const;
+  bool selectFrameIndexOrGep(MachineInstr &I, MachineRegisterInfo &MRI,
+                             MachineFunction &MF) const;
   bool selectConstant(MachineInstr &I, MachineRegisterInfo &MRI,
                       MachineFunction &MF) const;
   bool selectTrunc(MachineInstr &I, MachineRegisterInfo &MRI,
                    MachineFunction &MF) const;
+  bool selectZext(MachineInstr &I, MachineRegisterInfo &MRI,
+                  MachineFunction &MF) const;
 
   const X86TargetMachine &TM;
   const X86Subtarget &STI;
@@ -226,7 +228,7 @@ bool X86InstructionSelector::select(MachineInstr &I) const {
          "Generic instruction has unexpected implicit operands\n");
 
   if (selectImpl(I))
-     return true;
+    return true;
 
   DEBUG(dbgs() << " C++ instruction selection: "; I.print(dbgs()));
 
@@ -235,11 +237,13 @@ bool X86InstructionSelector::select(MachineInstr &I) const {
     return true;
   if (selectLoadStoreOp(I, MRI, MF))
     return true;
-  if (selectFrameIndex(I, MRI, MF))
+  if (selectFrameIndexOrGep(I, MRI, MF))
     return true;
   if (selectConstant(I, MRI, MF))
     return true;
   if (selectTrunc(I, MRI, MF))
+    return true;
+  if (selectZext(I, MRI, MF))
     return true;
 
   return false;
@@ -427,27 +431,37 @@ bool X86InstructionSelector::selectLoadStoreOp(MachineInstr &I,
   return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
 }
 
-bool X86InstructionSelector::selectFrameIndex(MachineInstr &I,
-                                              MachineRegisterInfo &MRI,
-                                              MachineFunction &MF) const {
-  if (I.getOpcode() != TargetOpcode::G_FRAME_INDEX)
+bool X86InstructionSelector::selectFrameIndexOrGep(MachineInstr &I,
+                                                   MachineRegisterInfo &MRI,
+                                                   MachineFunction &MF) const {
+  unsigned Opc = I.getOpcode();
+
+  if (Opc != TargetOpcode::G_FRAME_INDEX && Opc != TargetOpcode::G_GEP)
     return false;
 
   const unsigned DefReg = I.getOperand(0).getReg();
   LLT Ty = MRI.getType(DefReg);
 
-  // Use LEA to calculate frame index.
+  // Use LEA to calculate frame index and GEP
   unsigned NewOpc;
   if (Ty == LLT::pointer(0, 64))
     NewOpc = X86::LEA64r;
   else if (Ty == LLT::pointer(0, 32))
     NewOpc = STI.isTarget64BitILP32() ? X86::LEA64_32r : X86::LEA32r;
   else
-    llvm_unreachable("Can't select G_FRAME_INDEX, unsupported type.");
+    llvm_unreachable("Can't select G_FRAME_INDEX/G_GEP, unsupported type.");
 
   I.setDesc(TII.get(NewOpc));
   MachineInstrBuilder MIB(MF, I);
-  addOffset(MIB, 0);
+
+  if (Opc == TargetOpcode::G_FRAME_INDEX) {
+    addOffset(MIB, 0);
+  } else {
+    MachineOperand &InxOp = I.getOperand(2);
+    I.addOperand(InxOp);        // set IndexReg
+    InxOp.ChangeToImmediate(1); // set Scale
+    MIB.addImm(0).addReg(0);
+  }
 
   return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
 }
@@ -550,6 +564,52 @@ bool X86InstructionSelector::selectTrunc(MachineInstr &I,
 
   I.setDesc(TII.get(X86::COPY));
   return true;
+}
+
+bool X86InstructionSelector::selectZext(MachineInstr &I,
+                                        MachineRegisterInfo &MRI,
+                                        MachineFunction &MF) const {
+  if (I.getOpcode() != TargetOpcode::G_ZEXT)
+    return false;
+
+  const unsigned DstReg = I.getOperand(0).getReg();
+  const unsigned SrcReg = I.getOperand(1).getReg();
+
+  const LLT DstTy = MRI.getType(DstReg);
+  const LLT SrcTy = MRI.getType(SrcReg);
+
+  if (SrcTy == LLT::scalar(1)) {
+
+    unsigned AndOpc;
+    if (DstTy == LLT::scalar(32))
+      AndOpc = X86::AND32ri8;
+    else if (DstTy == LLT::scalar(64))
+      AndOpc = X86::AND64ri8;
+    else
+      return false;
+
+    const RegisterBank &RegBank = *RBI.getRegBank(DstReg, MRI, TRI);
+    unsigned DefReg =
+        MRI.createVirtualRegister(getRegClassForTypeOnBank(DstTy, RegBank));
+
+    BuildMI(*I.getParent(), I, I.getDebugLoc(),
+            TII.get(TargetOpcode::SUBREG_TO_REG), DefReg)
+        .addImm(0)
+        .addReg(SrcReg)
+        .addImm(X86::sub_8bit);
+
+    MachineInstr &AndInst =
+        *BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(AndOpc), DstReg)
+             .addReg(DefReg)
+             .addImm(1);
+
+    constrainSelectedInstRegOperands(AndInst, TII, TRI, RBI);
+
+    I.eraseFromParent();
+    return true;
+  }
+
+  return false;
 }
 
 InstructionSelector *

@@ -32,4 +32,7 @@ defm int_pacxx_read_ntid : PACXXIDIntrinsic_v4i32<"ntid">;
 defm int_pacxx_read_ctaid : PACXXIDIntrinsic_v4i32<"ctaid">;
 defm int_pacxx_read_nctaid : PACXXIDIntrinsic_v4i32<"nctaid">;
 
+
+def int_pacxx_barrier0 : GCCBuiltin<"__pacxx_syncthreads">,
+  Intrinsic<[], [], [IntrConvergent]>;
 }
