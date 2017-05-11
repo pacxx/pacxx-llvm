@@ -18,6 +18,7 @@ add_llvm_library(LLVMPACXXTransforms
   pacxx_native_barrier.cpp
   SPMDVectorizer.cpp
   pacxx_addrspace_transform.cpp
+  pacxx_intrinsic_scheduler.cpp
   Log.cpp
   Common.cpp
   )

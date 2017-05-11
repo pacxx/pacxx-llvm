@@ -239,6 +239,7 @@ namespace {
       (void) llvm::createPACXXLivenessAnalyzerPass();
       (void) llvm::createPACXXNativeLinkerPass();
       (void) llvm::createPACXXNativeSMPass();
+      (void) llvm::createPACXXIntrinsicSchedulerPass();
 
       (void) llvm::createPACXXTargetSelectPass({});
       (void) llvm::sys::RunningOnValgrind();
