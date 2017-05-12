@@ -1,6 +1,8 @@
 // Created by Michael Haidl and lars
 
 #define PACXX_PASS_NAME "PACXXNativeLinker"
+
+#include <llvm/IR/CFG.h>
 #include "Log.h"
 #include "ModuleHelper.h"
 
@@ -34,6 +36,9 @@ struct PACXXNativeLinker : public ModulePass {
   };
 
 private:
+
+  enum IdType { X, Y, Z };
+
   Function *getFooFunction(Function *kernel, bool vectorized, bool barrier);
   Function *createWrapper(Function *kernel, TerminatorInst **term, SmallVector<Value *, 8> &wrapperArgs);
   SmallVector<Value *, 8> createKernelArgs(Function *wrapper, Function *kernel,
@@ -42,7 +47,15 @@ private:
                                       bool vectorized, bool barrier);
   void removeDeadCalls(Function *wrapper, Value3 &blockId, Value3 &maxBlock, Value3 &maxId);
 
+  AllocaInst* getCorrectAlloca(Instruction *intrinsic, IdType id);
+
+  void recursiveFindAlloca(BasicBlock *BB, SmallSet<BasicBlock*, 8>& visited,
+                                   AllocaInst*& alloca, IdType id);
+
+  bool isCorrectId(Instruction *inst, IdType id);
+
   void markWrapperAsKernel(Module &M, Function *wrapper);
+
 };
 
 bool PACXXNativeLinker::runOnModule(Module &M) {
@@ -61,18 +74,18 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
 
     TerminatorInst *term;
 
-    Function *foo = getFooFunction(F, vectorized, barrier);
+    Function *pacxx_block = getFooFunction(F, vectorized, barrier);
 
     Function *wrapper = createWrapper(F, &term, wrapperArgs);
 
     SmallVector < Value * , 8 > kernelArgs = createKernelArgs(wrapper, F, blockId, maxBlock, maxId);
 
-    SmallVector < Value * , 8 > fooArgs;
-    fooArgs.insert(fooArgs.end(), wrapperArgs.begin(), wrapperArgs.end());
-    fooArgs.insert(fooArgs.end(), kernelArgs.begin(), kernelArgs.end());
+    SmallVector < Value * , 8 > blockArgs;
+    blockArgs.insert(blockArgs.end(), wrapperArgs.begin(), wrapperArgs.end());
+    blockArgs.insert(blockArgs.end(), kernelArgs.begin(), kernelArgs.end());
 
     // now that we have a call inst inline it!
-    auto CI = CallInst::Create(foo, fooArgs, "", term);
+    auto CI = CallInst::Create(pacxx_block, blockArgs, "", term);
     InlineFunctionInfo IFI;
     InlineFunction(CI, IFI, nullptr, false);
 
@@ -87,19 +100,19 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
       // if the kernel has been vectorized and has a barrier, we neeed to remove the vectorized wrapper because we
       // will use the barrier version of the wrapper
       if (barrier) {
-        Function *vecFoo = M.getFunction("__vectorized__foo__" + F->getName().str());
+        Function *vecFoo = M.getFunction("__vectorized__pacxx_block__" + F->getName().str());
         vecFoo->eraseFromParent();
       }
     }
 
     F->eraseFromParent();
-    foo->eraseFromParent();
+    pacxx_block->eraseFromParent();
 
     // finally mark the created wrapper as a kernel
     markWrapperAsKernel(M, wrapper);
   }
 
-  Function *origFoo = M.getFunction("foo");
+  Function *origFoo = M.getFunction("__pacxx_block");
   if (origFoo)
     origFoo->eraseFromParent();
 
@@ -108,21 +121,21 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
 
 Function *PACXXNativeLinker::getFooFunction(Function *kernel, bool vectorized, bool barrier) {
 
-  __verbose("Getting correct foo function");
+  __verbose("Getting correct pacxx block function");
 
   Module *M = kernel->getParent();
   LLVMContext &ctx = M->getContext();
-  Function *origFoo = M->getFunction("foo");
-  Function *foo = nullptr;
+  Function *origFoo = M->getFunction("__pacxx_block");
+  Function *pacxx_block = nullptr;
 
 
   // if the kernel has been vectorized
   if (vectorized && !barrier) {
-    foo = M->getFunction("__vectorized__foo__" + kernel->getName().str());
+    pacxx_block = M->getFunction("__vectorized__pacxx_block__" + kernel->getName().str());
   }
-  // if the kernel has a barrier use a special foo function
+  // if the kernel has a barrier use a special pacxx block function
   if (barrier) {
-    foo = M->getFunction("__barrier__foo__" + kernel->getName().str());
+    pacxx_block = M->getFunction("__barrier__pacxx_block__" + kernel->getName().str());
   }
   //if the kernel has not been vectorized and contains no barriers
   if (!vectorized && !barrier) {
@@ -135,17 +148,17 @@ Function *PACXXNativeLinker::getFooFunction(Function *kernel, bool vectorized, b
     }
 
     FunctionType *FTy = FunctionType::get(Type::getVoidTy(ctx), Params, false);
-    foo = Function::Create(FTy, origFoo->getLinkage(), "clonedFoo", M);
-    auto DestI = foo->arg_begin();
+    pacxx_block = Function::Create(FTy, origFoo->getLinkage(), "clonedFoo", M);
+    auto DestI = pacxx_block->arg_begin();
     ValueToValueMapTy VMap;
     for (auto I = origFoo->arg_begin(); I != origFoo->arg_end(); ++I) {
       DestI->setName(I->getName());
       VMap[cast<Value>(I)] = cast<Value>(DestI++);
     }
     SmallVector < ReturnInst * , 8 > returns;
-    CloneFunctionInto(foo, origFoo, VMap, true, returns);
+    CloneFunctionInto(pacxx_block, origFoo, VMap, true, returns);
   }
-  return foo;
+  return pacxx_block;
 }
 
 Function *PACXXNativeLinker::createWrapper(Function *kernel,
@@ -329,21 +342,6 @@ void PACXXNativeLinker::replaceDummyWithKernelIfNeeded(Function *wrapper, Functi
 
 void PACXXNativeLinker::removeDeadCalls(Function *wrapper, Value3 &blockId, Value3 &maxBlock, Value3 &maxId) {
 
-  AllocaInst *idx = nullptr, *idy = nullptr, *idz = nullptr;
-
-  for (auto &B : *wrapper) {
-    for (auto &I : B) {
-      if (auto *alloca = dyn_cast<AllocaInst>(&I)) {
-        if (alloca->getName().startswith_lower("__x") && !idx)
-          idx = alloca;
-        else if (alloca->getName().startswith_lower("__y") && !idy)
-          idy = alloca;
-        else if (alloca->getName().startswith_lower("__z") && !idz)
-          idz = alloca;
-      }
-    }
-  }
-
   __verbose("replacing dead calls \n");
   vector < CallInst * > dead_calls;
   for (auto &B : *wrapper) {
@@ -353,18 +351,21 @@ void PACXXNativeLinker::removeDeadCalls(Function *wrapper, Value3 &blockId, Valu
         if (called && called->isIntrinsic()) {
           switch (called->getIntrinsicID()) {
           case Intrinsic::pacxx_read_tid_x: {
+            auto idx = getCorrectAlloca(CI, IdType::X);
             auto LI = new LoadInst(idx, "idx", CI);
             CI->replaceAllUsesWith(LI);
             dead_calls.push_back(CI);
             break;
           }
           case Intrinsic::pacxx_read_tid_y: {
+            auto idy = getCorrectAlloca(CI, IdType::Y);
             auto LI = new LoadInst(idy, "idy", CI);
             CI->replaceAllUsesWith(LI);
             dead_calls.push_back(CI);
             break;
           }
           case Intrinsic::pacxx_read_tid_z: {
+            auto idz = getCorrectAlloca(CI, IdType::Z);
             auto LI = new LoadInst(idz, "idz", CI);
             CI->replaceAllUsesWith(LI);
             dead_calls.push_back(CI);
@@ -425,6 +426,59 @@ void PACXXNativeLinker::removeDeadCalls(Function *wrapper, Value3 &blockId, Valu
   __verbose("deleting \n");
   for (auto I : dead_calls)
     I->eraseFromParent();
+}
+
+AllocaInst* PACXXNativeLinker::getCorrectAlloca(Instruction *intrinsic, IdType id) {
+
+   AllocaInst *alloca = nullptr;
+   SmallSet<BasicBlock*, 8> visited;
+
+   // first check if we find the alloca in the same basic block
+   auto BB = intrinsic->getParent();
+   for(auto I = intrinsic->getIterator(), IE = BB->begin(); I != IE; --I) {
+       if(AllocaInst* current = dyn_cast<AllocaInst>(&*I))
+       if(isCorrectId(current, id))
+         return current;
+   }
+
+   // if we have not found it in the same block move upwards
+   recursiveFindAlloca(BB, visited, alloca, id);
+   return alloca;
+}
+
+void PACXXNativeLinker::recursiveFindAlloca(BasicBlock *BB, SmallSet<BasicBlock*, 8>& visited,
+                                            AllocaInst*& alloca, IdType id) {
+
+  if(visited.count(BB) != 0)
+    return;
+
+  visited.insert(BB);
+
+  for(auto I = pred_begin(BB), IE = pred_end(BB); I != IE; ++I) {
+      BasicBlock *pred = *I;
+      for(auto &inst : *pred) {
+        if(AllocaInst* current = dyn_cast<AllocaInst>(&inst))
+          if (isCorrectId(current, id)) {
+            alloca = current;
+            return;
+          }
+      }
+      recursiveFindAlloca(pred, visited, alloca, id);
+  }
+}
+
+bool PACXXNativeLinker::isCorrectId(Instruction *inst, IdType id) {
+  switch (id) {
+    case X:
+      return inst->getMetadata("pacxx_read_tid_x") != nullptr;
+    case Y:
+      return inst->getMetadata("pacxx_read_tid_y") != nullptr;
+    case Z:
+      return inst->getMetadata("pacxx_read_tid_z") != nullptr;
+    default:
+      __verbose("unsupported id specified. doing nothing");
+    return false;
+  }
 }
 
 void PACXXNativeLinker::markWrapperAsKernel(Module &M, Function *wrapper) {

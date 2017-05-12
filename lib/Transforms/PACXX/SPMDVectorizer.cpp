@@ -279,9 +279,9 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     auto& ctx = M.getContext();
     auto int32_type = Type::getInt32Ty(ctx);
 
-    Function* F = M.getFunction("foo");
+    Function* F = M.getFunction("__pacxx_block");
 
-    // creating a new foo wrapper, because every kernel could have a different vector width
+    // creating a new pacxx block wrapper, because every kernel could have a different vector width
     Function *vecFoo = createKernelSpecificFoo(M, F, kernel);
 
 
@@ -392,7 +392,7 @@ Function *SPMDVectorizer::createKernelSpecificFoo(Module &M, Function *F, Functi
     FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Params, false);
 
     Function *vecFoo = cast<Function>(
-            M.getOrInsertFunction("__vectorized__foo__" + kernel->getName().str(), FTy));
+            M.getOrInsertFunction("__vectorized__pacxx_block__" + kernel->getName().str(), FTy));
 
     SmallVector<ReturnInst *, 3> rets;
     for (auto &BB : kernel->getBasicBlockList())
@@ -468,7 +468,7 @@ Value *SPMDVectorizer::determine_x(Function *F) {
     for (auto &B : *F) {
         for (auto &I : B) {
             if (AllocaInst * alloca = dyn_cast<AllocaInst>(&I))
-                if (alloca->getName() == "__x")
+                if(alloca->getMetadata("pacxx_read_tid_x") != nullptr)
                     __x = alloca;
         }
     }
