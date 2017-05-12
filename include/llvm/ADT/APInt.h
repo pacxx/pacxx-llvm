@@ -157,6 +157,11 @@ private:
     return isSingleWord() ? U.VAL : U.pVal[whichWord(bitPosition)];
   }
 
+  /// Utility method to change the bit width of this APInt to new bit width,
+  /// allocating and/or deallocating as necessary. There is no guarantee on the
+  /// value of any bits upon return. Caller should populate the bits after.
+  void reallocate(unsigned NewBitWidth);
+
   /// \brief Convert a char array into an APInt
   ///
   /// \param radix 2, 8, 10, 16, or 36
@@ -1437,6 +1442,12 @@ public:
   /// as "bitPosition".
   void flipBit(unsigned bitPosition);
 
+  /// Negate this APInt in place.
+  void negate() {
+    flipAllBits();
+    ++(*this);
+  }
+
   /// Insert the bits from a smaller APInt starting at bitPosition.
   void insertBits(const APInt &SubBits, unsigned bitPosition);
 
@@ -1996,8 +2007,7 @@ inline raw_ostream &operator<<(raw_ostream &OS, const APInt &I) {
 }
 
 inline APInt operator-(APInt v) {
-  v.flipAllBits();
-  ++v;
+  v.negate();
   return v;
 }
 
