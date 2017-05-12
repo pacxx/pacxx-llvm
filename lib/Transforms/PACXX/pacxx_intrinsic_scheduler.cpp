@@ -46,42 +46,13 @@ public:
   void initialize() { intrinsicClones.clear(); }
 
   void finalize() {
-
-    std::map<BasicBlock *, vector<CallInst *>> blocks;
     for (auto I : intrinsicClones) {
+      CallInst *clone = nullptr;
 
-      auto &clones = blocks[I.first->getParent()];
-      CallInst *clone = I.second;
-
-      auto lookup = find_if(clones.begin(), clones.end(), [=](auto cand) {
-        if (cand->getCalledFunction() == clone->getCalledFunction() &&
-            cand->getOperand(0) == clone->getOperand(0))
-          return true;
-        else
-          return false;
-      });
-
-      if (lookup != clones.end())
-        clone = *lookup;
-      else
-        clone = nullptr;
-
-      if (clone == nullptr) {
-        Instruction *firstI = nullptr;
-        for (auto &II : *I.first->getParent()) {
-          if (!isa<PHINode>(II)) {
-            firstI = &II;
-            break;
-          }
-        }
-
-        SmallVector<Value *, 1> args;
-        args.push_back(I.second->getOperand(0));
-        clone =
-            CallInst::Create(I.second->getCalledFunction(), args, "", firstI);
-        clone->setTailCall(I.second->isTailCall());
-        blocks[I.first->getParent()].push_back(clone);
-      }
+      SmallVector<Value *, 1> args;
+      args.push_back(I.second->getOperand(0));
+      clone = CallInst::Create(I.second->getCalledFunction(), args, "", I.first);
+      clone->setTailCall(I.second->isTailCall());
 
       for (unsigned i = 0; i != I.first->getNumOperands(); ++i) {
         auto op = I.first->getOperand(i);
@@ -99,10 +70,6 @@ public:
       return;
     }
     if (isaSregIntrinsic(CI.getCalledFunction())) {
-      if (CI.hasNUses(0)) {
-        dead.push_back(&CI);
-        return;
-      }
       for (auto u : CI.users()) {
         if (Instruction *I = dyn_cast<Instruction>(u)) {
           // clone them if they are not in the same basic block

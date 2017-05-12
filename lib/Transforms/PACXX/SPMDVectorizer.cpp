@@ -259,7 +259,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
         }
     }
 
-    if(Function *barrierFunc = M->getFunction("llvm.nvvm.barrier0"))
+    if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
         wfv.addSIMDSemantics(*barrierFunc,
                              true, //uniform
                              false, // varying
