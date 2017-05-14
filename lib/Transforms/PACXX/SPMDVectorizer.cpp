@@ -1,6 +1,7 @@
 // Created by lars
 
 #include <stdlib.h>
+#include <wfv/utils/metadata.h>
 #include "Log.h"
 #include "llvm/Pass.h"
 #include "llvm/IR/MDBuilder.h"
@@ -47,7 +48,7 @@ namespace {
 
         Function *createVectorizedKernelHeader(Module *M, Function *kernel);
 
-        unsigned determineVectorWidth(Function *F, unsigned registerWidth);
+        unsigned determineVectorWidth(Function *F, Function *vecF, TargetTransformInfo *TTI);
 
         void prepareForVectorization(Function *kernel, WFVInterface::WFVInterface &wfv);
 
@@ -86,14 +87,15 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
-        unsigned vectorWidth = determineVectorWidth(kernel, TTI->getRegisterBitWidth(true));
+        Function *vectorizedKernel = createVectorizedKernelHeader(&M, kernel);
+
+        unsigned vectorWidth = determineVectorWidth(kernel, vectorizedKernel, TTI);
 
         __verbose("registerWidth: ", TTI->getRegisterBitWidth(true));
         __verbose("vectorWidth: ", vectorWidth);
 
         if(vectorWidth >= 4) {
 
-            Function *vectorizedKernel = createVectorizedKernelHeader(&M, kernel);
 
             WFVInterface::WFVInterface wfv(&M,
                                            &M.getContext(),
@@ -112,7 +114,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
             bool vectorized = false;
             if(wfv.run())
                 vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
-            //bool vectorized = wfv.analyze();
             __verbose("vectorized: ", vectorized);
 
             if (vectorized) {
@@ -141,30 +142,51 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
     return vectorizedKernel;
 }
 
-unsigned SPMDVectorizer::determineVectorWidth(Function *F, unsigned registerWidth) {
+unsigned SPMDVectorizer::determineVectorWidth(Function *F, Function *vecF, TargetTransformInfo *TTI) {
+
+    Module *M = F->getParent();
+
+    WFVInterface::WFVInterface tmp(M,
+                                   &M->getContext(),
+                                   F,
+                                   vecF,
+                                   TTI,
+                                   4,
+                                   -1,
+                                   false,
+                                   false,
+                                   false,
+                                   false);
+
+    prepareForVectorization(F, tmp);
+
+    tmp.analyze();
 
     unsigned MaxWidth = 8;
-    const DataLayout &DL = F->getParent()->getDataLayout();
+    const DataLayout &DL = vecF->getParent()->getDataLayout();
 
     for (auto &B : *F) {
         for (auto &I : B) {
-            Type *T = I.getType();
 
-            if (!isa<LoadInst>(&I) && !isa<StoreInst>(&I))
-                continue;
+            //TODO is ignoring cast instructions always safe ?? Or should we check for use as an GEP index
+            if (I.getMetadata(WFV::WFV_METADATA_OP_VARYING) && ! isa<CastInst>(&I)) {
 
-            if (StoreInst * ST = dyn_cast<StoreInst>(&I))
-                T = ST->getValueOperand()->getType();
+                Type *T = I.getType();
 
-            // Ignore loaded pointer types
-            if (T->isPointerTy())
-                continue;
+                if(T->isPointerTy())
+                    T = T->getPointerElementType();
 
-            MaxWidth = std::max(MaxWidth, (unsigned) DL.getTypeSizeInBits(T->getScalarType()));
+                if (T->isSized())
+                    MaxWidth = std::max(MaxWidth, (unsigned) DL.getTypeSizeInBits(T->getScalarType()));
+            }
         }
     }
-    return registerWidth / MaxWidth;
+
+    tmp.clearAnalysisMetadata(F);
+
+    return TTI->getRegisterBitWidth(true) / MaxWidth;
 }
+
 
 void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFVInterface &wfv) {
 
