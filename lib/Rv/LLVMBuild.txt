@@ -1,4 +1,4 @@
-;===- ./lib/Transforms/PACXXTransforms/LLVMBuild.txt -----------*- Conf -*--===;
+;===- ./lib/Wfv/LLVMBuild.txt -----------*- Conf -*--===;
 ;
 ;                     The LLVM Compiler Infrastructure
 ;
@@ -17,7 +17,7 @@
 
 [component_0]
 type = Library
-name = PACXX
-parent = Transforms
-library_name = PACXXTransforms
-required_libraries = Analysis Core MC InstCombine Support Target TransformUtils Wfv Rv
+name = Rv
+parent = Libraries
+library_name = RV
+required_libraries = Support Core InstCombine TransformUtils Analysis MC IRReader BitReader MCParser Object ProfileData Target Vectorize

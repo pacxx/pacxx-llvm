@@ -1,5 +1,0 @@
-logs/*
-build/*
-__pycache__/*
-*.ll
-*.bc

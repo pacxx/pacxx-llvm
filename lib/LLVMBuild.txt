@@ -41,6 +41,7 @@ subdirectories =
  Target
  Transforms
  Wfv
+ Rv
 
 [component_0]
 type = Group
