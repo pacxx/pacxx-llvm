@@ -897,7 +897,12 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
           args.push_back(mask);
           args.push_back(UndefValue::get(vecType));
           Module *mod = vectorizationInfo.getMapping().vectorFn->getParent();
-          Function *gatherIntr = Intrinsic::getDeclaration(mod, Intrinsic::masked_gather, vecType);
+
+          auto vecPtrType = cast<VectorType>(vecPtr->getType());
+
+          Type *OverloadedTypes[] = {vecType, vecPtrType};
+
+          Function *gatherIntr = Intrinsic::getDeclaration(mod, Intrinsic::masked_gather, OverloadedTypes);
           assert(gatherIntr && "masked gather not found!");
           vecMem = builder.CreateCall(gatherIntr, args, "gather");
         } else
@@ -1000,7 +1005,12 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
           args.push_back(ConstantInt::get(i32Ty, alignment));
           args.push_back(mask);
           Module *mod = vectorizationInfo.getMapping().vectorFn->getParent();
-          Function *scatterIntr = Intrinsic::getDeclaration(mod, Intrinsic::masked_scatter, vecType);
+
+          auto vecPtrType = cast<VectorType>(vecPtr->getType());
+
+          Type *OverloadedTypes[] = {vecType, vecPtrType};
+
+          Function *scatterIntr = Intrinsic::getDeclaration(mod, Intrinsic::masked_scatter, OverloadedTypes);
           assert(scatterIntr && "masked scatter not found!");
           vecMem = builder.CreateCall(scatterIntr, args);
         } else
