@@ -1,9 +1,7 @@
 // Created by lars
 
 #include <stdlib.h>
-#include <wfv/utils/metadata.h>
 #include "Log.h"
-#include "llvm/Pass.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -19,7 +17,9 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "wfv/wfvInterface.h"
+#include "rv/rv.h"
+#include "rv/vectorizationInfo.h"
+#include "rv/transform/loopExitCanonicalizer.h"
 #include "ModuleHelper.h"
 
 using namespace llvm;
@@ -46,11 +46,13 @@ namespace {
 
     private:
 
+        Function *createScalarCopy(Module *M, Function *kernel);
+
         Function *createVectorizedKernelHeader(Module *M, Function *kernel);
 
-        unsigned determineVectorWidth(Function *F, Function *vecF, TargetTransformInfo *TTI);
+        unsigned determineVectorWidth(Function *F, rv::VectorizationInfo &vecInfo, TargetTransformInfo *TTI);
 
-        void prepareForVectorization(Function *kernel, WFVInterface::WFVInterface &wfv);
+        void prepareForVectorization(Function *kernel, rv::VectorizationInfo &vecInfo);
 
         bool modifyWrapperLoop(Function *dummyFunction, Function *vectorizedKernel, Function *kernel,
                                unsigned vectorWidth, Module& M);
@@ -72,6 +74,7 @@ void SPMDVectorizer::releaseMemory() {}
 
 void SPMDVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
 }
 
@@ -83,50 +86,128 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
     Function* dummyFunction = M.getFunction("__dummy_kernel");
 
+    //TODO cleanup and structure code
     for (auto kernel : kernels) {
+
+        bool vectorized = false;
 
         TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
 
-        Function *vectorizedKernel = createVectorizedKernelHeader(&M, kernel);
+        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 
-        unsigned vectorWidth = determineVectorWidth(kernel, vectorizedKernel, TTI);
+        Function *scalarCopy = createScalarCopy(&M, kernel);
 
-        __verbose("registerWidth: ", TTI->getRegisterBitWidth(true));
-        __verbose("vectorWidth: ", vectorWidth);
+        Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
 
-        if(vectorWidth >= 4) {
+        rv::PlatformInfo platformInfo(M, TTI, TLI);
 
+        rv::VectorizerInterface vectorizer(platformInfo);
 
-            WFVInterface::WFVInterface wfv(&M,
-                                           &M.getContext(),
-                                           kernel,
-                                           vectorizedKernel,
-                                           TTI,
-                                           vectorWidth,
-                                           -1,
-                                           false,
-                                           false,
-                                           false,
-                                           false);
+        // build Analysis that is independant of vecInfo
+        DominatorTree domTree(*scalarCopy);
+        PostDominatorTree postDomTree;
+        postDomTree.recalculate(*scalarCopy);
+        LoopInfo loopInfo(domTree);
 
-            prepareForVectorization(kernel, wfv);
+        // Dominance Frontier Graph
+        DFG dfg(domTree);
+        dfg.create(*scalarCopy);
 
-            bool vectorized = false;
-            if(wfv.run())
-                vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
-            __verbose("vectorized: ", vectorized);
+        // Control Dependence Graph
+        CDG cdg(postDomTree);
+        cdg.create(*scalarCopy);
 
-            if (vectorized) {
-                vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
-                kernel->addFnAttr("vectorized");
-            } else
-                vectorizedKernel->eraseFromParent();
+        // normalize loop exits
+        LoopExitCanonicalizer canonicalizer(loopInfo);
+        canonicalizer.canonicalize(*scalarCopy);
 
-            kernelsVectorized &= vectorized;
+        //return and arguments are uniform
+        rv::VectorShape resShape = rv::VectorShape::uni(1u);
+        rv::VectorShapeVec argShapes;
+
+        for (auto& it : scalarCopy->args()) {
+            argShapes.push_back(rv::VectorShape::uni());
         }
+
+        // tmp mapping to determine possible vector width
+        rv::VectorMapping tmpMapping(scalarCopy, vectorizedKernel, 4, -1, resShape, argShapes);
+
+        rv::VectorizationInfo tmpInfo(tmpMapping);
+
+        prepareForVectorization(scalarCopy, tmpInfo);
+
+        // vectorizationAnalysis
+        vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo, postDomTree, domTree);
+
+        unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, TTI);
+
+        rv::VectorMapping targetMapping(scalarCopy, vectorizedKernel, vectorWidth, -1, resShape, argShapes);
+
+        rv::VectorizationInfo vecInfo(targetMapping);
+
+        prepareForVectorization(scalarCopy, vecInfo);
+
+        vectorizer.analyze(vecInfo, cdg, dfg, loopInfo, postDomTree, domTree);
+
+        __verbose("VectorWidth: ", vectorWidth);
+
+        // mask analysis
+        auto* maskAnalysis = vectorizer.analyzeMasks(vecInfo, loopInfo);
+        assert(maskAnalysis);
+
+        // mask generator
+        bool genMaskOk = vectorizer.generateMasks(vecInfo, *maskAnalysis, loopInfo);
+        if (!genMaskOk)
+            errs() << "mask generation failed.";
+
+        // control conversion
+        bool linearizeOk = vectorizer.linearizeCFG(vecInfo, *maskAnalysis, loopInfo, domTree);
+        if (!linearizeOk)
+            errs() << "linearization failed";
+
+        // Control conversion does not preserve the domTree so we have to rebuild it for now
+        const DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
+        bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo);
+        if (!vectorizeOk)
+            errs() << "vector code generation failed";
+
+        // cleanup
+        vectorizer.finalize();
+
+        delete maskAnalysis;
+        scalarCopy->eraseFromParent();
+
+        if(genMaskOk && linearizeOk && vectorizeOk)
+            vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
+
+        __verbose("vectorized: ", vectorized);
+
+        if (vectorized) {
+            vectorizedKernel->setName("__vectorized__" + kernel->getName());
+            vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
+            kernel->addFnAttr("vectorized");
+        } else
+            vectorizedKernel->eraseFromParent();
+
+        kernelsVectorized &= vectorized;
     }
 
     return kernelsVectorized;
+}
+
+Function *SPMDVectorizer::createScalarCopy(Module *M, Function *kernel) {
+
+    ValueToValueMapTy valueMap;
+    Function* scalarCopy = CloneFunction(kernel, valueMap, nullptr);
+
+    assert (scalarCopy);
+    scalarCopy->setCallingConv(kernel->getCallingConv());
+    scalarCopy->setAttributes(kernel->getAttributes());
+    scalarCopy->setAlignment(kernel->getAlignment());
+    scalarCopy->setLinkage(GlobalValue::InternalLinkage);
+    scalarCopy->setName(kernel->getName() + ".vectorizer.tmp");
+
+    return scalarCopy;
 }
 
 Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kernel) {
@@ -142,34 +223,16 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
     return vectorizedKernel;
 }
 
-unsigned SPMDVectorizer::determineVectorWidth(Function *F, Function *vecF, TargetTransformInfo *TTI) {
-
-    Module *M = F->getParent();
-
-    WFVInterface::WFVInterface tmp(M,
-                                   &M->getContext(),
-                                   F,
-                                   vecF,
-                                   TTI,
-                                   4,
-                                   -1,
-                                   false,
-                                   false,
-                                   false,
-                                   false);
-
-    prepareForVectorization(F, tmp);
-
-    tmp.analyze();
+unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo &vecInfo, TargetTransformInfo *TTI) {
 
     unsigned MaxWidth = 8;
-    const DataLayout &DL = vecF->getParent()->getDataLayout();
+    const DataLayout &DL = F->getParent()->getDataLayout();
 
     for (auto &B : *F) {
         for (auto &I : B) {
 
-            //TODO is ignoring cast instructions always safe ?? Or should we check for use as an GEP index
-            if (I.getMetadata(WFV::WFV_METADATA_OP_VARYING) && ! isa<CastInst>(&I)) {
+            if((vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous())
+               && !isa<CastInst>(&I)) {
 
                 Type *T = I.getType();
 
@@ -182,13 +245,11 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, Function *vecF, Targe
         }
     }
 
-    tmp.clearAnalysisMetadata(F);
-
     return TTI->getRegisterBitWidth(true) / MaxWidth;
 }
 
 
-void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFVInterface &wfv) {
+void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::VectorizationInfo &vecInfo) {
 
     Module *M = kernel->getParent();
 
@@ -196,17 +257,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
         for (User *user: global.users()) {
             if (Instruction *Inst = dyn_cast<Instruction>(user)) {
                 if (Inst->getParent()->getParent() == kernel) {
-                    wfv.addSIMDSemantics(global,
-                                         true, //uniform
-                                         false, // varying
-                                         false, //seq
-                                         false, //seq guarded
-                                         true, // res uniform
-                                         false,  // res vector
-                                         false, // res scalars
-                                         false, //aligned
-                                         true, // same
-                                         false); // consecutive
+                    vecInfo.setVectorShape(global, rv::VectorShape::uni(1u));
                     break;
                 }
             }
@@ -216,21 +267,6 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
 
-        // required to prevent modulo zero in the mandelbrot example
-        if(BinaryOperator *binOp = dyn_cast<BinaryOperator>(inst))
-            if(binOp->getOpcode() == BinaryOperator::URem || binOp->getOpcode() == BinaryOperator::SRem)
-                wfv.addSIMDSemantics(*inst,
-                                     false, //uniform
-                                     false, // varying
-                                     false,  // seq
-                                     true,  //seq guarded
-                                     false, // res uniform
-                                     false, // res vector
-                                     true, // res scalars
-                                     false, // aligned
-                                     false, // same
-                                     false); // consecutive
-
         // mark intrinsics
         if (auto CI = dyn_cast<CallInst>(inst)) {
             auto called = CI->getCalledFunction();
@@ -239,17 +275,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
-                        wfv.addSIMDSemantics(*CI,
-                                             false, //uniform
-                                             true, // varying
-                                             false, //seq
-                                             false, //seq guarded
-                                             false, // res uniform
-                                             true,  // res vector
-                                             false, // res scalars
-                                             false, //aligned
-                                             false, // same
-                                             true); // consecutive
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(1u));
                         break;
                     }
                     case Intrinsic::pacxx_read_tid_y:
@@ -263,36 +289,15 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, WFVInterface::WFV
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
-                        wfv.addSIMDSemantics(*CI,
-                                             true, //uniform
-                                             false, // varying
-                                             false, //seq
-                                             false, //seq guarded
-                                             true, // res uniform
-                                             false,  // res vector
-                                             false, // res scalars
-                                             false, //aligned
-                                             true, // same
-                                             false); // consecutive
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(1u));
                     }
                     default: break;
                 }
             }
         }
     }
-
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        wfv.addSIMDSemantics(*barrierFunc,
-                             true, //uniform
-                             false, // varying
-                             false, //seq
-                             false, //seq guarded
-                             true, // res uniform
-                             false,  // res vector
-                             false, // res scalars
-                             false, //aligned
-                             true, // same
-                             false); // consecutive
+        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(1u));
 }
 
 bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel, Function *vectorizedKernel,
@@ -503,6 +508,7 @@ INITIALIZE_PASS_BEGIN(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
 

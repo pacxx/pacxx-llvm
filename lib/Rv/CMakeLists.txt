@@ -11,6 +11,7 @@ add_llvm_library(LLVMRV
   vectorMapping.cpp
   vectorShape.cpp
 
+  analysis/ABAAnalysis.cpp
   analysis/BranchDependenceAnalysis.cpp
   analysis/DFG.cpp
   analysis/MandatoryAnalysis.cpp
