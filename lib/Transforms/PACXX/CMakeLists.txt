@@ -21,6 +21,7 @@ add_llvm_library(LLVMPACXXTransforms
   pacxx_intrinsic_scheduler.cpp
   Log.cpp
   Common.cpp
+  gep_fixer.cpp
   )
 
 add_dependencies(LLVMPACXXTransforms intrinsics_gen)

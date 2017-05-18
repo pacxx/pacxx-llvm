@@ -171,6 +171,10 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         if (!vectorizeOk)
             errs() << "vector code generation failed";
 
+        std::error_code EC;
+        raw_fd_ostream OS("vectorized.kernel.ll", EC, sys::fs::F_None);
+        vectorizedKernel->print(OS, nullptr);
+
         // cleanup
         vectorizer.finalize();
 
@@ -231,8 +235,8 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
     for (auto &B : *F) {
         for (auto &I : B) {
 
-            if((vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous())
-               && !isa<CastInst>(&I)) {
+            if((vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous()) &&
+                    !isa<CastInst>(I)) {
 
                 Type *T = I.getType();
 

@@ -32,10 +32,7 @@
 //#include "../../../kronos/detail/KernelInfo.h"
 
 #define GLOBAL_ID_PATTERN "mad.lo.u32 $0, $1, $2, $3;"
-
-using namespace llvm;
-using namespace std;
-using namespace pacxx;
+using namespace llvm; using namespace std; using namespace pacxx;
 
 namespace {
 

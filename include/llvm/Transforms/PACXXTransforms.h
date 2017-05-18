@@ -22,6 +22,7 @@ Pass *createPACXXVerifier();
 Pass *createPACXXInlinerPass();
 Pass *createPACXXDeadCodeElimPass();
 Pass *createPACXXTargetSelectPass(const SmallVector<std::string, 2>&);
+Pass *createPACXXGEPPass();
 
 // native backend passes
 Pass *createPACXXAddrSpaceTransformPass();

@@ -242,6 +242,7 @@ namespace {
       (void) llvm::createPACXXIntrinsicSchedulerPass();
 
       (void) llvm::createPACXXTargetSelectPass({});
+      (void) llvm::createPACXXGEPPass();
       (void) llvm::sys::RunningOnValgrind();
     }
   } ForcePassLinking; // Force link by creating a global definition.
