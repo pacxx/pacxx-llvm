@@ -80,6 +80,8 @@ void SPMDVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
 
 bool SPMDVectorizer::runOnModule(Module& M) {
 
+    auto &DL = M.getDataLayout();
+
     bool kernelsVectorized = true;
 
     auto kernels = getTagedFunctions(&M, "nvvm.annotations", "kernel");
@@ -126,7 +128,10 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         rv::VectorShapeVec argShapes;
 
         for (auto& it : scalarCopy->args()) {
-            argShapes.push_back(rv::VectorShape::uni());
+            if(it.getType()->isPointerTy())
+                argShapes.push_back(rv::VectorShape::uni(it.getPointerAlignment(DL)));
+            else
+                argShapes.push_back(rv::VectorShape::uni(DL.getABITypeAlignment(it.getType())));
         }
 
         // tmp mapping to determine possible vector width
@@ -235,8 +240,27 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
     for (auto &B : *F) {
         for (auto &I : B) {
 
-            if((vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous()) &&
-                    !isa<CastInst>(I)) {
+            if(vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous()) {
+
+                bool ignore = false;
+
+                // check if the cast is only used as idx in GEP
+                if(isa<CastInst>(&I)) {
+                    ignore = true;
+                    for (auto user : I.users()) {
+                        if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(user)) {
+                            // the result of the cast is not used as an idx
+                            if (std::find(GEP->idx_begin(), GEP->idx_end(), &I) == GEP->idx_end())
+                                ignore = false;
+                        }
+                        else
+                            // we have a user different than a GEP
+                            ignore = false;
+                    }
+                }
+
+                if(!ignore) {
+
 
                 Type *T = I.getType();
 
@@ -257,11 +281,13 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
     Module *M = kernel->getParent();
 
+    auto &DL = M->getDataLayout();
+
     for(auto &global : M->globals()) {
         for (User *user: global.users()) {
             if (Instruction *Inst = dyn_cast<Instruction>(user)) {
                 if (Inst->getParent()->getParent() == kernel) {
-                    vecInfo.setVectorShape(global, rv::VectorShape::uni(1u));
+                    vecInfo.setVectorShape(global, rv::VectorShape::uni());
                     break;
                 }
             }
@@ -279,7 +305,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(1u));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(DL.getABITypeAlignment(CI->getType())));
                         break;
                     }
                     case Intrinsic::pacxx_read_tid_y:
@@ -293,7 +319,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(1u));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(DL.getABITypeAlignment(CI->getType())));
                     }
                     default: break;
                 }
@@ -301,7 +327,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(1u));
+        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(DL.getABITypeAlignment(barrierFunc->getType())));
 }
 
 bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel, Function *vectorizedKernel,
