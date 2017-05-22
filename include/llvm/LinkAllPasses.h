@@ -210,7 +210,7 @@ namespace {
 
       (void) llvm::createPACXXReflectionPass();
       (void) llvm::createPACXXReflectionCleanerPass();
-      (void) llvm::createPACXXClassifyPass();
+      (void) llvm::createPACXXReflectionRemoverPass();
       (void) llvm::createPACXXSpirPass();
       (void) llvm::createPACXXNvvmPass();
       (void) llvm::createPACXXNvvmRegPass();

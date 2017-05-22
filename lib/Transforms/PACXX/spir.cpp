@@ -44,10 +44,7 @@ Instruction *getFirstInstructionForConstantExpr(T &kernels, ConstantExpr &CE) {
   for (auto CEU : CE.users()) {
     if (auto I = dyn_cast<Instruction>(CEU)) {
       if (I->getParent()) {
-        auto F = I->getParent()->getParent();
-        //    if (find(begin(kernels), end(kernels), F) != end(kernels)) {
         return I;
-        //    }
       }
     }
     if (auto nextCE = dyn_cast<ConstantExpr>(CEU)) {

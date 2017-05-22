@@ -37,7 +37,6 @@
 
 #include "ModuleHelper.h"
 
-
 using namespace llvm;
 using namespace std;
 using namespace pacxx;
@@ -150,7 +149,7 @@ private:
 };
 
 PACXXReflection::PACXXReflection()
-    : ModulePass(ID)  {}
+    : ModulePass(ID) {}
 PACXXReflection::~PACXXReflection() {}
 
 bool PACXXReflection::runOnModule(Module &M) {
@@ -175,7 +174,6 @@ bool PACXXReflection::runOnModuleAtCompileTime(Module &M) {
 
   return modified;
 }
-
 
 void PACXXReflection::cleanFromKerneles(Module &M) {
   auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
@@ -271,7 +269,7 @@ Function *PACXXReflection::ReflectionHandler::createCallStub(CallInst &CI,
 
   ValueToValueMapTy VMap;
   vector<Type *> argTy;
-  for(auto I = kernel->arg_begin(), E = kernel->arg_end(); I != E; ++I) {
+  for (auto I = kernel->arg_begin(), E = kernel->arg_end(); I != E; ++I) {
     auto &arg = *I;
     argTy.push_back(arg.getType());
   }
@@ -353,21 +351,21 @@ Function *PACXXReflection::ReflectionHandler::createCallStub(CallInst &CI,
   // for (auto BB : deadBB)
   //  BB->eraseFromParent();
 
- /* if (CI.getNumArgOperands() >= 1){ 
-    if (ConstantExpr *ce = dyn_cast<ConstantExpr>(CI.getArgOperand(1))) {
+  /* if (CI.getNumArgOperands() >= 1){
+     if (ConstantExpr *ce = dyn_cast<ConstantExpr>(CI.getArgOperand(1))) {
 
-      NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
-      SmallVector<Metadata *, 3> MDArgs;
-      MDArgs.push_back(llvm::ConstantAsMetadata::get(ce->getOperand(0)));
-      MDArgs.push_back(MDString::get(Ctx, "reflected"));
-      MDArgs.push_back(llvm::ConstantAsMetadata::get(
-        ConstantInt::get(IntegerType::getInt32Ty(Ctx), c)));
-      MD->addOperand(MDNode::get(Ctx, MDArgs));
-      MDArgs.clear();
-    }
-  }
-*/
-  
+       NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
+       SmallVector<Metadata *, 3> MDArgs;
+       MDArgs.push_back(llvm::ConstantAsMetadata::get(ce->getOperand(0)));
+       MDArgs.push_back(MDString::get(Ctx, "reflected"));
+       MDArgs.push_back(llvm::ConstantAsMetadata::get(
+         ConstantInt::get(IntegerType::getInt32Ty(Ctx), c)));
+       MD->addOperand(MDNode::get(Ctx, MDArgs));
+       MDArgs.clear();
+     }
+   }
+ */
+
   NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
   SmallVector<Metadata *, 3> MDArgs;
   MDArgs.push_back(llvm::ConstantAsMetadata::get(F));
@@ -402,34 +400,25 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
 
   auto BB = BasicBlock::Create(Ctx, "enter", wrapper);
 
-  size_t argBufferSize = 0; 
-  SmallVector<Value *, 5> callArgs;
+  // size_t argBufferSize = 0;
+  SmallVector<Value *, 1> callArgs;
   auto &input = *wrapper->arg_begin();
   input.setName("arg0");
-  unsigned offset = 0;
-  for(auto I = F->arg_begin(), E = F->arg_end(); I != E; ++I) {
-    auto &argument = *I;
-    SmallVector<Value *, 3> idx;
-    APInt off(64, offset);
-    idx.push_back(
-        ConstantInt::get(static_cast<Type *>(Type::getInt64Ty(Ctx)), off));
-    Value *address = GetElementPtrInst::Create(
-        input.getType()->getPointerElementType(), &input, idx, "", BB);
-    address = BitCastInst::Create(Instruction::CastOps::BitCast, address,
-                                  argument.getType()->getPointerTo(), "", BB);
-    Value *input = new LoadInst(address, "", false, BB);
-    callArgs.push_back(input);
-    auto size = M->getDataLayout().getTypeAllocSize(argument.getType());
-    offset += size;
-    argBufferSize += size; 
-  }
+
+  auto &argument = *F->arg_begin();
+
+  Value *cast = BitCastInst::Create(Instruction::CastOps::BitCast, &input,
+                                    argument.getType(), "", BB);
+
+  callArgs.push_back(cast);
+  auto argBufferSize = M->getDataLayout().getTypeAllocSize(argument.getType());
 
   auto call = CallInst::Create(F, callArgs, "call", BB);
   ReturnInst::Create(Ctx, call, BB);
 
-  wrapper->setMetadata("pacxx.reflection.argBufferSize", 
-		       MDNode::get(Ctx, llvm::ConstantAsMetadata::get(ConstantInt::get(
-                         IntegerType::getInt32Ty(Ctx), argBufferSize))));
+  wrapper->setMetadata("pacxx.reflection.argBufferSize",
+                       MDNode::get(Ctx, llvm::ConstantAsMetadata::get(ConstantInt::get(
+                           IntegerType::getInt32Ty(Ctx), argBufferSize))));
 
   NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
   SmallVector<Metadata *, 3> MDArgs;
@@ -463,9 +452,9 @@ void PACXXReflection::ReflectionHandler::finalize() {
 char PACXXReflection::ID = 0;
 static RegisterPass<PACXXReflection> X("pacxx_reflection",
                                        "PACXXReflection: "
-                                       "removes reflection calls from kernel "
-                                       "code and replaces them with "
-                                       "placeholder",
+                                           "removes reflection calls from kernel "
+                                           "code and replaces them with "
+                                           "placeholder",
                                        false, false);
 }
 

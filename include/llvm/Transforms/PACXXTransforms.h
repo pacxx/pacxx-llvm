@@ -12,7 +12,7 @@
 namespace llvm {
 Pass *createPACXXReflectionPass();
 Pass *createPACXXReflectionCleanerPass();
-Pass *createPACXXClassifyPass();
+Pass *createPACXXReflectionRemoverPass();
 Pass *createPACXXSpirPass();
 Pass *createPACXXNvvmPass();
 Pass *createPACXXNvvmRegPass(bool runtime = false);
