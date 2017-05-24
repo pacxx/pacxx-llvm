@@ -18,6 +18,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "rv/rv.h"
+#include "rv/analysis/maskAnalysis.h"
 #include "rv/vectorizationInfo.h"
 #include "rv/transform/loopExitCanonicalizer.h"
 #include "ModuleHelper.h"
@@ -262,20 +263,20 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
                 if(!ignore) {
 
 
-                Type *T = I.getType();
+                    Type *T = I.getType();
 
-                if(T->isPointerTy())
-                    T = T->getPointerElementType();
+                    if (T->isPointerTy())
+                        T = T->getPointerElementType();
 
-                if (T->isSized())
-                    MaxWidth = std::max(MaxWidth, (unsigned) DL.getTypeSizeInBits(T->getScalarType()));
+                    if (T->isSized())
+                        MaxWidth = std::max(MaxWidth, (unsigned) DL.getTypeSizeInBits(T->getScalarType()));
+                }
             }
         }
     }
 
     return TTI->getRegisterBitWidth(true) / MaxWidth;
 }
-
 
 void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::VectorizationInfo &vecInfo) {
 
