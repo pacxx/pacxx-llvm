@@ -18,6 +18,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "rv/rv.h"
+#include "rv/analysis/maskAnalysis.h"
 #include "rv/vectorizationInfo.h"
 #include "rv/transform/loopExitCanonicalizer.h"
 #include "ModuleHelper.h"
@@ -240,25 +241,27 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
     for (auto &B : *F) {
         for (auto &I : B) {
 
-            if (vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous()) {
+            if(vecInfo.getVectorShape(I).isVarying() || vecInfo.getVectorShape(I).isContiguous()) {
 
                 bool ignore = false;
 
                 // check if the cast is only used as idx in GEP
-                if (isa<CastInst>(&I)) {
+                if(isa<CastInst>(&I)) {
                     ignore = true;
                     for (auto user : I.users()) {
                         if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(user)) {
                             // the result of the cast is not used as an idx
                             if (std::find(GEP->idx_begin(), GEP->idx_end(), &I) == GEP->idx_end())
                                 ignore = false;
-                        } else
+                        }
+                        else
                             // we have a user different than a GEP
                             ignore = false;
                     }
                 }
 
-                if (!ignore) {
+                if(!ignore) {
+
 
                     Type *T = I.getType();
 
@@ -274,7 +277,6 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
 
     return TTI->getRegisterBitWidth(true) / MaxWidth;
 }
-
 
 void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::VectorizationInfo &vecInfo) {
 
