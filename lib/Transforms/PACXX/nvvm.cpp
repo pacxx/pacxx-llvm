@@ -83,42 +83,10 @@ struct NVVMPass : public ModulePass {
 
     cleanupDeadCode(&M);
 
-    for (auto &F : M.getFunctionList()) {
-      AttributeList attrs = F.getAttributes();
-      AttributeList new_attrs;
-      int idx = 0;
-      for (unsigned x = 0; x != attrs.getNumSlots(); ++x)
-        for (auto i = attrs.begin(x), e = attrs.end(x); i != e; ++i) {
-          if (i->isEnumAttribute()) {
-            switch (i->getKindAsEnum()) {
-            case Attribute::AlwaysInline:
-            case Attribute::InlineHint:
-            case Attribute::NoInline:
-            case Attribute::NoUnwind:
-            case Attribute::ReadNone:
-            case Attribute::ReadOnly:
-            case Attribute::OptimizeForSize:
-            case Attribute::NoReturn:
-              new_attrs.addAttribute(M.getContext(), idx, i->getKindAsEnum());
-              idx++;
-              break;
-            default:
-              break;
-            }
-          }
-        }
-
-      F.setAlignment(0);
-      //      F.setAttributes(new_attrs);
-      //      F.setCallingConv(CallingConv::C);
-      F.setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
-      F.setVisibility(GlobalValue::VisibilityTypes::DefaultVisibility);
-    }
-
     for (auto &F : kernels) {
       F->setCallingConv(CallingConv::PTX_Kernel);
-      AttributeList new_attrs;
-      F->setAttributes(new_attrs);
+      F->setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
+      F->setVisibility(GlobalValue::VisibilityTypes::DefaultVisibility);
     }
 
     return modified;
