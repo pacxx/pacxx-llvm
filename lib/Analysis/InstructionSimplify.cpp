@@ -126,8 +126,8 @@ static bool ValueDominatesPHI(Value *V, PHINode *P, const DominatorTree *DT) {
 /// Also performs the transform "(A op' B) op C" -> "(A op C) op' (B op C)".
 /// Returns the simplified value, or null if no simplification was performed.
 static Value *ExpandBinOp(Instruction::BinaryOps Opcode, Value *LHS, Value *RHS,
-                          Instruction::BinaryOps OpcodeToExpand, const SimplifyQuery &Q,
-                          unsigned MaxRecurse) {
+                          Instruction::BinaryOps OpcodeToExpand,
+                          const SimplifyQuery &Q, unsigned MaxRecurse) {
   // Recursion is always used, so bail out at once if we already hit the limit.
   if (!MaxRecurse--)
     return nullptr;
@@ -184,7 +184,8 @@ static Value *ExpandBinOp(Instruction::BinaryOps Opcode, Value *LHS, Value *RHS,
 /// Generic simplifications for associative binary operations.
 /// Returns the simpler value, or null if none was found.
 static Value *SimplifyAssociativeBinOp(Instruction::BinaryOps Opcode,
-                                       Value *LHS, Value *RHS, const SimplifyQuery &Q,
+                                       Value *LHS, Value *RHS,
+                                       const SimplifyQuery &Q,
                                        unsigned MaxRecurse) {
   assert(Instruction::isAssociative(Opcode) && "Not an associative operation!");
 
@@ -1317,7 +1318,7 @@ static Value *SimplifyShift(Instruction::BinaryOps Opcode, Value *Op0,
   // If all valid bits in the shift amount are known zero, the first operand is
   // unchanged.
   unsigned NumValidShiftBits = Log2_32_Ceil(BitWidth);
-  if (Known.Zero.countTrailingOnes() >= NumValidShiftBits)
+  if (Known.countMinTrailingZeros() >= NumValidShiftBits)
     return Op0;
 
   return nullptr;
@@ -1752,6 +1753,24 @@ static Value *SimplifyAndInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
       (A == Op0 || B == Op0))
     return Op0;
 
+  // A mask that only clears known zeros of a shifted value is a no-op.
+  Value *X;
+  const APInt *Mask;
+  const APInt *ShAmt;
+  if (match(Op1, m_APInt(Mask))) {
+    // If all bits in the inverted and shifted mask are clear:
+    // and (shl X, ShAmt), Mask --> shl X, ShAmt
+    if (match(Op0, m_Shl(m_Value(X), m_APInt(ShAmt))) &&
+        (~(*Mask)).lshr(*ShAmt).isNullValue())
+      return Op0;
+
+    // If all bits in the inverted and shifted mask are clear:
+    // and (lshr X, ShAmt), Mask --> lshr X, ShAmt
+    if (match(Op0, m_LShr(m_Value(X), m_APInt(ShAmt))) &&
+        (~(*Mask)).shl(*ShAmt).isNullValue())
+      return Op0;
+  }
+
   // A & (-A) = A if A is a power of two or zero.
   if (match(Op0, m_Neg(m_Specific(Op1))) ||
       match(Op1, m_Neg(m_Specific(Op0)))) {
@@ -1868,6 +1887,24 @@ static Value *SimplifyOrInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
   if (match(Op0, m_Xor(m_Value(A), m_Value(B))) &&
       (match(Op1, m_c_And(m_Specific(A), m_Not(m_Specific(B)))) ||
        match(Op1, m_c_And(m_Not(m_Specific(A)), m_Specific(B)))))
+    return Op0;
+
+  // (A & B) | (~A ^ B) -> (~A ^ B)
+  // (B & A) | (~A ^ B) -> (~A ^ B)
+  // (A & B) | (B ^ ~A) -> (B ^ ~A)
+  // (B & A) | (B ^ ~A) -> (B ^ ~A)
+  if (match(Op0, m_And(m_Value(A), m_Value(B))) &&
+      (match(Op1, m_c_Xor(m_Specific(A), m_Not(m_Specific(B)))) ||
+       match(Op1, m_c_Xor(m_Not(m_Specific(A)), m_Specific(B)))))
+    return Op1;
+
+  // (~A ^ B) | (A & B) -> (~A ^ B)
+  // (~A ^ B) | (B & A) -> (~A ^ B)
+  // (B ^ ~A) | (A & B) -> (B ^ ~A)
+  // (B ^ ~A) | (B & A) -> (B ^ ~A)
+  if (match(Op1, m_And(m_Value(A), m_Value(B))) &&
+      (match(Op0, m_c_Xor(m_Specific(A), m_Not(m_Specific(B)))) ||
+       match(Op0, m_c_Xor(m_Not(m_Specific(A)), m_Specific(B)))))
     return Op0;
 
   if (Value *V = simplifyAndOrOfICmps(Op0, Op1, false))
@@ -2224,28 +2261,49 @@ static Value *simplifyICmpOfBools(CmpInst::Predicate Pred, Value *LHS,
   if (!OpTy->getScalarType()->isIntegerTy(1))
     return nullptr;
 
+  // A boolean compared to true/false can be simplified in 14 out of the 20
+  // (10 predicates * 2 constants) possible combinations. Cases not handled here
+  // require a 'not' of the LHS, so those must be transformed in InstCombine.
+  if (match(RHS, m_Zero())) {
+    switch (Pred) {
+    case CmpInst::ICMP_NE:  // X !=  0 -> X
+    case CmpInst::ICMP_UGT: // X >u  0 -> X
+    case CmpInst::ICMP_SLT: // X <s  0 -> X
+      return LHS;
+
+    case CmpInst::ICMP_ULT: // X <u  0 -> false
+    case CmpInst::ICMP_SGT: // X >s  0 -> false
+      return getFalse(ITy);
+
+    case CmpInst::ICMP_UGE: // X >=u 0 -> true
+    case CmpInst::ICMP_SLE: // X <=s 0 -> true
+      return getTrue(ITy);
+
+    default: break;
+    }
+  } else if (match(RHS, m_One())) {
+    switch (Pred) {
+    case CmpInst::ICMP_EQ:  // X ==   1 -> X
+    case CmpInst::ICMP_UGE: // X >=u  1 -> X
+    case CmpInst::ICMP_SLE: // X <=s -1 -> X
+      return LHS;
+
+    case CmpInst::ICMP_UGT: // X >u   1 -> false
+    case CmpInst::ICMP_SLT: // X <s  -1 -> false
+      return getFalse(ITy);
+
+    case CmpInst::ICMP_ULE: // X <=u  1 -> true
+    case CmpInst::ICMP_SGE: // X >=s -1 -> true
+      return getTrue(ITy);
+
+    default: break;
+    }
+  }
+
   switch (Pred) {
   default:
     break;
-  case ICmpInst::ICMP_EQ:
-    // X == 1 -> X
-    if (match(RHS, m_One()))
-      return LHS;
-    break;
-  case ICmpInst::ICMP_NE:
-    // X != 0 -> X
-    if (match(RHS, m_Zero()))
-      return LHS;
-    break;
-  case ICmpInst::ICMP_UGT:
-    // X >u 0 -> X
-    if (match(RHS, m_Zero()))
-      return LHS;
-    break;
   case ICmpInst::ICMP_UGE:
-    // X >=u 1 -> X
-    if (match(RHS, m_One()))
-      return LHS;
     if (isImpliedCondition(RHS, LHS, Q.DL).getValueOr(false))
       return getTrue(ITy);
     break;
@@ -2259,16 +2317,6 @@ static Value *simplifyICmpOfBools(CmpInst::Predicate Pred, Value *LHS,
     ///  1  |  1  |  1 (-1 >= -1) |  1
     if (isImpliedCondition(LHS, RHS, Q.DL).getValueOr(false))
       return getTrue(ITy);
-    break;
-  case ICmpInst::ICMP_SLT:
-    // X <s 0 -> X
-    if (match(RHS, m_Zero()))
-      return LHS;
-    break;
-  case ICmpInst::ICMP_SLE:
-    // X <=s -1 -> X
-    if (match(RHS, m_One()))
-      return LHS;
     break;
   case ICmpInst::ICMP_ULE:
     if (isImpliedCondition(LHS, RHS, Q.DL).getValueOr(false))
@@ -2286,7 +2334,6 @@ static Value *simplifyICmpWithZero(CmpInst::Predicate Pred, Value *LHS,
     return nullptr;
 
   Type *ITy = GetCompareTy(LHS); // The return type.
-  bool LHSKnownNonNegative, LHSKnownNegative;
   switch (Pred) {
   default:
     llvm_unreachable("Unknown ICmp predicate!");
@@ -2304,38 +2351,40 @@ static Value *simplifyICmpWithZero(CmpInst::Predicate Pred, Value *LHS,
     if (isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
       return getTrue(ITy);
     break;
-  case ICmpInst::ICMP_SLT:
-    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                   Q.CxtI, Q.DT);
-    if (LHSKnownNegative)
+  case ICmpInst::ICMP_SLT: {
+    KnownBits LHSKnown = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+    if (LHSKnown.isNegative())
       return getTrue(ITy);
-    if (LHSKnownNonNegative)
+    if (LHSKnown.isNonNegative())
       return getFalse(ITy);
     break;
-  case ICmpInst::ICMP_SLE:
-    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                   Q.CxtI, Q.DT);
-    if (LHSKnownNegative)
+  }
+  case ICmpInst::ICMP_SLE: {
+    KnownBits LHSKnown = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+    if (LHSKnown.isNegative())
       return getTrue(ITy);
-    if (LHSKnownNonNegative && isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
+    if (LHSKnown.isNonNegative() &&
+        isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
       return getFalse(ITy);
     break;
-  case ICmpInst::ICMP_SGE:
-    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                   Q.CxtI, Q.DT);
-    if (LHSKnownNegative)
+  }
+  case ICmpInst::ICMP_SGE: {
+    KnownBits LHSKnown = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+    if (LHSKnown.isNegative())
       return getFalse(ITy);
-    if (LHSKnownNonNegative)
+    if (LHSKnown.isNonNegative())
       return getTrue(ITy);
     break;
-  case ICmpInst::ICMP_SGT:
-    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                   Q.CxtI, Q.DT);
-    if (LHSKnownNegative)
+  }
+  case ICmpInst::ICMP_SGT: {
+    KnownBits LHSKnown = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+    if (LHSKnown.isNegative())
       return getFalse(ITy);
-    if (LHSKnownNonNegative && isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
+    if (LHSKnown.isNonNegative() &&
+        isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
       return getTrue(ITy);
     break;
+  }
   }
 
   return nullptr;
@@ -2619,15 +2668,11 @@ static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
         return getTrue(ITy);
 
       if (Pred == ICmpInst::ICMP_SLT || Pred == ICmpInst::ICMP_SGE) {
-        bool RHSKnownNonNegative, RHSKnownNegative;
-        bool YKnownNonNegative, YKnownNegative;
-        ComputeSignBit(RHS, RHSKnownNonNegative, RHSKnownNegative, Q.DL, 0,
-                       Q.AC, Q.CxtI, Q.DT);
-        ComputeSignBit(Y, YKnownNonNegative, YKnownNegative, Q.DL, 0, Q.AC,
-                       Q.CxtI, Q.DT);
-        if (RHSKnownNonNegative && YKnownNegative)
+        KnownBits RHSKnown = computeKnownBits(RHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+        KnownBits YKnown = computeKnownBits(Y, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+        if (RHSKnown.isNonNegative() && YKnown.isNegative())
           return Pred == ICmpInst::ICMP_SLT ? getTrue(ITy) : getFalse(ITy);
-        if (RHSKnownNegative || YKnownNonNegative)
+        if (RHSKnown.isNegative() || YKnown.isNonNegative())
           return Pred == ICmpInst::ICMP_SLT ? getFalse(ITy) : getTrue(ITy);
       }
     }
@@ -2639,15 +2684,11 @@ static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
         return getFalse(ITy);
 
       if (Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE) {
-        bool LHSKnownNonNegative, LHSKnownNegative;
-        bool YKnownNonNegative, YKnownNegative;
-        ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0,
-                       Q.AC, Q.CxtI, Q.DT);
-        ComputeSignBit(Y, YKnownNonNegative, YKnownNegative, Q.DL, 0, Q.AC,
-                       Q.CxtI, Q.DT);
-        if (LHSKnownNonNegative && YKnownNegative)
+        KnownBits LHSKnown = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+        KnownBits YKnown = computeKnownBits(Y, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+        if (LHSKnown.isNonNegative() && YKnown.isNegative())
           return Pred == ICmpInst::ICMP_SGT ? getTrue(ITy) : getFalse(ITy);
-        if (LHSKnownNegative || YKnownNonNegative)
+        if (LHSKnown.isNegative() || YKnown.isNonNegative())
           return Pred == ICmpInst::ICMP_SGT ? getFalse(ITy) : getTrue(ITy);
       }
     }
@@ -2694,28 +2735,27 @@ static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
 
   // icmp pred (urem X, Y), Y
   if (LBO && match(LBO, m_URem(m_Value(), m_Specific(RHS)))) {
-    bool KnownNonNegative, KnownNegative;
     switch (Pred) {
     default:
       break;
     case ICmpInst::ICMP_SGT:
-    case ICmpInst::ICMP_SGE:
-      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
+    case ICmpInst::ICMP_SGE: {
+      KnownBits Known = computeKnownBits(RHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+      if (!Known.isNonNegative())
         break;
       LLVM_FALLTHROUGH;
+    }
     case ICmpInst::ICMP_EQ:
     case ICmpInst::ICMP_UGT:
     case ICmpInst::ICMP_UGE:
       return getFalse(ITy);
     case ICmpInst::ICMP_SLT:
-    case ICmpInst::ICMP_SLE:
-      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
+    case ICmpInst::ICMP_SLE: {
+      KnownBits Known = computeKnownBits(RHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+      if (!Known.isNonNegative())
         break;
       LLVM_FALLTHROUGH;
+    }
     case ICmpInst::ICMP_NE:
     case ICmpInst::ICMP_ULT:
     case ICmpInst::ICMP_ULE:
@@ -2725,28 +2765,27 @@ static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
 
   // icmp pred X, (urem Y, X)
   if (RBO && match(RBO, m_URem(m_Value(), m_Specific(LHS)))) {
-    bool KnownNonNegative, KnownNegative;
     switch (Pred) {
     default:
       break;
     case ICmpInst::ICMP_SGT:
-    case ICmpInst::ICMP_SGE:
-      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
+    case ICmpInst::ICMP_SGE: {
+      KnownBits Known = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+      if (!Known.isNonNegative())
         break;
       LLVM_FALLTHROUGH;
+    }
     case ICmpInst::ICMP_NE:
     case ICmpInst::ICMP_UGT:
     case ICmpInst::ICMP_UGE:
       return getTrue(ITy);
     case ICmpInst::ICMP_SLT:
-    case ICmpInst::ICMP_SLE:
-      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
+    case ICmpInst::ICMP_SLE: {
+      KnownBits Known = computeKnownBits(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+      if (!Known.isNonNegative())
         break;
       LLVM_FALLTHROUGH;
+    }
     case ICmpInst::ICMP_EQ:
     case ICmpInst::ICMP_ULT:
     case ICmpInst::ICMP_ULE:
@@ -2818,10 +2857,19 @@ static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
       break;
     case Instruction::UDiv:
     case Instruction::LShr:
-      if (ICmpInst::isSigned(Pred))
+      if (ICmpInst::isSigned(Pred) || !LBO->isExact() || !RBO->isExact())
         break;
-      LLVM_FALLTHROUGH;
+      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
+                                      RBO->getOperand(0), Q, MaxRecurse - 1))
+          return V;
+      break;
     case Instruction::SDiv:
+      if (!ICmpInst::isEquality(Pred) || !LBO->isExact() || !RBO->isExact())
+        break;
+      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
+                                      RBO->getOperand(0), Q, MaxRecurse - 1))
+        return V;
+      break;
     case Instruction::AShr:
       if (!LBO->isExact() || !RBO->isExact())
         break;
@@ -3490,6 +3538,10 @@ static const Value *SimplifyWithOpReplaced(Value *V, Value *Op, Value *RepOp,
   // Trivial replacement.
   if (V == Op)
     return RepOp;
+
+  // We cannot replace a constant, and shouldn't even try.
+  if (isa<Constant>(Op))
+    return nullptr;
 
   auto *I = dyn_cast<Instruction>(V);
   if (!I)

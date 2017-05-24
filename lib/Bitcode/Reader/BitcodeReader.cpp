@@ -93,13 +93,6 @@ static cl::opt<bool> PrintSummaryGUIDs(
     cl::desc(
         "Print the global id for each value when reading the module summary"));
 
-// FIXME: This flag should either be removed or moved to clang as a driver flag.
-static llvm::cl::opt<bool> IgnoreEmptyThinLTOIndexFile(
-    "ignore-empty-index-file", llvm::cl::ZeroOrMore,
-    llvm::cl::desc(
-        "Ignore an empty index file and perform non-ThinLTO compilation"),
-    llvm::cl::init(false));
-
 namespace {
 
 enum {
@@ -4496,11 +4489,11 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
     // Add instruction to end of current BB.  If there is no current BB, reject
     // this file.
     if (!CurBB) {
-      delete I;
+      I->deleteValue();
       return error("Invalid instruction with no BB");
     }
     if (!OperandBundles.empty()) {
-      delete I;
+      I->deleteValue();
       return error("Operand bundles found with no consumer");
     }
     CurBB->getInstList().push_back(I);
@@ -5663,7 +5656,8 @@ Expected<bool> llvm::hasGlobalValueSummary(MemoryBufferRef Buffer) {
 }
 
 Expected<std::unique_ptr<ModuleSummaryIndex>>
-llvm::getModuleSummaryIndexForFile(StringRef Path) {
+llvm::getModuleSummaryIndexForFile(StringRef Path,
+                                   bool IgnoreEmptyThinLTOIndexFile) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> FileOrErr =
       MemoryBuffer::getFileOrSTDIN(Path);
   if (!FileOrErr)

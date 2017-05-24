@@ -69,7 +69,7 @@ Error TpiStreamBuilder::finalize() {
 
   uint32_t Count = TypeRecords.size();
 
-  H->Version = *VerHeader;
+  H->Version = VerHeader;
   H->HeaderSize = sizeof(TpiStreamHeader);
   H->TypeIndexBegin = codeview::TypeIndex::FirstNonSimpleIndex;
   H->TypeIndexEnd = H->TypeIndexBegin + Count;
@@ -109,7 +109,7 @@ uint32_t TpiStreamBuilder::calculateHashBufferSize() const {
 }
 
 uint32_t TpiStreamBuilder::calculateIndexOffsetSize() const {
-  return TypeIndexOffsets.size() * sizeof(TypeIndexOffset);
+  return TypeIndexOffsets.size() * sizeof(codeview::TypeIndexOffset);
 }
 
 Error TpiStreamBuilder::finalizeMsfLayout() {

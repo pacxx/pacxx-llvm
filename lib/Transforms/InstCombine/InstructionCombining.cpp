@@ -2210,37 +2210,18 @@ Instruction *InstCombiner::visitBranchInst(BranchInst &BI) {
     return &BI;
   }
 
-  // Canonicalize fcmp_one -> fcmp_oeq
-  FCmpInst::Predicate FPred; Value *Y;
-  if (match(&BI, m_Br(m_FCmp(FPred, m_Value(X), m_Value(Y)),
-                             TrueDest, FalseDest)) &&
-      BI.getCondition()->hasOneUse())
-    if (FPred == FCmpInst::FCMP_ONE || FPred == FCmpInst::FCMP_OLE ||
-        FPred == FCmpInst::FCMP_OGE) {
-      FCmpInst *Cond = cast<FCmpInst>(BI.getCondition());
-      Cond->setPredicate(FCmpInst::getInversePredicate(FPred));
-
-      // Swap Destinations and condition.
-      BI.swapSuccessors();
-      Worklist.Add(Cond);
-      return &BI;
-    }
-
-  // Canonicalize icmp_ne -> icmp_eq
-  ICmpInst::Predicate IPred;
-  if (match(&BI, m_Br(m_ICmp(IPred, m_Value(X), m_Value(Y)),
-                      TrueDest, FalseDest)) &&
-      BI.getCondition()->hasOneUse())
-    if (IPred == ICmpInst::ICMP_NE  || IPred == ICmpInst::ICMP_ULE ||
-        IPred == ICmpInst::ICMP_SLE || IPred == ICmpInst::ICMP_UGE ||
-        IPred == ICmpInst::ICMP_SGE) {
-      ICmpInst *Cond = cast<ICmpInst>(BI.getCondition());
-      Cond->setPredicate(ICmpInst::getInversePredicate(IPred));
-      // Swap Destinations and condition.
-      BI.swapSuccessors();
-      Worklist.Add(Cond);
-      return &BI;
-    }
+  // Canonicalize, for example, icmp_ne -> icmp_eq or fcmp_one -> fcmp_oeq.
+  CmpInst::Predicate Pred;
+  if (match(&BI, m_Br(m_OneUse(m_Cmp(Pred, m_Value(), m_Value())), TrueDest,
+                      FalseDest)) &&
+      !isCanonicalPredicate(Pred)) {
+    // Swap destinations and condition.
+    CmpInst *Cond = cast<CmpInst>(BI.getCondition());
+    Cond->setPredicate(CmpInst::getInversePredicate(Pred));
+    BI.swapSuccessors();
+    Worklist.Add(Cond);
+    return &BI;
+  }
 
   return nullptr;
 }
@@ -2264,8 +2245,8 @@ Instruction *InstCombiner::visitSwitchInst(SwitchInst &SI) {
   unsigned BitWidth = cast<IntegerType>(Cond->getType())->getBitWidth();
   KnownBits Known(BitWidth);
   computeKnownBits(Cond, Known, 0, &SI);
-  unsigned LeadingKnownZeros = Known.Zero.countLeadingOnes();
-  unsigned LeadingKnownOnes = Known.One.countLeadingOnes();
+  unsigned LeadingKnownZeros = Known.countMinLeadingZeros();
+  unsigned LeadingKnownOnes = Known.countMinLeadingOnes();
 
   // Compute the number of leading bits we can ignore.
   // TODO: A better way to determine this would use ComputeNumSignBits().
@@ -3052,7 +3033,10 @@ static bool AddReachableCodeToWorklist(BasicBlock *BB, const DataLayout &DL,
         }
       }
 
-      InstrsForInstCombineWorklist.push_back(Inst);
+      // Skip processing debug intrinsics in InstCombine. Processing these call instructions
+      // consumes non-trivial amount of time and provides no value for the optimization.
+      if (!isa<DbgInfoIntrinsic>(Inst))
+        InstrsForInstCombineWorklist.push_back(Inst);
     }
 
     // Recursively visit successors.  If this is a branch or switch on a
@@ -3141,7 +3125,7 @@ combineInstructionsOverFunction(Function &F, InstCombineWorklist &Worklist,
 
   // Lower dbg.declare intrinsics otherwise their value may be clobbered
   // by instcombiner.
-  bool DbgDeclaresChanged = LowerDbgDeclare(F);
+  bool MadeIRChange = LowerDbgDeclare(F);
 
   // Iterate while there is work to do.
   int Iteration = 0;
@@ -3150,18 +3134,17 @@ combineInstructionsOverFunction(Function &F, InstCombineWorklist &Worklist,
     DEBUG(dbgs() << "\n\nINSTCOMBINE ITERATION #" << Iteration << " on "
                  << F.getName() << "\n");
 
-    bool Changed = prepareICWorklistFromFunction(F, DL, &TLI, Worklist);
+    MadeIRChange |= prepareICWorklistFromFunction(F, DL, &TLI, Worklist);
 
     InstCombiner IC(Worklist, &Builder, F.optForMinSize(), ExpensiveCombines,
                     AA, AC, TLI, DT, DL, LI);
     IC.MaxArraySizeForCombine = MaxArraySize;
-    Changed |= IC.run();
 
-    if (!Changed)
+    if (!IC.run())
       break;
   }
 
-  return DbgDeclaresChanged || Iteration > 1;
+  return MadeIRChange || Iteration > 1;
 }
 
 PreservedAnalyses InstCombinePass::run(Function &F,

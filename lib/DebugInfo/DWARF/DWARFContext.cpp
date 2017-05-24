@@ -66,7 +66,7 @@ uint64_t llvm::getRelocatedValue(const DataExtractor &Data, uint32_t Size,
   RelocAddrMap::const_iterator AI = Relocs->find(*Off);
   if (AI == Relocs->end())
     return Data.getUnsigned(Off, Size);
-  return Data.getUnsigned(Off, Size) + AI->second.second;
+  return Data.getUnsigned(Off, Size) + AI->second.Value;
 }
 
 static void dumpAccelSection(raw_ostream &OS, StringRef Name,
@@ -285,6 +285,15 @@ void DWARFContext::dump(raw_ostream &OS, DIDumpType DumpType, bool DumpEH,
   if (DumpType == DIDT_All || DumpType == DIDT_AppleObjC)
     dumpAccelSection(OS, "apple_objc", getAppleObjCSection(),
                      getStringSection(), isLittleEndian());
+}
+
+DWARFCompileUnit *DWARFContext::getDWOCompileUnitForHash(uint64_t Hash) {
+  // FIXME: Improve this for the case where this DWO file is really a DWP file
+  // with an index - use the index for lookup instead of a linear search.
+  for (const auto &DWOCU : dwo_compile_units())
+    if (DWOCU->getDWOId() == Hash)
+      return DWOCU.get();
+  return nullptr;
 }
 
 DWARFDie DWARFContext::getDIEForOffset(uint32_t Offset) {
@@ -897,6 +906,53 @@ DWARFContext::getInliningInfoForAddress(uint64_t Address,
   return InliningInfo;
 }
 
+std::shared_ptr<DWARFContext>
+DWARFContext::getDWOContext(StringRef AbsolutePath) {
+  if (auto S = DWP.lock()) {
+    DWARFContext *Ctxt = S->Context.get();
+    return std::shared_ptr<DWARFContext>(std::move(S), Ctxt);
+  }
+
+  std::weak_ptr<DWOFile> *Entry = &DWOFiles[AbsolutePath];
+
+  if (auto S = Entry->lock()) {
+    DWARFContext *Ctxt = S->Context.get();
+    return std::shared_ptr<DWARFContext>(std::move(S), Ctxt);
+  }
+
+  SmallString<128> DWPName;
+  Expected<OwningBinary<ObjectFile>> Obj = [&] {
+    if (!CheckedForDWP) {
+      (getFileName() + ".dwp").toVector(DWPName);
+      auto Obj = object::ObjectFile::createObjectFile(DWPName);
+      if (Obj) {
+        Entry = &DWP;
+        return Obj;
+      } else {
+        CheckedForDWP = true;
+        // TODO: Should this error be handled (maybe in a high verbosity mode)
+        // before falling back to .dwo files?
+        consumeError(Obj.takeError());
+      }
+    }
+
+    return object::ObjectFile::createObjectFile(AbsolutePath);
+  }();
+
+  if (!Obj) {
+    // TODO: Actually report errors helpfully.
+    consumeError(Obj.takeError());
+    return nullptr;
+  }
+
+  auto S = std::make_shared<DWOFile>();
+  S->File = std::move(Obj.get());
+  S->Context = llvm::make_unique<DWARFContextInMemory>(*S->File.getBinary());
+  *Entry = S;
+  auto *Ctxt = S->Context.get();
+  return std::shared_ptr<DWARFContext>(std::move(S), Ctxt);
+}
+
 static Error createError(const Twine &Reason, llvm::Error E) {
   return make_error<StringError>(Reason + toString(std::move(E)),
                                  inconvertibleErrorCode());
@@ -905,16 +961,23 @@ static Error createError(const Twine &Reason, llvm::Error E) {
 /// Returns the address of symbol relocation used against. Used for futher
 /// relocations computation. Symbol's section load address is taken in account if
 /// LoadedObjectInfo interface is provided.
-static Expected<uint64_t> getSymbolAddress(const object::ObjectFile &Obj,
-                                           const RelocationRef &Reloc,
-                                           const LoadedObjectInfo *L) {
+static Expected<uint64_t>
+getSymbolAddress(const object::ObjectFile &Obj, const RelocationRef &Reloc,
+                 const LoadedObjectInfo *L,
+                 std::map<SymbolRef, uint64_t> &Cache) {
   uint64_t Ret = 0;
   object::section_iterator RSec = Obj.section_end();
   object::symbol_iterator Sym = Reloc.getSymbol();
 
+  std::map<SymbolRef, uint64_t>::iterator CacheIt = Cache.end();
   // First calculate the address of the symbol or section as it appears
   // in the object file
   if (Sym != Obj.symbol_end()) {
+    bool New;
+    std::tie(CacheIt, New) = Cache.insert({*Sym, 0});
+    if (!New)
+      return CacheIt->second;
+
     Expected<uint64_t> SymAddrOrErr = Sym->getAddress();
     if (!SymAddrOrErr)
       return createError("error: failed to compute symbol address: ",
@@ -943,6 +1006,10 @@ static Expected<uint64_t> getSymbolAddress(const object::ObjectFile &Obj,
   if (L && RSec != Obj.section_end())
     if (uint64_t SectionLoadAddress = L->getSectionLoadAddress(*RSec))
       Ret += SectionLoadAddress - RSec->getAddress();
+
+  if (CacheIt != Cache.end())
+    CacheIt->second = Ret;
+
   return Ret;
 }
 
@@ -968,7 +1035,7 @@ Error DWARFContextInMemory::maybeDecompress(const SectionRef &Sec,
     return Decompressor.takeError();
 
   SmallString<32> Out;
-  if (auto Err = Decompressor->decompress(Out))
+  if (auto Err = Decompressor->resizeAndDecompress(Out))
     return Err;
 
   UncompressedSections.emplace_back(std::move(Out));
@@ -978,8 +1045,8 @@ Error DWARFContextInMemory::maybeDecompress(const SectionRef &Sec,
 }
 
 DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
-    const LoadedObjectInfo *L)
-    : IsLittleEndian(Obj.isLittleEndian()),
+                                           const LoadedObjectInfo *L)
+    : FileName(Obj.getFileName()), IsLittleEndian(Obj.isLittleEndian()),
       AddressSize(Obj.getBytesInAddress()) {
   for (const SectionRef &Section : Obj.sections()) {
     StringRef name;
@@ -1052,18 +1119,20 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
 
     // TODO: Add support for relocations in other sections as needed.
     // Record relocations for the debug_info and debug_line sections.
-    RelocAddrMap *Map = StringSwitch<RelocAddrMap*>(RelSecName)
-        .Case("debug_info", &InfoSection.Relocs)
-        .Case("debug_loc", &LocSection.Relocs)
-        .Case("debug_info.dwo", &InfoDWOSection.Relocs)
-        .Case("debug_line", &LineSection.Relocs)
-        .Case("debug_ranges", &RangeSection.Relocs)
-        .Case("apple_names", &AppleNamesSection.Relocs)
-        .Case("apple_types", &AppleTypesSection.Relocs)
-        .Case("apple_namespaces", &AppleNamespacesSection.Relocs)
-        .Case("apple_namespac", &AppleNamespacesSection.Relocs)
-        .Case("apple_objc", &AppleObjCSection.Relocs)
-        .Default(nullptr);
+    RelocAddrMap *Map =
+        StringSwitch<RelocAddrMap *>(RelSecName)
+            .Case("debug_info", &InfoSection.Relocs)
+            .Case("debug_loc", &LocSection.Relocs)
+            .Case("debug_info.dwo", &InfoDWOSection.Relocs)
+            .Case("debug_line", &LineSection.Relocs)
+            .Case("debug_ranges", &RangeSection.Relocs)
+            .Case("debug_addr", &AddrSection.Relocs)
+            .Case("apple_names", &AppleNamesSection.Relocs)
+            .Case("apple_types", &AppleTypesSection.Relocs)
+            .Case("apple_namespaces", &AppleNamespacesSection.Relocs)
+            .Case("apple_namespac", &AppleNamespacesSection.Relocs)
+            .Case("apple_objc", &AppleObjCSection.Relocs)
+            .Default(nullptr);
     if (!Map) {
       // Find debug_types relocs by section rather than name as there are
       // multiple, comdat grouped, debug_types sections.
@@ -1075,47 +1144,32 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
         continue;
     }
 
-    if (Section.relocation_begin() != Section.relocation_end()) {
-      uint64_t SectionSize = RelocatedSection->getSize();
-      for (const RelocationRef &Reloc : Section.relocations()) {
-        // FIXME: it's not clear how to correctly handle scattered
-        // relocations.
-        if (isRelocScattered(Obj, Reloc))
-          continue;
+    if (Section.relocation_begin() == Section.relocation_end())
+      continue;
 
-        Expected<uint64_t> SymAddrOrErr = getSymbolAddress(Obj, Reloc, L);
-        if (!SymAddrOrErr) {
-          errs() << toString(SymAddrOrErr.takeError()) << '\n';
-          continue;
-        }
+    std::map<SymbolRef, uint64_t> AddrCache;
+    for (const RelocationRef &Reloc : Section.relocations()) {
+      // FIXME: it's not clear how to correctly handle scattered
+      // relocations.
+      if (isRelocScattered(Obj, Reloc))
+        continue;
 
-        object::RelocVisitor V(Obj);
-        object::RelocToApply R(V.visit(Reloc.getType(), Reloc, *SymAddrOrErr));
-        if (V.error()) {
-          SmallString<32> Name;
-          Reloc.getTypeName(Name);
-          errs() << "error: failed to compute relocation: "
-                 << Name << "\n";
-          continue;
-        }
-        uint64_t Address = Reloc.getOffset();
-        if (Address + R.Width > SectionSize) {
-          errs() << "error: " << R.Width << "-byte relocation starting "
-                 << Address << " bytes into section " << name << " which is "
-                 << SectionSize << " bytes long.\n";
-          continue;
-        }
-        if (R.Width > 8) {
-          errs() << "error: can't handle a relocation of more than 8 bytes at "
-                    "a time.\n";
-          continue;
-        }
-        DEBUG(dbgs() << "Writing " << format("%p", R.Value)
-                     << " at " << format("%p", Address)
-                     << " with width " << format("%d", R.Width)
-                     << "\n");
-        Map->insert(std::make_pair(Address, std::make_pair(R.Width, R.Value)));
+      Expected<uint64_t> SymAddrOrErr =
+          getSymbolAddress(Obj, Reloc, L, AddrCache);
+      if (!SymAddrOrErr) {
+        errs() << toString(SymAddrOrErr.takeError()) << '\n';
+        continue;
       }
+
+      object::RelocVisitor V(Obj);
+      uint64_t Val = V.visit(Reloc.getType(), Reloc, *SymAddrOrErr);
+      if (V.error()) {
+        SmallString<32> Name;
+        Reloc.getTypeName(Name);
+        errs() << "error: failed to compute relocation: " << Name << "\n";
+        continue;
+      }
+      Map->insert({Reloc.getOffset(), {Val}});
     }
   }
 }
@@ -1152,7 +1206,7 @@ StringRef *DWARFContextInMemory::MapSectionToMember(StringRef Name) {
       .Case("debug_line.dwo", &LineDWOSection.Data)
       .Case("debug_str.dwo", &StringDWOSection)
       .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
-      .Case("debug_addr", &AddrSection)
+      .Case("debug_addr", &AddrSection.Data)
       .Case("apple_names", &AppleNamesSection.Data)
       .Case("apple_types", &AppleTypesSection.Data)
       .Case("apple_namespaces", &AppleNamespacesSection.Data)

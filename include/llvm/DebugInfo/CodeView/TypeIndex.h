@@ -15,7 +15,12 @@
 #include <cinttypes>
 
 namespace llvm {
+
+class ScopedPrinter;
+
 namespace codeview {
+
+class TypeCollection;
 
 enum class SimpleTypeKind : uint32_t {
   None = 0x0000,          // uncharacterized type (no type)
@@ -238,10 +243,25 @@ public:
     return Result;
   }
 
+  friend inline uint32_t operator-(const TypeIndex &A, const TypeIndex &B) {
+    assert(A >= B);
+    return A.toArrayIndex() - B.toArrayIndex();
+  }
+
 private:
   support::ulittle32_t Index;
 };
 
+// Used for pseudo-indexing an array of type records.  An array of such records
+// sorted by TypeIndex can allow log(N) lookups even though such a type record
+// stream does not provide random access.
+struct TypeIndexOffset {
+  TypeIndex Type;
+  support::ulittle32_t Offset;
+};
+
+void printTypeIndex(ScopedPrinter &Printer, StringRef FieldName, TypeIndex TI,
+                    TypeCollection &Types);
 }
 }
 

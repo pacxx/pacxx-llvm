@@ -405,7 +405,9 @@ public:
   }
 
   /// Returns if it's reasonable to merge stores to MemVT size.
-  virtual bool canMergeStoresTo(EVT MemVT) const { return true; }
+  virtual bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT) const {
+    return true;
+  }
 
   /// \brief Return true if it is cheap to speculate a call to intrinsic cttz.
   virtual bool isCheapToSpeculateCttz() const {
@@ -2060,14 +2062,6 @@ public:
   // Return true if it is profitable to use a scalar input to a BUILD_VECTOR
   // even if the vector itself has multiple uses.
   virtual bool aggressivelyPreferBuildVectorSources(EVT VecVT) const {
-    return false;
-  }
-
-  // Return true if the instruction that performs a << b actually performs
-  // a << (b % (sizeof(a) * 8)).
-  virtual bool supportsModuloShift(ISD::NodeType Inst, EVT ReturnType) const {
-    assert((Inst == ISD::SHL || Inst == ISD::SRA || Inst == ISD::SRL) &&
-           "Expect a shift instruction");
     return false;
   }
 

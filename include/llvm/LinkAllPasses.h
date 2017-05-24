@@ -207,6 +207,7 @@ namespace {
       (void) llvm::createMemDerefPrinter();
       (void) llvm::createFloat2IntPass();
       (void) llvm::createEliminateAvailableExternallyPass();
+      (void) llvm::createScalarizeMaskedMemIntrinPass();
 
       (void) llvm::createPACXXReflectionPass();
       (void) llvm::createPACXXReflectionCleanerPass();

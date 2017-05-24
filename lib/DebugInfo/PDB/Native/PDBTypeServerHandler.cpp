@@ -21,6 +21,7 @@
 
 #include "llvm/DebugInfo/PDB/Native/PDBTypeServerHandler.h"
 
+#include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/CodeViewError.h"
 #include "llvm/DebugInfo/PDB/GenericError.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
@@ -55,9 +56,8 @@ PDBTypeServerHandler::handleInternal(PDBFile &File,
   auto ExpectedTpi = File.getPDBTpiStream();
   if (!ExpectedTpi)
     return ExpectedTpi.takeError();
-  CVTypeVisitor Visitor(Callbacks);
 
-  if (auto EC = Visitor.visitTypeStream(ExpectedTpi->types(nullptr)))
+  if (auto EC = codeview::visitTypeStream(ExpectedTpi->typeArray(), Callbacks))
     return std::move(EC);
 
   return true;

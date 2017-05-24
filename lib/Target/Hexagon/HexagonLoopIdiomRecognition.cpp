@@ -399,7 +399,7 @@ void Simplifier::Context::cleanup() {
   for (Value *V : Clones) {
     Instruction *U = cast<Instruction>(V);
     if (!U->getParent())
-      delete U;
+      U->deleteValue();
   }
 }
 
@@ -1209,7 +1209,7 @@ bool PolynomialMultiplyRecognize::highBitsAreZero(Value *V,
 
   KnownBits Known(T->getBitWidth());
   computeKnownBits(V, Known, DL);
-  return Known.Zero.countLeadingOnes() >= IterCount;
+  return Known.countMinLeadingZeros() >= IterCount;
 }
 
 
