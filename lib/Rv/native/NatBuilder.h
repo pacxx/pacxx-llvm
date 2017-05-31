@@ -80,6 +80,7 @@ namespace native {
     void vectorizeMemoryInstruction(llvm::Instruction *const inst);
     void vectorizeCallInstruction(llvm::CallInst *const scalCall);
     void vectorizeAllocaInstruction(llvm::AllocaInst *const alloca);
+    void vectorizeDivision(llvm::BinaryOperator *const division);
     void vectorizeReductionCall(CallInst *rvCall, bool isRv_all);
     void vectorizeExtractCall(CallInst *rvCall);
     void vectorizeBallotCall(CallInst *rvCall);
@@ -127,6 +128,7 @@ namespace native {
 
     bool canVectorize(llvm::Instruction *inst);
     bool shouldVectorize(llvm::Instruction *inst);
+    bool isDivision(llvm::BinaryOperator *binOp);
 
   };
 }

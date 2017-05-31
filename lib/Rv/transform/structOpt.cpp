@@ -397,17 +397,20 @@ StructOpt::run() {
 
   numTransformed = 0;
   numPromoted = 0;
-
   bool change = false;
+  SmallVector<AllocaInst*, 8> allocas;
+
   for (auto & bb : vecInfo.getScalarFunction()) {
     auto itBegin = bb.begin(), itEnd = bb.end();
-    for (auto it = itBegin; it != itEnd; ) {
-      auto * allocaInst = dyn_cast<AllocaInst>(it++);
-      if (!allocaInst) continue;
-
-      bool changedAlloca = optimizeAlloca(*allocaInst);
-      change |= changedAlloca;
+    for (auto it = itBegin; it != itEnd;) {
+      auto *allocaInst = dyn_cast<AllocaInst>(it++);
+      if (allocaInst) allocas.push_back(allocaInst);
     }
+  }
+
+  for(auto alloca : allocas) {
+    bool changedAlloca = optimizeAlloca(*alloca);
+    change |= changedAlloca;
   }
 
   if (numTransformed > 0) {
