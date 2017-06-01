@@ -164,8 +164,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         vectorizer.analyze(vecInfo, cdg, dfg, loopInfo, postDomTree, domTree);
 
-        __verbose("VectorWidth: ", vectorWidth);
-
         // mask analysis
         auto maskAnalysis = vectorizer.analyzeMasks(vecInfo, loopInfo);
         assert(maskAnalysis);
@@ -199,6 +197,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
             vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
 
         __verbose("vectorized: ", vectorized);
+        __verbose("width: ", vectorWidth);
 
         if (vectorized) {
             vectorizedKernel->setName("__vectorized__" + kernel->getName());
