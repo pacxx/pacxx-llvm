@@ -407,10 +407,13 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
 
   auto &argument = *F->arg_begin();
 
-  Value *cast = BitCastInst::Create(Instruction::CastOps::BitCast, &input,
+  Value *arg_cast = BitCastInst::Create(Instruction::CastOps::BitCast, &input,
                                     argument.getType(), "", BB);
 
-  callArgs.push_back(cast);
+  auto &config_obj = *(F->arg_begin()+1);
+  callArgs.push_back(arg_cast);
+  callArgs.push_back(ConstantPointerNull::get(cast<PointerType>(config_obj.getType())));
+
   auto argBufferSize = M->getDataLayout().getTypeAllocSize(argument.getType());
 
   auto call = CallInst::Create(F, callArgs, "call", BB);
