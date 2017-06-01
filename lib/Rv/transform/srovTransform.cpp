@@ -103,11 +103,11 @@ repairPhis() {
 
   // fix up incoming values of PHI nodes
     // for every incoming edge
-    for (int i = 0; i < oldPhi->getNumIncomingValues(); ++i) {
+    for (size_t i = 0; i < oldPhi->getNumIncomingValues(); ++i) {
       auto * oldIncoming = oldPhi->getIncomingValue(i);
 
       // for every replicated slot
-      for (int j = 0; j < phiRepls.size(); ++j) {
+      for (size_t j = 0; j < phiRepls.size(); ++j) {
         auto & inRepl = *requestLaneReplicate(*oldIncoming, j);
         auto & replPhi = cast<PHINode>(*phiRepls[j]);
         replPhi.addIncoming(&inRepl, oldPhi->getIncomingBlock(i));
@@ -156,7 +156,7 @@ canReplicate(llvm::Value & val, ConstValSet & checkedSet) {
   // check whether the instruction itself is replicatable
   if (constVal) return true;
   if (phiInst) {
-    for (int i = 0; i < phiInst->getNumIncomingValues(); ++i) {
+    for (size_t i = 0; i < phiInst->getNumIncomingValues(); ++i) {
       if (!canReplicate(*phiInst->getIncomingValue(i), checkedSet)) {
         return false;
       }
@@ -306,18 +306,25 @@ requestReplicate(Value & val) {
 
 
   TypeVec replTyVec = replicateType(*val.getType());
+  ValVec replVec;
+
+  auto * undef = dyn_cast<UndefValue>(&val);
+  if (undef) {
+    for (size_t i = 0; i < replTyVec.size(); ++i) {
+      replVec.push_back(UndefValue::get(replTyVec[i]));
+    }
+    replMap.addReplicate(val, replVec);
+    return replVec;
+  }
 
   auto * phi = dyn_cast<PHINode>(&val);
   auto * inst = dyn_cast<Instruction>(&val);
-
+  assert(inst && "non replicatable value");
   IRBuilder<> builder(inst->getParent(), inst->getIterator());
-
-  ValVec replVec;
-  std::string oldInstName = inst ? inst->getName().str() : "";
+  std::string oldInstName = inst->getName().str();
 
 // phi replication logic (attach inputs later)
   if (phi) {
-
     for (size_t i = 0; i < replTyVec.size(); ++i) {
       std::stringstream ss;
       ss << oldInstName << ".repl." << i;
@@ -341,6 +348,8 @@ requestReplicate(Value & val) {
       }
     }
 
+    // phi node already registered
+    return replVec;
 // generic instruction replication
   } else if (isa<StoreInst>(inst) || isa<LoadInst>(inst)) {
     auto * intTy = Type::getInt32Ty(builder.getContext());
@@ -362,8 +371,6 @@ requestReplicate(Value & val) {
       replVec.push_back(replInst);
     }
 
-    replMap.addReplicate(val, replVec);
-
   } else if (isa<SelectInst>(inst)) {
     auto * selectInst = cast<SelectInst>(inst);
     auto * selMask = selectInst->getOperand(0);
@@ -381,8 +388,11 @@ requestReplicate(Value & val) {
       replVec.push_back(replSelect);
       IF_DEBUG_SROV { errs() << "\t" << i << " : " << *replSelect << "\n"; }
     }
-    replMap.addReplicate(val, replVec);
 
+  } else if (isa<InsertValueInst>(inst)) {
+    for (size_t i = 0; i < replTyVec.size(); ++i) {
+      replVec.push_back(requestLaneReplicate(*inst, i));
+    }
   } else {
     assert(false && "un-replicatable operation");
     abort();
@@ -390,6 +400,7 @@ requestReplicate(Value & val) {
 
 // register replcate
   assert(!replVec.empty());
+  replMap.addReplicate(val, replVec);
 
   return replVec;
 }

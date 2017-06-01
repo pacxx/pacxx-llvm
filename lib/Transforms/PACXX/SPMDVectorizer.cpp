@@ -6,6 +6,9 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Analysis/MemoryDependenceAnalysis.h>
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/IR/InlineAsm.h"
@@ -74,8 +77,6 @@ void SPMDVectorizer::releaseMemory() {}
 
 void SPMDVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
-    AU.addRequired<TargetTransformInfoWrapperPass>();
 }
 
 bool SPMDVectorizer::runOnModule(Module& M) {
@@ -92,15 +93,20 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         bool vectorized = false;
 
-        TargetTransformInfo* TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*kernel);
-
-        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-
         Function *scalarCopy = createScalarCopy(&M, kernel);
+
+        FunctionAnalysisManager fam;
+        ModuleAnalysisManager mam;
+
+        TargetIRAnalysis irAnalysis;
+        TargetTransformInfo TTI = irAnalysis.run(*scalarCopy, fam);
+
+        TargetLibraryAnalysis libAnalysis;
+        TargetLibraryInfo TLI = libAnalysis.run(*scalarCopy->getParent(), mam);
 
         Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
 
-        rv::PlatformInfo platformInfo(M, TTI, TLI);
+        rv::PlatformInfo platformInfo(M, &TTI, &TLI);
 
         rv::VectorizerInterface vectorizer(platformInfo);
 
@@ -109,6 +115,12 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         PostDominatorTree postDomTree;
         postDomTree.recalculate(*scalarCopy);
         LoopInfo loopInfo(domTree);
+
+        ScalarEvolutionAnalysis seAnalysis;
+        ScalarEvolution SE = seAnalysis.run(*scalarCopy, fam);
+
+        MemoryDependenceAnalysis mdAnalysis;
+        MemoryDependenceResults MDR = mdAnalysis.run(*scalarCopy, fam);
 
         // Dominance Frontier Graph
         DFG dfg(domTree);
@@ -143,7 +155,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         // vectorizationAnalysis
         vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo, postDomTree, domTree);
 
-        unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, TTI);
+        unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, &TTI);
 
         rv::VectorMapping targetMapping(scalarCopy, vectorizedKernel, vectorWidth, -1, resShape, argShapes);
 
@@ -156,7 +168,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         __verbose("VectorWidth: ", vectorWidth);
 
         // mask analysis
-        auto* maskAnalysis = vectorizer.analyzeMasks(vecInfo, loopInfo);
+        auto maskAnalysis = vectorizer.analyzeMasks(vecInfo, loopInfo);
         assert(maskAnalysis);
 
         // mask generator
@@ -171,7 +183,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         // Control conversion does not preserve the domTree so we have to rebuild it for now
         const DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
-        bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo);
+        bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo, SE, MDR, nullptr);
         if (!vectorizeOk)
             errs() << "vector code generation failed";
 
@@ -182,7 +194,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         // cleanup
         vectorizer.finalize();
 
-        delete maskAnalysis;
         scalarCopy->eraseFromParent();
 
         if(genMaskOk && linearizeOk && vectorizeOk)
@@ -538,8 +549,6 @@ char SPMDVectorizer::ID = 0;
 INITIALIZE_PASS_BEGIN(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
 

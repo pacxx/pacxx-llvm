@@ -223,7 +223,7 @@ Linearizer::promoteDefinitionExt(SmallVector<Value*, 16> & defs, Value & inst, V
 
   if (defBlockId == destBlockId) return inst;
 
-  const int span = destBlockId - defBlockId;
+  const size_t span = destBlockId - defBlockId;
 
   IF_DEBUG_LIN { errs() << "\t* promoting value " << inst << " from def block " << defBlockId << " to " << destBlockId << "\n"; }
 
@@ -233,7 +233,7 @@ Linearizer::promoteDefinitionExt(SmallVector<Value*, 16> & defs, Value & inst, V
 
   auto instShape = vecInfo.getVectorShape(inst);
 
-  for (int i = 1; i < span + 1; ++i) {
+  for (size_t i = 1; i < span + 1; ++i) {
     int blockId = defBlockId + i;
 
     auto & block = getBlock(blockId);
@@ -943,7 +943,7 @@ Linearizer::createSuperInput(PHINode & phi, SuperInput & superInput) {
   auto & phiBlock = *phi.getParent();
 
   auto phiShape = vecInfo.getVectorShape(phi);
-  for (int i = 1; i < blocks.size(); ++i) {
+  for (size_t i = 1; i < blocks.size(); ++i) {
     auto * inBlock = blocks[i];
     auto * inVal = phi.getIncomingValueForBlock(inBlock);
 
@@ -1039,7 +1039,7 @@ Linearizer::foldPhis(BasicBlock & block) {
     // all inputs that are incoming on this edge after folding
     SmallVector<BasicBlock*, 4> superposedInBlocks;
 
-    for (int i = 0; i < phi.getNumIncomingValues(); ++i) {
+    for (size_t i = 0; i < phi.getNumIncomingValues(); ++i) {
       auto * inBlock = phi.getIncomingBlock(i);
 
       // this incoming block remains an immediate predecessor so its value can only be live in on that block
@@ -1334,22 +1334,34 @@ Linearizer::processBranch(BasicBlock & head, RelayNode * exitRelay, Loop * paren
   }
 
   auto & term = *head.getTerminator();
+  auto & headRelay = getRelayUnchecked(getIndex(head));
 
   if (term.getNumSuccessors() == 0) {
     auto * retInst = dyn_cast<ReturnInst>(&term);
+    auto * unreachInst = dyn_cast<UnreachableInst>(&term);
+
     if (!exitRelay) {
        IF_DEBUG_LIN { errs() << "\t control sink.\n"; }
        return;
 
-    // we can only lazily fold void returns atm
-    } else if (retInst && retInst->getNumOperands() == 0) {
+    // lazily fold control sinks
+    } else if (
+        unreachInst ||
+        (retInst && retInst->getNumOperands() == 0)
+    ) {
       IF_DEBUG_LIN { errs() << "\t replacing control sink with branch because of pending relays.\n"; }
 
-      auto * lateBranch = BranchInst::Create(exitRelay->block, retInst);
-      vecInfo.setVectorShape(*lateBranch, vecInfo.getVectorShape(*retInst));
-      retInst->eraseFromParent();
-      vecInfo.dropVectorShape(*retInst);
 
+      // replace the control sink with a branch to the exitRelay->block
+      auto * lateBranch = BranchInst::Create(exitRelay->block, &term);
+      vecInfo.setVectorShape(*lateBranch, vecInfo.getVectorShape(term));
+      vecInfo.dropVectorShape(term);
+      term.eraseFromParent();
+
+      // make sure all reaching prefixes are forwarded to reach exitRelay as well
+      mergeInReaching(*exitRelay, headRelay);
+
+      // this is a delayed return (since other prefixes still have unserved relays)
       ++numDelayedReturns;
 
       return;
@@ -1363,7 +1375,6 @@ Linearizer::processBranch(BasicBlock & head, RelayNode * exitRelay, Loop * paren
 
   auto * branch = dyn_cast<BranchInst>(&term);
 
-  auto & headRelay = getRelayUnchecked(getIndex(head));
 
 // Unconditional branch case
   if (!branch->isConditional()) {
@@ -1686,7 +1697,7 @@ Linearizer::cacheMasks(){
 
 // cache branch masks
    auto & term = *block.getTerminator();
-   for (int i = 0; i < term.getNumSuccessors(); ++i) {
+   for (size_t i = 0; i < term.getNumSuccessors(); ++i) {
      auto * succBlock = term.getSuccessor(i);
      auto * edgeMask = maskAnalysis.getExitMask(block, *succBlock);
      if (edgeMask) setEdgeMask(block, *succBlock, edgeMask);
@@ -1751,7 +1762,7 @@ Linearizer::fixSSA() {
 
       // phi def/use repair
       if (phi) {
-        for (int inIdx = 0; inIdx < phi->getNumIncomingValues(); ++inIdx) {
+        for (size_t inIdx = 0; inIdx < phi->getNumIncomingValues(); ++inIdx) {
           auto * inBlock = phi->getIncomingBlock(inIdx);
           auto * inVal = phi->getIncomingValue(inIdx);
 
@@ -1775,7 +1786,7 @@ Linearizer::fixSSA() {
       }
 
       // non-phi def/use repair
-      for (int opIdx = 0; opIdx < inst.getNumOperands(); ++opIdx) {
+      for (size_t opIdx = 0; opIdx < inst.getNumOperands(); ++opIdx) {
         auto * opInst = dyn_cast<Instruction>(inst.getOperand(opIdx));
         if (!opInst) continue;
 

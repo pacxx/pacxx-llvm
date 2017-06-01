@@ -36,8 +36,8 @@
 
 #include "rv/transform/structOpt.h"
 #include "rv/transform/srovTransform.h"
+#include "rv/transform/irPolisher.h"
 
-#include "native/nativeBackendPass.h"
 #include "native/NatBuilder.h"
 
 #include "utils/rvTools.h"
@@ -123,10 +123,10 @@ VectorizerInterface::analyze(VectorizationInfo& vecInfo,
 
 }
 
-MaskAnalysis*
+std::unique_ptr<MaskAnalysis>
 VectorizerInterface::analyzeMasks(VectorizationInfo& vecInfo, const LoopInfo& loopinfo)
 {
-    MaskAnalysis* maskAnalysis = new MaskAnalysis(vecInfo, loopinfo);
+    auto maskAnalysis = make_unique<MaskAnalysis>(vecInfo, loopinfo);
     maskAnalysis->analyze(vecInfo.getScalarFunction());
     return maskAnalysis;
 }
@@ -168,7 +168,7 @@ VectorizerInterface::linearizeCFG(VectorizationInfo& vecInfo,
 
 // flag is set if the env var holds a string that starts on a non-'0' char
 bool
-VectorizerInterface::vectorize(VectorizationInfo &vecInfo, const DominatorTree &domTree, const LoopInfo & loopInfo)
+VectorizerInterface::vectorize(VectorizationInfo &vecInfo, const DominatorTree &domTree, const LoopInfo & loopInfo, ScalarEvolution & SE, MemoryDependenceResults & MDR, ValueToValueMapTy * vecInstMap)
 {
   // transform allocas from Array-of-struct into Struct-of-vector where possibe
   if (!CheckFlag("RV_DISABLE_STRUCTOPT")) {
@@ -186,23 +186,22 @@ VectorizerInterface::vectorize(VectorizationInfo &vecInfo, const DominatorTree &
     Report() << "SROV opt disabled (RV_DISABLE_SROV != 0)\n";
   }
 
-  // Scalar-Replication-Of-Varying-(Aggregates): split up structs of vectorizable elements to promote use of vector registers
-  SROVTransform srovTransform(vecInfo, platInfo);
-  srovTransform.run();
-
   ReductionAnalysis reda(vecInfo.getScalarFunction(), loopInfo);
   reda.analyze();
 
+  bool embedControl = !vecInstMap;
+
 // vectorize with native
-//    native::NatBuilder natBuilder(platInfo, vecInfo, domTree);
-//    natBuilder.vectorize();
-  legacy::FunctionPassManager fpm(vecInfo.getScalarFunction().getParent());
-  fpm.add(new MemoryDependenceWrapperPass());
-  fpm.add(new ScalarEvolutionWrapperPass());
-  fpm.add(new NativeBackendPass(&vecInfo, &platInfo, &domTree, &reda));
-  fpm.doInitialization();
-  fpm.run(vecInfo.getScalarFunction());
-  fpm.doFinalization();
+  native::NatBuilder natBuilder(platInfo, vecInfo, domTree, MDR, SE, reda);
+  natBuilder.vectorize(embedControl, vecInstMap);
+
+  // IR Polish phase: promote i1 vectors and perform early instruction (read: intrinsic) selection
+  if (!CheckFlag("RV_DISABLE_POLISH")) {
+    IRPolisher polisher(vecInfo.getVectorFunction());
+    polisher.polish();
+  } else {
+    Report() << "IR Polisher disabled (RV_DISABLE_POLISH != 0)\n";
+  }
 
   IF_DEBUG verifyFunction(vecInfo.getVectorFunction());
 

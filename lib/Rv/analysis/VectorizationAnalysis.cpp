@@ -205,7 +205,7 @@ void VectorizationAnalysis::init(Function& F) {
       } else if (const CallInst* call = dyn_cast<CallInst>(&I)) {
         // Initialize WL with 0 parameter calls
         // Only makes sense if a value is returned
-        if (call->getCalledFunction() && call->getCalledFunction()->getReturnType()->isVoidTy()) continue;
+        if (call->getCalledFunction()->getReturnType()->isVoidTy()) continue;
         if (call->getNumArgOperands() != 0) continue;
 
         mWorklist.push(&I);
@@ -322,7 +322,7 @@ void VectorizationAnalysis::addDependentValuesToWL(const Value* V) {
 
     // Ignore calls without return value
     if (const CallInst* callI = dyn_cast<CallInst>(inst)) {
-      if (callI->getCalledFunction() && callI->getCalledFunction()->getReturnType()->isVoidTy()) {
+      if (callI->getCalledFunction()->getReturnType()->isVoidTy()) {
         continue;
       }
     }
@@ -559,11 +559,6 @@ VectorShape VectorizationAnalysis::computeShapeForInst(const Instruction* I) {
     case Instruction::Call:
     {
       const Function* callee = cast<CallInst>(I)->getCalledFunction();
-
-      // if we have a indirect call, e.g. a call instruction without callee assume varying
-      if(!callee)
-        return VectorShape::varying();
-
       assert (!callee->getReturnType()->isVoidTy());
 
       // Find the shape that is mapped to this function

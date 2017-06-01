@@ -13,6 +13,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "rvConfig.h"
+#include "rv/vectorShape.h"
 
 #if 1
 #define IF_DEBUG_RED IF_DEBUG
@@ -20,9 +21,9 @@
 #define IF_DEBUG_RED if (false)
 #endif
 
-using namespace rv;
 using namespace llvm;
 
+namespace rv {
 
 // struct Reduction
 
@@ -30,6 +31,28 @@ using namespace llvm;
 void
 Reduction::dump() const {
   errs() << "Reduction { " << phi.getName() << " reductor " << reductorInst << " with neutral elem " << neutralElem << "}\n";
+}
+
+
+rv::VectorShape
+Reduction::getShape(int vectorWidth) {
+  auto & redInst = getReductor();
+
+  if (redInst.getOpcode() != Instruction::Add) {
+    errs() << redInst << "\n";
+    return VectorShape::varying();
+  }
+
+  auto *inConst = dyn_cast<ConstantInt>(&getReducibleValue());
+
+  if (!inConst) {
+    return VectorShape::varying();
+  }
+  errs() << *inConst << "\n";
+
+  auto constInc = inConst->getSExtValue();
+
+  return VectorShape::strided(constInc, constInc * vectorWidth);
 }
 
 
@@ -43,8 +66,12 @@ ReductionAnalysis::ReductionAnalysis(Function & _func, const LoopInfo & _loopInf
 {}
 
 ReductionAnalysis::~ReductionAnalysis() {
+  SmallPtrSet<Reduction*, 16> seen;
+
   for (auto itRed : reductMap) {
-    delete itRed.second;
+    if (seen.insert(itRed.second).second) {
+      delete itRed.second;
+    }
   }
 }
 
@@ -135,6 +162,7 @@ ReductionAnalysis::analyze(Loop & loop) {
     if (!red) continue;
 
     reductMap[phi] = red;
+    reductMap[&red->getReductor()] = red;
   }
 }
 
@@ -146,8 +174,8 @@ ReductionAnalysis::analyze() {
 }
 
 Reduction *
-ReductionAnalysis::getReductionInfo(PHINode & phi) const {
-  auto itReduct = reductMap.find(&phi);
+ReductionAnalysis::getReductionInfo(Instruction & inst) const {
+  auto itReduct = reductMap.find(&inst);
   if (itReduct == reductMap.end()) {
     return nullptr;
   } else {
@@ -155,3 +183,46 @@ ReductionAnalysis::getReductionInfo(PHINode & phi) const {
   }
 }
 
+void
+ReductionAnalysis::updateForClones(LoopInfo & LI, ValueToValueMapTy & cloneMap) {
+  std::vector<std::pair<Instruction*, Reduction*>> cloneVec;
+
+  // check for cloned phis and register new reductions for them
+  for (auto itRed : reductMap) {
+    auto it = cloneMap.find(itRed.first);
+    if (it == cloneMap.end()) {
+      continue;
+    }
+
+    // both reductors and phis are in this map -> only remap when we see the phi
+    auto * clonedPhi = dyn_cast<PHINode>(cloneMap[itRed.first]);
+    if (!clonedPhi) continue; // skip reductor mappings
+
+    auto & origRed = *itRed.second;
+    auto * clonedReductor = cast<Instruction>(cloneMap[&origRed.reductorInst]);
+
+    assert(clonedPhi && clonedReductor);
+
+    auto * clonedLoop = LI.getLoopFor(cast<BasicBlock>(cloneMap[origRed.redLoop.getHeader()]));
+
+    auto * clonedRed = new Reduction(
+        origRed.neutralElem,
+        *clonedReductor,
+        *clonedLoop,
+        *clonedPhi,
+        origRed.initInputIndex,
+        origRed.loopInputIndex
+      );
+
+    cloneVec.emplace_back(clonedPhi, clonedRed);
+    cloneVec.emplace_back(clonedReductor, clonedRed);
+  }
+
+  // modify map after traversal
+  for (auto it : cloneVec) {
+    reductMap[it.first] = it.second;
+  }
+}
+
+
+} // namespace rv

@@ -2,6 +2,7 @@ add_llvm_library(LLVMRV
 
   init.cpp
   PlatformInfo.cpp
+  registerPasses.cpp
   report.cpp
   rvConfig.cpp
   rv.cpp
@@ -21,16 +22,15 @@ add_llvm_library(LLVMRV
 
   native/MemoryAccessGrouper.cpp
   native/NatBuilder.cpp
-  native/nativeBackendPass.cpp
   native/ShuffleBuilder.cpp
   native/Utils.cpp
 
   region/LoopRegion.cpp
   region/Region.cpp
 
+  transform/irPolisher.cpp
   transform/Linearizer.cpp
   transform/loopExitCanonicalizer.cpp
-  transform/LoopRemainderTransform.cpp
   transform/LoopVectorizer.cpp
   transform/maskGenerator.cpp
   transform/srovTransform.cpp

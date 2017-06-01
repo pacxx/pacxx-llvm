@@ -163,7 +163,6 @@ PlatformInfo::inferMapping(llvm::Function & scalarFnc, llvm::Function & simdFnc,
 	rv::VectorShapeVec argShapes;
 
 	auto itScalarArg = scalarFnc.arg_begin();
-
 	auto itSimdArg = simdFnc.arg_begin();
 
 	for (uint i = 0; i < simdFnc.arg_size(); ++i) {

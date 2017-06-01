@@ -5,6 +5,9 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Constant.h>
+#include <llvm/Transforms/Utils/ValueMapper.h>
+
+#include "rv/vectorShape.h"
 
 #include <map>
 
@@ -54,6 +57,9 @@ public:
 
   void dump() const;
 
+  rv::VectorShape
+  getShape(int vectorWidth);
+
   Reduction(llvm::Constant & _neutralElem, llvm::Instruction & _reductorInst, llvm::Loop & _reductLoop, llvm::PHINode & _phi, int _initInputIndex, int _loopInputIndex)
   : neutralElem(_neutralElem)
   , reductorInst(_reductorInst)
@@ -66,7 +72,7 @@ public:
 
 
 class ReductionAnalysis {
-  std::map<llvm::PHINode*, Reduction*> reductMap;
+  std::map<llvm::Instruction*, Reduction*> reductMap;
 
   const llvm::LoopInfo & loopInfo;
 
@@ -80,7 +86,11 @@ public:
 
   void analyze();
 
-  Reduction * getReductionInfo(llvm::PHINode & phi) const;
+  // create reduction for the clones as well
+  void updateForClones(llvm::LoopInfo & LI, llvm::ValueToValueMapTy & cloneMap);
+
+  // look up a reduction by its constituent
+  Reduction * getReductionInfo(llvm::Instruction & reductor) const;
 };
 
 
