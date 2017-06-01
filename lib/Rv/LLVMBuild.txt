@@ -20,4 +20,4 @@ type = Library
 name = Rv
 parent = Libraries
 library_name = RV
-required_libraries = Support Core InstCombine TransformUtils Analysis MC IRReader BitReader MCParser Object ProfileData Target Vectorize
+required_libraries = Support Core InstCombine TransformUtils Analysis MC IRReader BitReader MCParser Object ProfileData Target Vectorize Scalar IPO

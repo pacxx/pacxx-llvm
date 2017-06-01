@@ -35,6 +35,7 @@ add_llvm_library(LLVMRV
   transform/maskGenerator.cpp
   transform/srovTransform.cpp
   transform/structOpt.cpp
+  transform/remTransform.cpp
 
   utils/maskGraphUtils.cpp
   utils/rvTools.cpp
