@@ -19,7 +19,6 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "rv/rv.h"
 #include "rv/analysis/maskAnalysis.h"
-#include "rv/vectorizationInfo.h"
 #include "rv/transform/loopExitCanonicalizer.h"
 #include "ModuleHelper.h"
 
@@ -89,7 +88,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
     Function* dummyFunction = M.getFunction("__dummy_kernel");
 
-    //TODO cleanup and structure code
     for (auto kernel : kernels) {
 
         bool vectorized = false;
@@ -106,7 +104,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         rv::VectorizerInterface vectorizer(platformInfo);
 
-        // build Analysis that is independant of vecInfo
+        // build Analysis that is independent of vecInfo
         DominatorTree domTree(*scalarCopy);
         PostDominatorTree postDomTree;
         postDomTree.recalculate(*scalarCopy);
@@ -132,7 +130,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
             if(it.getType()->isPointerTy())
                 argShapes.push_back(rv::VectorShape::uni(it.getPointerAlignment(DL)));
             else
-                argShapes.push_back(rv::VectorShape::uni(DL.getABITypeAlignment(it.getType())));
+                argShapes.push_back(rv::VectorShape::uni(DL.getPrefTypeAlignment(it.getType())));
         }
 
         // tmp mapping to determine possible vector width
@@ -306,7 +304,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(DL.getABITypeAlignment(CI->getType())));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(DL.getPrefTypeAlignment(CI->getType())));
                         break;
                     }
                     case Intrinsic::pacxx_read_tid_y:
@@ -320,7 +318,8 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(DL.getABITypeAlignment(CI->getType())));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(DL.getPrefTypeAlignment(CI->getType())));
+                        break;
                     }
                     default: break;
                 }
@@ -328,8 +327,9 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(DL.getABITypeAlignment(barrierFunc->getType())));
+        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(DL.getPrefTypeAlignment(barrierFunc->getType())));
 }
+
 
 bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel, Function *vectorizedKernel,
                                        unsigned vectorWidth, Module& M) {
