@@ -1,29 +1,33 @@
 // Created by lars
 
 #include <stdlib.h>
+
 #include "Log.h"
-#include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/IRBuilder.h"
+#include "ModuleHelper.h"
+
 #include "llvm/Analysis/LoopPass.h"
+#include "llvm/Analysis/MemoryDependenceAnalysis.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include <llvm/Analysis/ScalarEvolution.h>
-#include <llvm/Analysis/TargetLibraryInfo.h>
-#include <llvm/Analysis/MemoryDependenceAnalysis.h>
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Analysis/ValueTracking.h"
+
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/InstIterator.h"
+
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetLowering.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/InstIterator.h"
-#include "llvm/Analysis/ValueTracking.h"
+
 #include "rv/rv.h"
 #include "rv/analysis/maskAnalysis.h"
 #include "rv/transform/loopExitCanonicalizer.h"
-#include "ModuleHelper.h"
 
 using namespace llvm;
 using namespace std;
@@ -76,6 +80,10 @@ namespace {
 void SPMDVectorizer::releaseMemory() {}
 
 void SPMDVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.addRequired<ScalarEvolutionWrapperPass>();
+    AU.addRequired<MemoryDependenceWrapperPass>();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.addRequired<TargetTransformInfoWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 }
 
@@ -95,18 +103,14 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         Function *scalarCopy = createScalarCopy(&M, kernel);
 
-        FunctionAnalysisManager fam;
-        ModuleAnalysisManager mam;
-
-        TargetIRAnalysis irAnalysis;
-        TargetTransformInfo TTI = irAnalysis.run(*scalarCopy, fam);
-
-        TargetLibraryAnalysis libAnalysis;
-        TargetLibraryInfo TLI = libAnalysis.run(*scalarCopy->getParent(), mam);
+        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+        TargetTransformInfo *TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*scalarCopy);
+        ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>(*scalarCopy).getSE();
+        MemoryDependenceResults *MDR = &getAnalysis<MemoryDependenceWrapperPass>(*scalarCopy).getMemDep();
 
         Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
 
-        rv::PlatformInfo platformInfo(M, &TTI, &TLI);
+        rv::PlatformInfo platformInfo(M, TTI, TLI);
 
         rv::VectorizerInterface vectorizer(platformInfo);
 
@@ -116,11 +120,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         postDomTree.recalculate(*scalarCopy);
         LoopInfo loopInfo(domTree);
 
-        ScalarEvolutionAnalysis seAnalysis;
-        ScalarEvolution SE = seAnalysis.run(*scalarCopy, fam);
-
-        MemoryDependenceAnalysis mdAnalysis;
-        MemoryDependenceResults MDR = mdAnalysis.run(*scalarCopy, fam);
 
         // Dominance Frontier Graph
         DFG dfg(domTree);
@@ -155,7 +154,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         // vectorizationAnalysis
         vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo, postDomTree, domTree);
 
-        unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, &TTI);
+        unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, TTI);
 
         rv::VectorMapping targetMapping(scalarCopy, vectorizedKernel, vectorWidth, -1, resShape, argShapes);
 
@@ -183,7 +182,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         // Control conversion does not preserve the domTree so we have to rebuild it for now
         const DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
-        bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo, SE, MDR, nullptr);
+        bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo, *SE, *MDR, nullptr);
         if (!vectorizeOk)
             errs() << "vector code generation failed";
 
@@ -548,6 +547,10 @@ char SPMDVectorizer::ID = 0;
 
 INITIALIZE_PASS_BEGIN(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(SPMDVectorizer, "spmd",
                 "SPMD vectorizer", true, true)
