@@ -11,15 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "ByteStreamer.h"
 #include "DIEHash.h"
+#include "ByteStreamer.h"
 #include "DwarfDebug.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/DIE.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/Dwarf.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/raw_ostream.h"
@@ -380,10 +380,12 @@ void DIEHash::computeHash(const DIE &Die) {
 /// DWARF4 standard. It is an md5 hash of the flattened description of the DIE
 /// with the inclusion of the full CU and all top level CU entities.
 // TODO: Initialize the type chain at 0 instead of 1 for CU signatures.
-uint64_t DIEHash::computeCUSignature(const DIE &Die) {
+uint64_t DIEHash::computeCUSignature(StringRef DWOName, const DIE &Die) {
   Numbering.clear();
   Numbering[&Die] = 1;
 
+  if (!DWOName.empty())
+    Hash.update(DWOName);
   // Hash the DIE.
   computeHash(Die);
 

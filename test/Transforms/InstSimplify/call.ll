@@ -35,6 +35,14 @@ define {i8, i1} @test_uadd3(i8 %v) {
   ret {i8, i1} %result
 }
 
+define {i8, i1} @test_uadd4(i8 %v) {
+; CHECK-LABEL: @test_uadd4(
+; CHECK-NEXT:    ret { i8, i1 } undef
+;
+  %result = call {i8, i1} @llvm.uadd.with.overflow.i8(i8 undef, i8 %v)
+  ret {i8, i1} %result
+}
+
 define i1 @test_sadd1() {
 ; CHECK-LABEL: @test_sadd1(
 ; CHECK-NEXT:    ret i1 true
@@ -58,6 +66,14 @@ define {i8, i1} @test_sadd3(i8 %v) {
 ; CHECK-NEXT:    ret { i8, i1 } undef
 ;
   %result = call {i8, i1} @llvm.sadd.with.overflow.i8(i8 %v, i8 undef)
+  ret {i8, i1} %result
+}
+
+define {i8, i1} @test_sadd4(i8 %v) {
+; CHECK-LABEL: @test_sadd4(
+; CHECK-NEXT:    ret { i8, i1 } undef
+;
+  %result = call {i8, i1} @llvm.sadd.with.overflow.i8(i8 undef, i8 %v)
   ret {i8, i1} %result
 }
 
@@ -125,6 +141,22 @@ define {i8, i1} @test_umul2(i8 %V) {
   ret {i8, i1} %x
 }
 
+define {i8, i1} @test_umul3(i8 %V) {
+; CHECK-LABEL: @test_umul3(
+; CHECK-NEXT:    ret { i8, i1 } zeroinitializer
+;
+  %x = call {i8, i1} @llvm.umul.with.overflow.i8(i8 0, i8 %V)
+  ret {i8, i1} %x
+}
+
+define {i8, i1} @test_umul4(i8 %V) {
+; CHECK-LABEL: @test_umul4(
+; CHECK-NEXT:    ret { i8, i1 } zeroinitializer
+;
+  %x = call {i8, i1} @llvm.umul.with.overflow.i8(i8 undef, i8 %V)
+  ret {i8, i1} %x
+}
+
 define {i8, i1} @test_smul1(i8 %V) {
 ; CHECK-LABEL: @test_smul1(
 ; CHECK-NEXT:    ret { i8, i1 } zeroinitializer
@@ -141,6 +173,22 @@ define {i8, i1} @test_smul2(i8 %V) {
   ret {i8, i1} %x
 }
 
+define {i8, i1} @test_smul3(i8 %V) {
+; CHECK-LABEL: @test_smul3(
+; CHECK-NEXT:    ret { i8, i1 } zeroinitializer
+;
+  %x = call {i8, i1} @llvm.smul.with.overflow.i8(i8 0, i8 %V)
+  ret {i8, i1} %x
+}
+
+define {i8, i1} @test_smul4(i8 %V) {
+; CHECK-LABEL: @test_smul4(
+; CHECK-NEXT:    ret { i8, i1 } zeroinitializer
+;
+  %x = call {i8, i1} @llvm.smul.with.overflow.i8(i8 undef, i8 %V)
+  ret {i8, i1} %x
+}
+
 declare i256 @llvm.cttz.i256(i256 %src, i1 %is_zero_undef)
 
 define i256 @test_cttz() {
@@ -149,6 +197,16 @@ define i256 @test_cttz() {
 ;
   %x = call i256 @llvm.cttz.i256(i256 10, i1 false)
   ret i256 %x
+}
+
+declare <2 x i256> @llvm.cttz.v2i256(<2 x i256> %src, i1 %is_zero_undef)
+
+define <2 x i256> @test_cttz_vec() {
+; CHECK-LABEL: @test_cttz_vec(
+; CHECK-NEXT:    ret <2 x i256> <i256 1, i256 1>
+;
+  %x = call <2 x i256> @llvm.cttz.v2i256(<2 x i256> <i256 10, i256 10>, i1 false)
+  ret <2 x i256> %x
 }
 
 declare i256 @llvm.ctpop.i256(i256 %src)
@@ -362,3 +420,26 @@ define <8 x i32> @masked_load_undef_mask(<8 x i32>* %V) {
 declare noalias i8* @malloc(i64)
 
 declare <8 x i32> @llvm.masked.load.v8i32.p0v8i32(<8 x i32>*, i32, <8 x i1>, <8 x i32>)
+
+declare double @llvm.powi.f64(double, i32)
+declare <2 x double> @llvm.powi.v2f64(<2 x double>, i32)
+
+define double @constant_fold_powi() nounwind uwtable ssp {
+; CHECK-LABEL: @constant_fold_powi(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    ret double 9.000000e+00
+;
+entry:
+  %0 = call double @llvm.powi.f64(double 3.00000e+00, i32 2)
+  ret double %0
+}
+
+define <2 x double> @constant_fold_powi_vec() nounwind uwtable ssp {
+; CHECK-LABEL: @constant_fold_powi_vec(
+; CHECK-NEXT:  entry:
+; CHECK-NEXT:    ret <2 x double> <double 9.000000e+00, double 2.500000e+01>
+;
+entry:
+  %0 = call <2 x double> @llvm.powi.v2f64(<2 x double> <double 3.00000e+00, double 5.00000e+00>, i32 2)
+  ret <2 x double> %0
+}

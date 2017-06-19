@@ -13,8 +13,6 @@
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/Formatters.h"
 #include "llvm/DebugInfo/CodeView/TypeCollection.h"
-#include "llvm/DebugInfo/CodeView/TypeDatabase.h"
-#include "llvm/DebugInfo/CodeView/TypeDatabaseVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/Support/BinaryByteStream.h"
@@ -26,7 +24,7 @@ using namespace llvm::codeview;
 
 static const EnumEntry<TypeLeafKind> LeafTypeNames[] = {
 #define CV_TYPE(enum, val) {#enum, enum},
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
 };
 
 #define ENUM_ENTRY(enum_class, enum)                                           \
@@ -155,7 +153,7 @@ static StringRef getLeafTypeName(TypeLeafKind LT) {
 #define TYPE_RECORD(ename, value, name)                                        \
   case ename:                                                                  \
     return #name;
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
   default:
     break;
   }

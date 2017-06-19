@@ -12,8 +12,6 @@
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/DebugInfo/CodeView/CodeViewError.h"
 #include "llvm/DebugInfo/CodeView/TypeCollection.h"
-#include "llvm/DebugInfo/CodeView/TypeDatabase.h"
-#include "llvm/DebugInfo/CodeView/TypeDatabaseVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeRecordMapping.h"
 #include "llvm/DebugInfo/CodeView/TypeServerHandler.h"
@@ -45,24 +43,9 @@ static Error visitKnownMember(CVMemberRecord &Record,
 }
 
 static Expected<TypeServer2Record> deserializeTypeServerRecord(CVType &Record) {
-  class StealTypeServerVisitor : public TypeVisitorCallbacks {
-  public:
-    explicit StealTypeServerVisitor(TypeServer2Record &TR) : TR(TR) {}
-
-    Error visitKnownRecord(CVType &CVR, TypeServer2Record &Record) override {
-      TR = Record;
-      return Error::success();
-    }
-
-  private:
-    TypeServer2Record &TR;
-  };
-
   TypeServer2Record R(TypeRecordKind::TypeServer2);
-  StealTypeServerVisitor Thief(R);
-  if (auto EC = visitTypeRecord(Record, Thief))
+  if (auto EC = TypeDeserializer::deserializeAs(Record, R))
     return std::move(EC);
-
   return R;
 }
 
@@ -86,7 +69,7 @@ static Error visitMemberRecord(CVMemberRecord &Record,
   MEMBER_RECORD(EnumVal, EnumVal, AliasName)
 #define TYPE_RECORD(EnumName, EnumVal, Name)
 #define TYPE_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
   }
 
   if (auto EC = Callbacks.visitMemberEnd(Record))
@@ -170,7 +153,7 @@ Error CVTypeVisitor::finishVisitation(CVType &Record) {
   TYPE_RECORD(EnumVal, EnumVal, AliasName)
 #define MEMBER_RECORD(EnumName, EnumVal, Name)
 #define MEMBER_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
-#include "llvm/DebugInfo/CodeView/TypeRecords.def"
+#include "llvm/DebugInfo/CodeView/CodeViewTypes.def"
   }
 
   if (auto EC = Callbacks.visitTypeEnd(Record))
@@ -308,8 +291,9 @@ Error llvm::codeview::visitTypeRecord(CVType &Record,
 
 Error llvm::codeview::visitTypeStream(const CVTypeArray &Types,
                                       TypeVisitorCallbacks &Callbacks,
+                                      VisitorDataSource Source,
                                       TypeServerHandler *TS) {
-  VisitHelper V(Callbacks, VDS_BytesPresent);
+  VisitHelper V(Callbacks, Source);
   if (TS)
     V.Visitor.addTypeServerHandler(*TS);
   return V.Visitor.visitTypeStream(Types);

@@ -552,7 +552,7 @@ DIE *DwarfCompileUnit::constructVariableDIEImpl(const DbgVariable &DV,
     int Offset = TFI->getFrameIndexReference(*Asm->MF, Fragment.FI, FrameReg);
     DwarfExpr.addFragmentOffset(Expr);
     SmallVector<uint64_t, 8> Ops;
-    Ops.push_back(dwarf::DW_OP_plus);
+    Ops.push_back(dwarf::DW_OP_plus_uconst);
     Ops.push_back(Offset);
     Ops.append(Expr->elements_begin(), Expr->elements_end());
     DIExpressionCursor Cursor(Ops);
@@ -760,7 +760,7 @@ void DwarfCompileUnit::emitHeader(bool UseOffsets) {
 /// addGlobalName - Add a new global name to the compile unit.
 void DwarfCompileUnit::addGlobalName(StringRef Name, const DIE &Die,
                                      const DIScope *Context) {
-  if (includeMinimalInlineScopes())
+  if (!DD->hasDwarfPubSections(includeMinimalInlineScopes()))
     return;
   std::string FullName = getParentContextString(Context) + Name.str();
   GlobalNames[FullName] = &Die;
@@ -768,7 +768,7 @@ void DwarfCompileUnit::addGlobalName(StringRef Name, const DIE &Die,
 
 void DwarfCompileUnit::addGlobalNameForTypeUnit(StringRef Name,
                                                 const DIScope *Context) {
-  if (includeMinimalInlineScopes())
+  if (!DD->hasDwarfPubSections(includeMinimalInlineScopes()))
     return;
   std::string FullName = getParentContextString(Context) + Name.str();
   // Insert, allowing the entry to remain as-is if it's already present
@@ -781,7 +781,7 @@ void DwarfCompileUnit::addGlobalNameForTypeUnit(StringRef Name,
 /// Add a new global type to the unit.
 void DwarfCompileUnit::addGlobalType(const DIType *Ty, const DIE &Die,
                                      const DIScope *Context) {
-  if (includeMinimalInlineScopes())
+  if (!DD->hasDwarfPubSections(includeMinimalInlineScopes()))
     return;
   std::string FullName = getParentContextString(Context) + Ty->getName().str();
   GlobalTypes[FullName] = &Die;
@@ -789,7 +789,7 @@ void DwarfCompileUnit::addGlobalType(const DIType *Ty, const DIE &Die,
 
 void DwarfCompileUnit::addGlobalTypeUnitType(const DIType *Ty,
                                              const DIScope *Context) {
-  if (includeMinimalInlineScopes())
+  if (!DD->hasDwarfPubSections(includeMinimalInlineScopes()))
     return;
   std::string FullName = getParentContextString(Context) + Ty->getName().str();
   // Insert, allowing the entry to remain as-is if it's already present
@@ -821,7 +821,7 @@ void DwarfCompileUnit::addAddress(DIE &Die, dwarf::Attribute Attribute,
 
   SmallVector<uint64_t, 8> Ops;
   if (Location.isIndirect() && Location.getOffset()) {
-    Ops.push_back(dwarf::DW_OP_plus);
+    Ops.push_back(dwarf::DW_OP_plus_uconst);
     Ops.push_back(Location.getOffset());
   }
   DIExpressionCursor Cursor(Ops);
@@ -850,7 +850,7 @@ void DwarfCompileUnit::addComplexAddress(const DbgVariable &DV, DIE &Die,
 
   SmallVector<uint64_t, 8> Ops;
   if (Location.isIndirect() && Location.getOffset()) {
-    Ops.push_back(dwarf::DW_OP_plus);
+    Ops.push_back(dwarf::DW_OP_plus_uconst);
     Ops.push_back(Location.getOffset());
   }
   Ops.append(DIExpr->elements_begin(), DIExpr->elements_end());

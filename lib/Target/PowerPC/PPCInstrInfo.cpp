@@ -1931,6 +1931,8 @@ bool PPCInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case PPC::DFSTOREf64: {
     assert(Subtarget.hasP9Vector() &&
            "Invalid D-Form Pseudo-ops on non-P9 target.");
+    assert(MI.getOperand(2).isReg() && MI.getOperand(1).isImm() &&
+           "D-form op must have register and immediate operands");
     unsigned UpperOpcode, LowerOpcode;
     switch (MI.getOpcode()) {
     case PPC::DFLOADf32:
@@ -1962,7 +1964,7 @@ bool PPCInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
   case PPC::CFENCE8: {
     auto Val = MI.getOperand(0).getReg();
-    BuildMI(MBB, MI, DL, get(PPC::CMPW), PPC::CR7).addReg(Val).addReg(Val);
+    BuildMI(MBB, MI, DL, get(PPC::CMPD), PPC::CR7).addReg(Val).addReg(Val);
     BuildMI(MBB, MI, DL, get(PPC::CTRL_DEP))
         .addImm(PPC::PRED_NE_MINUS)
         .addReg(PPC::CR7)
@@ -1980,4 +1982,8 @@ PPCInstrInfo::updatedRC(const TargetRegisterClass *RC) const {
   if (Subtarget.hasVSX() && RC == &PPC::VRRCRegClass)
     return &PPC::VSRCRegClass;
   return RC;
+}
+
+int PPCInstrInfo::getRecordFormOpcode(unsigned Opcode) {
+  return PPC::getRecordFormOpcode(Opcode);
 }

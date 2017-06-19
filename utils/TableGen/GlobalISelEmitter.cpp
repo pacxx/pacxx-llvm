@@ -118,7 +118,7 @@ static std::string explainPredicates(const TreePatternNode *N) {
 
 std::string explainOperator(Record *Operator) {
   if (Operator->isSubClassOf("SDNode"))
-    return " (" + Operator->getValueAsString("Opcode") + ")";
+    return (" (" + Operator->getValueAsString("Opcode") + ")").str();
 
   if (Operator->isSubClassOf("Intrinsic"))
     return (" (Operator is an Intrinsic, " + Operator->getName() + ")").str();
@@ -1147,14 +1147,21 @@ void RuleMatcher::emit(raw_ostream &OS,
 
   // We must also check if it's safe to fold the matched instructions.
   if (InsnVariableNames.size() >= 2) {
+    // Invert the map to create stable ordering (by var names)
+    SmallVector<StringRef, 2> Names;
     for (const auto &Pair : InsnVariableNames) {
       // Skip the root node since it isn't moving anywhere. Everything else is
       // sinking to meet it.
       if (Pair.first == Matchers.front().get())
         continue;
 
+      Names.push_back(Pair.second);
+    }
+    std::sort(Names.begin(), Names.end());
+
+    for (const auto &Name : Names) {
       // Reject the difficult cases until we have a more accurate check.
-      OS << "      if (!isObviouslySafeToFold(" << Pair.second
+      OS << "      if (!isObviouslySafeToFold(" << Name
          << ")) return false;\n";
 
       // FIXME: Emit checks to determine it's _actually_ safe to fold and/or
@@ -1595,7 +1602,7 @@ Expected<BuildMIAction &> GlobalISelEmitter::createAndImportInstructionRenderer(
 
 Error GlobalISelEmitter::importDefaultOperandRenderers(
     BuildMIAction &DstMIBuilder, DagInit *DefaultOps) const {
-  for (const auto *DefaultOp : DefaultOps->args()) {
+  for (const auto *DefaultOp : DefaultOps->getArgs()) {
     // Look through ValueType operators.
     if (const DagInit *DefaultDagOp = dyn_cast<DagInit>(DefaultOp)) {
       if (const DefInit *DefaultDagOperator =

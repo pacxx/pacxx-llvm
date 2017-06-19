@@ -11,6 +11,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/BinaryFormat/Wasm.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/Error.h"
@@ -21,7 +22,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LEB128.h"
-#include "llvm/Support/Wasm.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -325,6 +325,7 @@ Error WasmObjectFile::parseRelocSection(StringRef Name, const uint8_t *Ptr,
     case wasm::R_WEBASSEMBLY_TABLE_INDEX_SLEB:
     case wasm::R_WEBASSEMBLY_TABLE_INDEX_I32:
     case wasm::R_WEBASSEMBLY_TYPE_INDEX_LEB:
+    case wasm::R_WEBASSEMBLY_GLOBAL_INDEX_LEB:
       break;
     case wasm::R_WEBASSEMBLY_GLOBAL_ADDR_LEB:
     case wasm::R_WEBASSEMBLY_GLOBAL_ADDR_SLEB:
@@ -332,7 +333,8 @@ Error WasmObjectFile::parseRelocSection(StringRef Name, const uint8_t *Ptr,
       Reloc.Addend = readVarint32(Ptr);
       break;
     default:
-      return make_error<GenericBinaryError>("Bad relocation type",
+      return make_error<GenericBinaryError>("Bad relocation type: " +
+                                                Twine(Reloc.Type),
                                             object_error::parse_failed);
     }
     Section->Relocations.push_back(Reloc);
@@ -743,6 +745,10 @@ std::error_code WasmObjectFile::getSectionName(DataRefImpl Sec,
 
 uint64_t WasmObjectFile::getSectionAddress(DataRefImpl Sec) const { return 0; }
 
+uint64_t WasmObjectFile::getSectionIndex(DataRefImpl Sec) const {
+  return Sec.d.a;
+}
+
 uint64_t WasmObjectFile::getSectionSize(DataRefImpl Sec) const {
   const WasmSection &S = Sections[Sec.d.a];
   return S.Content.size();
@@ -826,7 +832,7 @@ void WasmObjectFile::getRelocationTypeName(
     break;
 
   switch (Rel.Type) {
-#include "llvm/Support/WasmRelocs/WebAssembly.def"
+#include "llvm/BinaryFormat/WasmRelocs/WebAssembly.def"
   }
 
 #undef WASM_RELOC

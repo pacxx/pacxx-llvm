@@ -11,9 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "AArch64ISelLowering.h"
 #include "AArch64CallingConvention.h"
 #include "AArch64MachineFunctionInfo.h"
-#include "AArch64ISelLowering.h"
 #include "AArch64PerfectShuffle.h"
 #include "AArch64RegisterInfo.h"
 #include "AArch64Subtarget.h"
@@ -22,9 +22,9 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
@@ -51,10 +51,10 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/OperandTraits.h"
 #include "llvm/IR/Type.h"
@@ -381,7 +381,6 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::FNEARBYINT, MVT::v4f16, Expand);
   setOperationAction(ISD::FNEG, MVT::v4f16, Expand);
   setOperationAction(ISD::FPOW, MVT::v4f16, Expand);
-  setOperationAction(ISD::FPOWI, MVT::v4f16, Expand);
   setOperationAction(ISD::FREM, MVT::v4f16, Expand);
   setOperationAction(ISD::FROUND, MVT::v4f16, Expand);
   setOperationAction(ISD::FRINT, MVT::v4f16, Expand);
@@ -413,7 +412,6 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::FNEARBYINT, MVT::v8f16, Expand);
   setOperationAction(ISD::FNEG, MVT::v8f16, Expand);
   setOperationAction(ISD::FPOW, MVT::v8f16, Expand);
-  setOperationAction(ISD::FPOWI, MVT::v8f16, Expand);
   setOperationAction(ISD::FREM, MVT::v8f16, Expand);
   setOperationAction(ISD::FROUND, MVT::v8f16, Expand);
   setOperationAction(ISD::FRINT, MVT::v8f16, Expand);
@@ -726,7 +724,6 @@ void AArch64TargetLowering::addTypeForNEON(MVT VT, MVT PromotedBitwiseVT) {
   if (VT == MVT::v2f32 || VT == MVT::v4f32 || VT == MVT::v2f64) {
     setOperationAction(ISD::FSIN, VT, Expand);
     setOperationAction(ISD::FCOS, VT, Expand);
-    setOperationAction(ISD::FPOWI, VT, Expand);
     setOperationAction(ISD::FPOW, VT, Expand);
     setOperationAction(ISD::FLOG, VT, Expand);
     setOperationAction(ISD::FLOG2, VT, Expand);
@@ -9222,16 +9219,26 @@ static SDValue splitStoreSplat(SelectionDAG &DAG, StoreSDNode &St,
   // instructions (stp).
   SDLoc DL(&St);
   SDValue BasePtr = St.getBasePtr();
+  uint64_t BaseOffset = 0;
+
   const MachinePointerInfo &PtrInfo = St.getPointerInfo();
   SDValue NewST1 =
       DAG.getStore(St.getChain(), DL, SplatVal, BasePtr, PtrInfo,
                    OrigAlignment, St.getMemOperand()->getFlags());
 
+  // As this in ISel, we will not merge this add which may degrade results.
+  if (BasePtr->getOpcode() == ISD::ADD &&
+      isa<ConstantSDNode>(BasePtr->getOperand(1))) {
+    BaseOffset = cast<ConstantSDNode>(BasePtr->getOperand(1))->getSExtValue();
+    BasePtr = BasePtr->getOperand(0);
+  }
+
   unsigned Offset = EltOffset;
   while (--NumVecElts) {
     unsigned Alignment = MinAlign(OrigAlignment, Offset);
-    SDValue OffsetPtr = DAG.getNode(ISD::ADD, DL, MVT::i64, BasePtr,
-                                    DAG.getConstant(Offset, DL, MVT::i64));
+    SDValue OffsetPtr =
+        DAG.getNode(ISD::ADD, DL, MVT::i64, BasePtr,
+                    DAG.getConstant(BaseOffset + Offset, DL, MVT::i64));
     NewST1 = DAG.getStore(NewST1.getValue(0), DL, SplatVal, OffsetPtr,
                           PtrInfo.getWithOffset(Offset), Alignment,
                           St.getMemOperand()->getFlags());
@@ -9359,7 +9366,7 @@ static SDValue splitStores(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
     return SDValue();
 
   StoreSDNode *S = cast<StoreSDNode>(N);
-  if (S->isVolatile())
+  if (S->isVolatile() || S->isIndexed())
     return SDValue();
 
   SDValue StVal = S->getValue();

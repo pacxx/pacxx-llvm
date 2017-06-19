@@ -28,26 +28,26 @@
 #include "GCNSchedStrategy.h"
 #include "R600MachineScheduler.h"
 #include "SIMachineScheduler.h"
-#include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/Transforms/IPO.h"
-#include "llvm/Transforms/IPO/AlwaysInliner.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Scalar/GVN.h"
-#include "llvm/Transforms/Vectorize.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
+#include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Vectorize.h"
 #include <memory>
 
 using namespace llvm;
@@ -116,7 +116,7 @@ static cl::opt<bool> EnableAMDGPUAliasAnalysis("enable-amdgpu-aa", cl::Hidden,
 static cl::opt<bool> EnableSIInsertWaitcntsPass(
   "enable-si-insert-waitcnts",
   cl::desc("Use new waitcnt insertion pass"),
-  cl::init(false));
+  cl::init(true));
 
 // Option to run late CFG structurizer
 static cl::opt<bool> LateCFGStructurize(
@@ -139,6 +139,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeSIShrinkInstructionsPass(*PR);
   initializeSIFixControlFlowLiveIntervalsPass(*PR);
   initializeSILoadStoreOptimizerPass(*PR);
+  initializeAMDGPUAlwaysInlinePass(*PR);
   initializeAMDGPUAnnotateKernelFeaturesPass(*PR);
   initializeAMDGPUAnnotateUniformValuesPass(*PR);
   initializeAMDGPULowerIntrinsicsPass(*PR);
@@ -456,7 +457,7 @@ namespace {
 
 class AMDGPUPassConfig : public TargetPassConfig {
 public:
-  AMDGPUPassConfig(TargetMachine *TM, PassManagerBase &PM)
+  AMDGPUPassConfig(LLVMTargetMachine &TM, PassManagerBase &PM)
     : TargetPassConfig(TM, PM) {
     // Exceptions and StackMaps are not supported, so these passes will never do
     // anything.
@@ -487,7 +488,7 @@ public:
 
 class R600PassConfig final : public AMDGPUPassConfig {
 public:
-  R600PassConfig(TargetMachine *TM, PassManagerBase &PM)
+  R600PassConfig(LLVMTargetMachine &TM, PassManagerBase &PM)
     : AMDGPUPassConfig(TM, PM) {}
 
   ScheduleDAGInstrs *createMachineScheduler(
@@ -503,7 +504,7 @@ public:
 
 class GCNPassConfig final : public AMDGPUPassConfig {
 public:
-  GCNPassConfig(TargetMachine *TM, PassManagerBase &PM)
+  GCNPassConfig(LLVMTargetMachine &TM, PassManagerBase &PM)
     : AMDGPUPassConfig(TM, PM) {}
 
   GCNTargetMachine &getGCNTargetMachine() const {
@@ -682,7 +683,7 @@ void R600PassConfig::addPreEmitPass() {
 }
 
 TargetPassConfig *R600TargetMachine::createPassConfig(PassManagerBase &PM) {
-  return new R600PassConfig(this, PM);
+  return new R600PassConfig(*this, PM);
 }
 
 //===----------------------------------------------------------------------===//
@@ -733,11 +734,14 @@ void GCNPassConfig::addMachineSSAOptimization() {
   addPass(&SIFoldOperandsID);
   addPass(&DeadMachineInstructionElimID);
   addPass(&SILoadStoreOptimizerID);
-  addPass(createSIShrinkInstructionsPass());
   if (EnableSDWAPeephole) {
     addPass(&SIPeepholeSDWAID);
+    addPass(&MachineLICMID);
+    addPass(&MachineCSEID);
+    addPass(&SIFoldOperandsID);
     addPass(&DeadMachineInstructionElimID);
   }
+  addPass(createSIShrinkInstructionsPass());
 }
 
 bool GCNPassConfig::addILPOpts() {
@@ -841,6 +845,6 @@ void GCNPassConfig::addPreEmitPass() {
 }
 
 TargetPassConfig *GCNTargetMachine::createPassConfig(PassManagerBase &PM) {
-  return new GCNPassConfig(this, PM);
+  return new GCNPassConfig(*this, PM);
 }
 

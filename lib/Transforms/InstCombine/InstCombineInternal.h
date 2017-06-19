@@ -21,6 +21,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/TargetFolder.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
@@ -29,7 +30,6 @@
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/Dwarf.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Transforms/InstCombine/InstCombineWorklist.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -447,12 +447,14 @@ private:
   Instruction::CastOps isEliminableCastPair(const CastInst *CI1,
                                             const CastInst *CI2);
 
-  Value *foldAndOfICmps(ICmpInst *LHS, ICmpInst *RHS);
+  Value *foldAndOfICmps(ICmpInst *LHS, ICmpInst *RHS, Instruction &CxtI);
   Value *foldAndOfFCmps(FCmpInst *LHS, FCmpInst *RHS);
-  Value *foldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS, Instruction *CxtI);
+  Value *foldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS, Instruction &CxtI);
   Value *foldOrOfFCmps(FCmpInst *LHS, FCmpInst *RHS);
   Value *foldXorOfICmps(ICmpInst *LHS, ICmpInst *RHS);
 
+  Value *foldAndOrOfICmpsOfAndWithPow2(ICmpInst *LHS, ICmpInst *RHS,
+                                       bool JoinedByAnd, Instruction &CxtI);
 public:
   /// \brief Inserts an instruction \p New before instruction \p Old
   ///
@@ -538,6 +540,12 @@ public:
   KnownBits computeKnownBits(const Value *V, unsigned Depth,
                              const Instruction *CxtI) const {
     return llvm::computeKnownBits(V, DL, Depth, &AC, CxtI, &DT);
+  }
+
+  bool isKnownToBeAPowerOfTwo(const Value *V, bool OrZero = false,
+                              unsigned Depth = 0,
+                              const Instruction *CxtI = nullptr) {
+    return llvm::isKnownToBeAPowerOfTwo(V, DL, OrZero, Depth, &AC, CxtI, &DT);
   }
 
   bool MaskedValueIsZero(const Value *V, const APInt &Mask, unsigned Depth = 0,
@@ -718,7 +726,8 @@ private:
   Instruction *MatchBSwap(BinaryOperator &I);
   bool SimplifyStoreAtEndOfBlock(StoreInst &SI);
 
-  Instruction *SimplifyElementAtomicMemCpy(ElementAtomicMemCpyInst *AMI);
+  Instruction *
+  SimplifyElementUnorderedAtomicMemCpy(ElementUnorderedAtomicMemCpyInst *AMI);
   Instruction *SimplifyMemTransfer(MemIntrinsic *MI);
   Instruction *SimplifyMemSet(MemSetInst *MI);
 

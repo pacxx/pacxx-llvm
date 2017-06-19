@@ -46,10 +46,18 @@ def SDT_PPCVecSplat : SDTypeProfile<1, 2, [ SDTCisVec<0>,
 ]>;
 
 def SDT_PPCVecShift : SDTypeProfile<1, 3, [ SDTCisVec<0>,
-  SDTCisVec<1>, SDTCisVec<2>, SDTCisInt<3>
+  SDTCisVec<1>, SDTCisVec<2>, SDTCisPtrTy<3>
 ]>;
 
 def SDT_PPCVecInsert : SDTypeProfile<1, 3, [ SDTCisVec<0>,
+  SDTCisVec<1>, SDTCisVec<2>, SDTCisInt<3>
+]>;
+
+def SDT_PPCVecReverse: SDTypeProfile<1, 1, [ SDTCisVec<0>,
+  SDTCisVec<1>
+]>;
+
+def SDT_PPCxxpermdi: SDTypeProfile<1, 3, [ SDTCisVec<0>,
   SDTCisVec<1>, SDTCisVec<2>, SDTCisInt<3>
 ]>;
 
@@ -170,6 +178,8 @@ def PPCaddiDtprelL   : SDNode<"PPCISD::ADDI_DTPREL_L", SDTIntBinOp>;
 def PPCvperm     : SDNode<"PPCISD::VPERM", SDT_PPCvperm, []>;
 def PPCxxsplt    : SDNode<"PPCISD::XXSPLT", SDT_PPCVecSplat, []>;
 def PPCxxinsert  : SDNode<"PPCISD::XXINSERT", SDT_PPCVecInsert, []>;
+def PPCxxreverse : SDNode<"PPCISD::XXREVERSE", SDT_PPCVecReverse, []>;
+def PPCxxpermdi  : SDNode<"PPCISD::XXPERMDI", SDT_PPCxxpermdi, []>;
 def PPCvecshl    : SDNode<"PPCISD::VECSHL", SDT_PPCVecShift, []>;
 
 def PPCqvfperm   : SDNode<"PPCISD::QVFPERM", SDT_PPCqvfperm, []>;
@@ -2539,6 +2549,14 @@ let Uses = [RM] in {
                       "mffs. $rT", IIC_IntMFFS, []>, isDOT;
 }
 
+let Predicates = [IsISA3_0] in {
+def MODSW : XForm_8<31, 779, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
+                        "modsw $rT, $rA, $rB", IIC_IntDivW,
+                        [(set i32:$rT, (srem i32:$rA, i32:$rB))]>;
+def MODUW : XForm_8<31, 267, (outs gprc:$rT), (ins gprc:$rA, gprc:$rB),
+                        "moduw $rT, $rA, $rB", IIC_IntDivW,
+                        [(set i32:$rT, (urem i32:$rA, i32:$rB))]>;
+}
 
 let PPC970_Unit = 1, hasSideEffects = 0 in {  // FXU Operations.
 // XO-Form instructions.  Arithmetic instructions that can set overflow bit

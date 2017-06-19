@@ -383,6 +383,14 @@ def SendMsgMatchClass : AsmOperandClass {
   let RenderMethod = "addImmOperands";
 }
 
+def SwizzleMatchClass : AsmOperandClass {
+  let Name = "Swizzle";
+  let PredicateMethod = "isSwizzle";
+  let ParserMethod = "parseSwizzleOp";
+  let RenderMethod = "addImmOperands";
+  let IsOptional = 1;
+}
+
 def ExpTgtMatchClass : AsmOperandClass {
   let Name = "ExpTgt";
   let PredicateMethod = "isExpTgt";
@@ -393,6 +401,11 @@ def ExpTgtMatchClass : AsmOperandClass {
 def SendMsgImm : Operand<i32> {
   let PrintMethod = "printSendMsg";
   let ParserMatchClass = SendMsgMatchClass;
+}
+
+def SwizzleImm : Operand<i16> {
+  let PrintMethod = "printSwizzle";
+  let ParserMatchClass = SwizzleMatchClass;
 }
 
 def SWaitMatchClass : AsmOperandClass {
@@ -439,16 +452,25 @@ def ExpSrc3 : RegisterOperand<VGPR_32> {
   let ParserMatchClass = VReg32OrOffClass;
 }
 
-def SDWA9Src : RegisterOperand<VS_32> {
+class SDWA9Src : RegisterOperand<VS_32> {
   let OperandNamespace = "AMDGPU";
   let OperandType = "OPERAND_SDWA9_SRC";
   let EncoderMethod = "getSDWA9SrcEncoding";
+}
+
+def SDWA9Src32 : SDWA9Src {
+  let DecoderMethod = "decodeSDWA9Src32";
+}
+
+def SDWA9Src16 : SDWA9Src {
+  let DecoderMethod = "decodeSDWA9Src16";
 }
 
 def SDWA9VopcDst : VOPDstOperand<SReg_64> {
   let OperandNamespace = "AMDGPU";
   let OperandType = "OPERAND_SDWA9_VOPC_DST";
   let EncoderMethod = "getSDWA9VopcDstEncoding";
+  let DecoderMethod = "decodeSDWA9VopcDst";
 }
 
 class NamedMatchClass<string CName, bit Optional = 1> : AsmOperandClass {
@@ -470,7 +492,17 @@ class NamedOperandU8<string Name, AsmOperandClass MatchClass> : Operand<i8> {
   let ParserMatchClass = MatchClass;
 }
 
+class NamedOperandU12<string Name, AsmOperandClass MatchClass> : Operand<i16> {
+  let PrintMethod = "print"#Name;
+  let ParserMatchClass = MatchClass;
+}
+
 class NamedOperandU16<string Name, AsmOperandClass MatchClass> : Operand<i16> {
+  let PrintMethod = "print"#Name;
+  let ParserMatchClass = MatchClass;
+}
+
+class NamedOperandS13<string Name, AsmOperandClass MatchClass> : Operand<i16> {
   let PrintMethod = "print"#Name;
   let ParserMatchClass = MatchClass;
 }
@@ -492,6 +524,8 @@ def offen : NamedOperandBit<"Offen", NamedMatchClass<"Offen">>;
 def idxen : NamedOperandBit<"Idxen", NamedMatchClass<"Idxen">>;
 def addr64 : NamedOperandBit<"Addr64", NamedMatchClass<"Addr64">>;
 
+def offset_u12 : NamedOperandU12<"Offset", NamedMatchClass<"OffsetU12">>;
+def offset_s13 : NamedOperandS13<"Offset", NamedMatchClass<"OffsetS13">>;
 def offset : NamedOperandU16<"Offset", NamedMatchClass<"Offset">>;
 def offset0 : NamedOperandU8<"Offset0", NamedMatchClass<"Offset0">>;
 def offset1 : NamedOperandU8<"Offset1", NamedMatchClass<"Offset1">>;
@@ -862,6 +896,10 @@ class getVOPSrc0ForVT<ValueType VT> {
 class getVregSrcForVT<ValueType VT> {
   RegisterClass ret = !if(!eq(VT.Size, 128), VReg_128,
                         !if(!eq(VT.Size, 64), VReg_64, VGPR_32));
+}
+
+class getSDWA9SrcForVT <ValueType VT> {
+  RegisterOperand ret = !if(!eq(VT.Size, 16), SDWA9Src16, SDWA9Src32);
 }
 
 // Returns the register class to use for sources of VOP3 instructions for the
@@ -1360,8 +1398,8 @@ class VOPProfile <list<ValueType> _ArgVT> {
   field RegisterClass Src1DPP = getVregSrcForVT<Src1VT>.ret;
   field RegisterClass Src0SDWA = getVregSrcForVT<Src0VT>.ret;
   field RegisterClass Src1SDWA = getVregSrcForVT<Src1VT>.ret;
-  field RegisterOperand Src0SDWA9 = SDWA9Src;
-  field RegisterOperand Src1SDWA9 = SDWA9Src;
+  field RegisterOperand Src0SDWA9 = getSDWA9SrcForVT<Src0VT>.ret;
+  field RegisterOperand Src1SDWA9 = getSDWA9SrcForVT<Src0VT>.ret;
   field Operand Src0Mod = getSrcMod<Src0VT>.ret;
   field Operand Src1Mod = getSrcMod<Src1VT>.ret;
   field Operand Src2Mod = getSrcMod<Src2VT>.ret;

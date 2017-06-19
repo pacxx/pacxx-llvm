@@ -85,20 +85,6 @@ static bool isCallingConvCCompatible(CallInst *CI) {
   return false;
 }
 
-/// Return true if it only matters that the value is equal or not-equal to zero.
-static bool isOnlyUsedInZeroEqualityComparison(Value *V) {
-  for (User *U : V->users()) {
-    if (ICmpInst *IC = dyn_cast<ICmpInst>(U))
-      if (IC->isEquality())
-        if (Constant *C = dyn_cast<Constant>(IC->getOperand(1)))
-          if (C->isNullValue())
-            continue;
-    // Unknown instruction.
-    return false;
-  }
-  return true;
-}
-
 /// Return true if it is only used in equality comparisons with With.
 static bool isOnlyUsedInEqualityComparison(Value *V, Value *With) {
   for (User *U : V->users()) {
@@ -466,9 +452,7 @@ Value *LibCallSimplifier::optimizeStringLength(CallInst *CI, IRBuilder<> &B,
       }
 
       Value *Offset = GEP->getOperand(2);
-      unsigned BitWidth = Offset->getType()->getIntegerBitWidth();
-      KnownBits Known(BitWidth);
-      computeKnownBits(Offset, Known, DL, 0, nullptr, CI, nullptr);
+      KnownBits Known = computeKnownBits(Offset, DL, 0, nullptr, CI, nullptr);
       Known.Zero.flipAllBits();
       uint64_t ArrSize =
              cast<ArrayType>(GEP->getSourceElementType())->getNumElements();
@@ -754,8 +738,8 @@ Value *LibCallSimplifier::optimizeMemCmp(CallInst *CI, IRBuilder<> &B) {
   ConstantInt *LenC = dyn_cast<ConstantInt>(CI->getArgOperand(2));
   if (!LenC)
     return nullptr;
-  uint64_t Len = LenC->getZExtValue();
 
+  uint64_t Len = LenC->getZExtValue();
   if (Len == 0) // memcmp(s1,s2,0) -> 0
     return Constant::getNullValue(CI->getType());
 

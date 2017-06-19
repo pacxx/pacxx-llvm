@@ -30,11 +30,17 @@
 #define LLVM_INCLUDE_LLVM_OBJECT_RESFILE_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/Binary.h"
+#include "llvm/Object/Error.h"
 #include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/BinaryStreamReader.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ScopedPrinter.h"
+
+#include <map>
 
 namespace llvm {
 namespace object {
@@ -44,23 +50,48 @@ class WindowsResource;
 class ResourceEntryRef {
 public:
   Error moveNext(bool &End);
+  bool checkTypeString() const { return IsStringType; }
+  ArrayRef<UTF16> getTypeString() const { return Type; }
+  uint16_t getTypeID() const { return TypeID; }
+  bool checkNameString() const { return IsStringName; }
+  ArrayRef<UTF16> getNameString() const { return Name; }
+  uint16_t getNameID() const { return NameID; }
+  uint16_t getLanguage() const { return Suffix->Language; }
+  uint16_t getMajorVersion() const { return Suffix->Version >> 16; }
+  uint16_t getMinorVersion() const { return Suffix->Version; }
+  uint32_t getCharacteristics() const { return Suffix->Characteristics; }
+  ArrayRef<uint8_t> getData() const { return Data; }
 
 private:
   friend class WindowsResource;
 
   ResourceEntryRef(BinaryStreamRef Ref, const WindowsResource *Owner,
                    Error &Err);
+
   Error loadNext();
 
+  struct HeaderSuffix {
+    support::ulittle32_t DataVersion;
+    support::ulittle16_t MemoryFlags;
+    support::ulittle16_t Language;
+    support::ulittle32_t Version;
+    support::ulittle32_t Characteristics;
+  };
+
   BinaryStreamReader Reader;
-  BinaryStreamRef HeaderBytes;
-  BinaryStreamRef DataBytes;
+  bool IsStringType;
+  ArrayRef<UTF16> Type;
+  uint16_t TypeID;
+  bool IsStringName;
+  ArrayRef<UTF16> Name;
+  uint16_t NameID;
+  const HeaderSuffix *Suffix = nullptr;
+  ArrayRef<uint8_t> Data;
   const WindowsResource *OwningRes = nullptr;
 };
 
 class WindowsResource : public Binary {
 public:
-  ~WindowsResource() override;
   Expected<ResourceEntryRef> getHeadEntry();
 
   static bool classof(const Binary *V) { return V->isWinRes(); }
@@ -75,6 +106,82 @@ private:
 
   BinaryByteStream BBS;
 };
+
+class WindowsResourceParser {
+public:
+  class TreeNode;
+  WindowsResourceParser();
+  Error parse(WindowsResource *WR);
+  void printTree(raw_ostream &OS) const;
+  const TreeNode &getTree() const { return Root; }
+  const ArrayRef<std::vector<uint8_t>> getData() const { return Data; }
+  const ArrayRef<std::vector<UTF16>> getStringTable() const {
+    return StringTable;
+  }
+
+  class TreeNode {
+  public:
+    template <typename T>
+    using Children = std::map<T, std::unique_ptr<TreeNode>>;
+
+    void print(ScopedPrinter &Writer, StringRef Name) const;
+    uint32_t getTreeSize() const;
+    uint32_t getStringIndex() const { return StringIndex; }
+    uint32_t getDataIndex() const { return DataIndex; }
+    uint16_t getMajorVersion() const { return MajorVersion; }
+    uint16_t getMinorVersion() const { return MinorVersion; }
+    uint32_t getCharacteristics() const { return Characteristics; }
+    bool checkIsDataNode() const { return IsDataNode; }
+    const Children<uint32_t> &getIDChildren() const { return IDChildren; }
+    const Children<std::string> &getStringChildren() const {
+      return StringChildren;
+    }
+
+  private:
+    friend class WindowsResourceParser;
+
+    static uint32_t StringCount;
+    static uint32_t DataCount;
+
+    static std::unique_ptr<TreeNode> createStringNode();
+    static std::unique_ptr<TreeNode> createIDNode();
+    static std::unique_ptr<TreeNode> createDataNode(uint16_t MajorVersion,
+                                                    uint16_t MinorVersion,
+                                                    uint32_t Characteristics);
+
+    explicit TreeNode(bool IsStringNode);
+    TreeNode(uint16_t MajorVersion, uint16_t MinorVersion,
+             uint32_t Characteristics);
+
+    void addEntry(const ResourceEntryRef &Entry, bool &IsNewTypeString,
+                  bool &IsNewNameString);
+    TreeNode &addTypeNode(const ResourceEntryRef &Entry, bool &IsNewTypeString);
+    TreeNode &addNameNode(const ResourceEntryRef &Entry, bool &IsNewNameString);
+    TreeNode &addLanguageNode(const ResourceEntryRef &Entry);
+    TreeNode &addChild(uint32_t ID, bool IsDataNode = false,
+                       uint16_t MajorVersion = 0, uint16_t MinorVersion = 0,
+                       uint32_t Characteristics = 0);
+    TreeNode &addChild(ArrayRef<UTF16> NameRef, bool &IsNewString);
+
+    bool IsDataNode = false;
+    uint32_t StringIndex;
+    uint32_t DataIndex;
+    Children<uint32_t> IDChildren;
+    Children<std::string> StringChildren;
+    uint16_t MajorVersion = 0;
+    uint16_t MinorVersion = 0;
+    uint32_t Characteristics = 0;
+  };
+
+private:
+  TreeNode Root;
+  std::vector<std::vector<uint8_t>> Data;
+  std::vector<std::vector<UTF16>> StringTable;
+};
+
+Error writeWindowsResourceCOFF(std::unique_ptr<MemoryBuffer> &OutputBuffer,
+                               llvm::COFF::MachineTypes MachineType,
+                               const WindowsResourceParser &Parser);
 
 } // namespace object
 } // namespace llvm

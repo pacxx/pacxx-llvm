@@ -58,10 +58,11 @@ class Expression {
 private:
   ExpressionType EType;
   unsigned Opcode;
+  mutable hash_code HashVal;
 
 public:
   Expression(ExpressionType ET = ET_Base, unsigned O = ~2U)
-      : EType(ET), Opcode(O) {}
+      : EType(ET), Opcode(O), HashVal(0) {}
   Expression(const Expression &) = delete;
   Expression &operator=(const Expression &) = delete;
   virtual ~Expression();
@@ -82,8 +83,21 @@ public:
 
     return equals(Other);
   }
+  hash_code getComputedHash() const {
+    // It's theoretically possible for a thing to hash to zero.  In that case,
+    // we will just compute the hash a few extra times, which is no worse that
+    // we did before, which was to compute it always.
+    if (static_cast<unsigned>(HashVal) == 0)
+      HashVal = getHashValue();
+    return HashVal;
+  }
 
   virtual bool equals(const Expression &Other) const { return true; }
+  // Return true if the two expressions are exactly the same, including the
+  // normally ignored fields.
+  virtual bool exactlyEquals(const Expression &Other) const {
+    return getExpressionType() == Other.getExpressionType() && equals(Other);
+  }
 
   unsigned getOpcode() const { return Opcode; }
   void setOpcode(unsigned opcode) { Opcode = opcode; }
@@ -107,10 +121,7 @@ public:
     OS << "}";
   }
 
-  LLVM_DUMP_METHOD void dump() const {
-    print(dbgs());
-    dbgs() << "\n";
-  }
+  LLVM_DUMP_METHOD void dump() const;
 };
 
 inline raw_ostream &operator<<(raw_ostream &OS, const Expression &E) {
@@ -336,6 +347,10 @@ public:
   void setAlignment(unsigned Align) { Alignment = Align; }
 
   bool equals(const Expression &Other) const override;
+  bool exactlyEquals(const Expression &Other) const override {
+    return Expression::exactlyEquals(Other) &&
+           cast<LoadExpression>(Other).getLoadInst() == getLoadInst();
+  }
 
   //
   // Debugging support
@@ -373,6 +388,10 @@ public:
   Value *getStoredValue() const { return StoredValue; }
 
   bool equals(const Expression &Other) const override;
+  bool exactlyEquals(const Expression &Other) const override {
+    return Expression::exactlyEquals(Other) &&
+           cast<StoreExpression>(Other).getStoreInst() == getStoreInst();
+  }
 
   // Debugging support
   //

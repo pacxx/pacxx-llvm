@@ -11,14 +11,14 @@
 #define LLVM_DEBUGINFO_DWARFDIE_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/ADT/iterator_range.h"
-#include "llvm/ADT/Optional.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/DebugInfo/DIContext.h"
 #include "llvm/DebugInfo/DWARF/DWARFAttribute.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugInfoEntry.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
-#include "llvm/Support/Dwarf.h"
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -120,7 +120,8 @@ public:
   /// \param recurseDepth the depth to recurse to when dumping this DIE and its
   /// children.
   /// \param indent the number of characters to indent each line that is output.
-  void dump(raw_ostream &OS, unsigned recurseDepth, unsigned indent = 0) const;
+  void dump(raw_ostream &OS, unsigned recurseDepth, unsigned indent = 0,
+            DIDumpOptions DumpOpts = DIDumpOptions()) const;
 
   /// Extract the specified attribute from this DIE.
   ///
@@ -195,7 +196,8 @@ public:
 
   /// Retrieves DW_AT_low_pc and DW_AT_high_pc from CU.
   /// Returns true if both attributes are present.
-  bool getLowAndHighPC(uint64_t &LowPC, uint64_t &HighPC) const;
+  bool getLowAndHighPC(uint64_t &LowPC, uint64_t &HighPC,
+                       uint64_t &SectionIndex) const;
 
   /// Get the address ranges for this DIE.
   ///

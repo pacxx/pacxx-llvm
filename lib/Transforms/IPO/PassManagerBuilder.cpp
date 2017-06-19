@@ -141,6 +141,10 @@ static cl::opt<int> PreInlineThreshold(
     cl::desc("Control the amount of inlining in pre-instrumentation inliner "
              "(default = 75)"));
 
+static cl::opt<bool> EnableEarlyCSEMemSSA(
+    "enable-earlycse-memssa", cl::init(false), cl::Hidden,
+    cl::desc("Enable the EarlyCSE w/ MemorySSA pass (default = off)"));
+
 static cl::opt<bool> EnableGVNHoist(
     "enable-gvn-hoist", cl::init(false), cl::Hidden,
     cl::desc("Enable the GVN hoisting pass (default = off)"));
@@ -154,6 +158,10 @@ static cl::opt<bool>
     EnableSimpleLoopUnswitch("enable-simple-loop-unswitch", cl::init(false),
                              cl::Hidden,
                              cl::desc("Enable the simple loop unswitch pass."));
+
+static cl::opt<bool> EnableGVNSink(
+    "enable-gvn-sink", cl::init(false), cl::Hidden,
+    cl::desc("Enable the GVN sinking pass (default = off)"));
 
 PassManagerBuilder::PassManagerBuilder() {
     OptLevel = 2;
@@ -304,9 +312,14 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
   // Start of function pass.
   // Break up aggregate allocas, using SSAUpdater.
   MPM.add(createSROAPass());
-  MPM.add(createEarlyCSEPass());              // Catch trivial redundancies
+  MPM.add(createEarlyCSEPass(EnableEarlyCSEMemSSA)); // Catch trivial redundancies
   if (EnableGVNHoist)
     MPM.add(createGVNHoistPass());
+  if (EnableGVNSink) {
+    MPM.add(createGVNSinkPass());
+    MPM.add(createCFGSimplificationPass());
+  }
+
   // Speculative execution if the target has divergent branches; otherwise nop.
   MPM.add(createSpeculativeExecutionIfHasBranchDivergencePass());
   MPM.add(createJumpThreadingPass());         // Thread jumps.
@@ -904,6 +917,12 @@ void PassManagerBuilder::populateLTOPassManager(legacy::PassManagerBase &PM) {
 
   if (OptLevel != 0)
     addLTOOptimizationPasses(PM);
+  else {
+    // The whole-program-devirt pass needs to run at -O0 because only it knows
+    // about the llvm.type.checked.load intrinsic: it needs to both lower the
+    // intrinsic itself and handle it in the summary.
+    PM.add(createWholeProgramDevirtPass(ExportSummary, nullptr));
+  }
 
   // Create a function that performs CFI checks for cross-DSO calls with targets
   // in the current module.

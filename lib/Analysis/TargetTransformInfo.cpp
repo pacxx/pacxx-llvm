@@ -103,6 +103,10 @@ bool TargetTransformInfo::isSourceOfDivergence(const Value *V) const {
   return TTIImpl->isSourceOfDivergence(V);
 }
 
+bool llvm::TargetTransformInfo::isAlwaysUniform(const Value *V) const {
+  return TTIImpl->isAlwaysUniform(V);
+}
+
 unsigned TargetTransformInfo::getFlatAddressSpace() const {
   return TTIImpl->getFlatAddressSpace();
 }
@@ -133,6 +137,10 @@ bool TargetTransformInfo::isLegalAddressingMode(Type *Ty, GlobalValue *BaseGV,
                                         Scale, AddrSpace);
 }
 
+bool TargetTransformInfo::isLSRCostLess(LSRCost &C1, LSRCost &C2) const {
+  return TTIImpl->isLSRCostLess(C1, C2);
+}
+
 bool TargetTransformInfo::isLegalMaskedStore(Type *DataType) const {
   return TTIImpl->isLegalMaskedStore(DataType);
 }
@@ -147,6 +155,10 @@ bool TargetTransformInfo::isLegalMaskedGather(Type *DataType) const {
 
 bool TargetTransformInfo::isLegalMaskedScatter(Type *DataType) const {
   return TTIImpl->isLegalMaskedGather(DataType);
+}
+
+bool TargetTransformInfo::prefersVectorizedAddressing() const {
+  return TTIImpl->prefersVectorizedAddressing();
 }
 
 int TargetTransformInfo::getScalingFactorCost(Type *Ty, GlobalValue *BaseGV,
@@ -209,6 +221,10 @@ bool TargetTransformInfo::supportsEfficientVectorElementLoadStore() const {
 
 bool TargetTransformInfo::enableAggressiveInterleaving(bool LoopHasReductions) const {
   return TTIImpl->enableAggressiveInterleaving(LoopHasReductions);
+}
+
+bool TargetTransformInfo::expandMemCmp(Instruction *I, unsigned &MaxLoadSize) const {
+  return TTIImpl->expandMemCmp(I, MaxLoadSize);
 }
 
 bool TargetTransformInfo::enableInterleavedAccessVectorization() const {
@@ -454,6 +470,10 @@ TargetTransformInfo::getCostOfKeepingLiveOverCall(ArrayRef<Type *> Tys) const {
 bool TargetTransformInfo::getTgtMemIntrinsic(IntrinsicInst *Inst,
                                              MemIntrinsicInfo &Info) const {
   return TTIImpl->getTgtMemIntrinsic(Inst, Info);
+}
+
+unsigned TargetTransformInfo::getAtomicMemIntrinsicMaxElementSize() const {
+  return TTIImpl->getAtomicMemIntrinsicMaxElementSize();
 }
 
 Value *TargetTransformInfo::getOrCreateResultFromMemIntrinsic(

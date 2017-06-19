@@ -16,8 +16,8 @@
 #define LLVM_LINKALLPASSES_H
 
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/AliasAnalysisEvaluator.h"
+#include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/CFLAndersAliasAnalysis.h"
 #include "llvm/Analysis/CFLSteensAliasAnalysis.h"
@@ -38,6 +38,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRPrintingPasses.h"
+#include "llvm/Support/Valgrind.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
@@ -48,8 +49,6 @@
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
 #include "llvm/Transforms/Vectorize.h"
-#include "llvm/Transforms/PACXXTransforms.h"
-#include "llvm/Support/Valgrind.h"
 #include <cstdlib>
 
 namespace {
@@ -208,7 +207,7 @@ namespace {
       (void) llvm::createFloat2IntPass();
       (void) llvm::createEliminateAvailableExternallyPass();
       (void) llvm::createScalarizeMaskedMemIntrinPass();
-
+      // PACXX transformation passes
       (void) llvm::createPACXXReflectionPass();
       (void) llvm::createPACXXReflectionCleanerPass();
       (void) llvm::createPACXXReflectionRemoverPass();
@@ -220,6 +219,17 @@ namespace {
       (void) llvm::createPACXXVerifier();
       (void) llvm::createPACXXInlinerPass();
       (void) llvm::createPACXXDeadCodeElimPass();
+      //native backend passes
+      (void) llvm::createPACXXAddrSpaceTransformPass();
+      (void) llvm::createPACXXIdRemoverPass();
+      (void) llvm::createSPMDVectorizerPass();
+      (void) llvm::createPACXXNativeBarrierPass();
+      (void) llvm::createPACXXLivenessAnalyzerPass();
+      (void) llvm::createPACXXNativeLinkerPass();
+      (void) llvm::createPACXXNativeSMPass();
+      (void) llvm::createPACXXIntrinsicSchedulerPass();
+      (void) llvm::createPACXXTargetSelectPass({});
+      (void) llvm::createPACXXGEPPass();
 
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();
@@ -231,19 +241,6 @@ namespace {
       llvm::AliasSetTracker X(AA);
       X.add(nullptr, 0, llvm::AAMDNodes()); // for -print-alias-sets
       (void) llvm::AreStatisticsEnabled();
-
-      //native backend passes
-      (void) llvm::createPACXXAddrSpaceTransformPass();
-      (void) llvm::createPACXXIdRemoverPass();
-      (void) llvm::createSPMDVectorizerPass();
-      (void) llvm::createPACXXNativeBarrierPass();
-      (void) llvm::createPACXXLivenessAnalyzerPass();
-      (void) llvm::createPACXXNativeLinkerPass();
-      (void) llvm::createPACXXNativeSMPass();
-      (void) llvm::createPACXXIntrinsicSchedulerPass();
-
-      (void) llvm::createPACXXTargetSelectPass({});
-      (void) llvm::createPACXXGEPPass();
       (void) llvm::sys::RunningOnValgrind();
     }
   } ForcePassLinking; // Force link by creating a global definition.

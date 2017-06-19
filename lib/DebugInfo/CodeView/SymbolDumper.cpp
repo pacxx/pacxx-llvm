@@ -11,8 +11,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/DebugInfo/CodeView/CVSymbolVisitor.h"
+#include "llvm/DebugInfo/CodeView/DebugStringTableSubsection.h"
 #include "llvm/DebugInfo/CodeView/EnumTables.h"
-#include "llvm/DebugInfo/CodeView/StringTable.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/CodeView/SymbolDumpDelegate.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
@@ -41,7 +41,7 @@ public:
 #define SYMBOL_RECORD(EnumName, EnumVal, Name)                                 \
   Error visitKnownRecord(CVSymbol &CVR, Name &Record) override;
 #define SYMBOL_RECORD_ALIAS(EnumName, EnumVal, Name, AliasName)
-#include "llvm/DebugInfo/CodeView/CVSymbolTypes.def"
+#include "llvm/DebugInfo/CodeView/CodeViewSymbols.def"
 
   Error visitSymbolBegin(CVSymbol &Record) override;
   Error visitSymbolEnd(CVSymbol &Record) override;
@@ -212,7 +212,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
 Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
                                            FileStaticSym &FileStatic) {
   DictScope S(W, "FileStatic");
-  W.printNumber("Index", FileStatic.Index);
+  printTypeIndex("Index", FileStatic.Index);
   W.printNumber("ModFilenameOffset", FileStatic.ModFilenameOffset);
   W.printFlags("Flags", uint16_t(FileStatic.Flags), getLocalFlagNames());
   W.printString("Name", FileStatic.Name);
@@ -369,7 +369,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(
   DictScope S(W, "DefRangeSubfield");
 
   if (ObjDelegate) {
-    StringTableRef Strings = ObjDelegate->getStringTable();
+    DebugStringTableSubsectionRef Strings = ObjDelegate->getStringTable();
     auto ExpectedProgram = Strings.getString(DefRangeSubfield.Program);
     if (!ExpectedProgram) {
       consumeError(ExpectedProgram.takeError());
@@ -390,7 +390,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
   DictScope S(W, "DefRange");
 
   if (ObjDelegate) {
-    StringTableRef Strings = ObjDelegate->getStringTable();
+    DebugStringTableSubsectionRef Strings = ObjDelegate->getStringTable();
     auto ExpectedProgram = Strings.getString(DefRange.Program);
     if (!ExpectedProgram) {
       consumeError(ExpectedProgram.takeError());
@@ -516,7 +516,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
 Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
                                            RegisterSym &Register) {
   DictScope S(W, "RegisterSym");
-  W.printNumber("Type", Register.Index);
+  printTypeIndex("Type", Register.Index);
   W.printEnum("Seg", uint16_t(Register.Register), getRegisterNames());
   W.printString("Name", Register.Name);
   return Error::success();
@@ -524,7 +524,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
 
 Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR, PublicSym32 &Public) {
   DictScope S(W, "PublicSym");
-  W.printNumber("Type", Public.Index);
+  printTypeIndex("Type", Public.Index);
   W.printNumber("Seg", Public.Segment);
   W.printNumber("Off", Public.Offset);
   W.printString("Name", Public.Name);
@@ -631,7 +631,7 @@ Error CVSymbolDumperImpl::visitKnownRecord(CVSymbol &CVR,
 
   W.printHex("Offset", RegRel.Offset);
   printTypeIndex("Type", RegRel.Type);
-  W.printHex("Register", RegRel.Register);
+  W.printEnum("Register", uint16_t(RegRel.Register), getRegisterNames());
   W.printString("VarName", RegRel.Name);
   return Error::success();
 }
@@ -668,7 +668,7 @@ Error CVSymbolDumperImpl::visitUnknownSymbol(CVSymbol &CVR) {
 
 Error CVSymbolDumper::dump(CVRecord<SymbolKind> &Record) {
   SymbolVisitorCallbackPipeline Pipeline;
-  SymbolDeserializer Deserializer(ObjDelegate.get());
+  SymbolDeserializer Deserializer(ObjDelegate.get(), Container);
   CVSymbolDumperImpl Dumper(Types, ObjDelegate.get(), W, PrintRecordBytes);
 
   Pipeline.addCallbackToPipeline(Deserializer);
@@ -679,7 +679,7 @@ Error CVSymbolDumper::dump(CVRecord<SymbolKind> &Record) {
 
 Error CVSymbolDumper::dump(const CVSymbolArray &Symbols) {
   SymbolVisitorCallbackPipeline Pipeline;
-  SymbolDeserializer Deserializer(ObjDelegate.get());
+  SymbolDeserializer Deserializer(ObjDelegate.get(), Container);
   CVSymbolDumperImpl Dumper(Types, ObjDelegate.get(), W, PrintRecordBytes);
 
   Pipeline.addCallbackToPipeline(Deserializer);

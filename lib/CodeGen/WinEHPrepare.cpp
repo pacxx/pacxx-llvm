@@ -16,13 +16,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/CodeGen/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/WinEHFuncInfo.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/MCSymbol.h"
@@ -94,7 +94,7 @@ private:
 } // end anonymous namespace
 
 char WinEHPrepare::ID = 0;
-INITIALIZE_PASS(WinEHPrepare, "winehprepare", "Prepare Windows exceptions",
+INITIALIZE_PASS(WinEHPrepare, DEBUG_TYPE, "Prepare Windows exceptions",
                 false, false)
 
 FunctionPass *llvm::createWinEHPass() { return new WinEHPrepare(); }

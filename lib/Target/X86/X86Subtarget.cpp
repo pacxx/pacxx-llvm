@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MCTargetDesc/X86BaseInfo.h"
 #include "X86Subtarget.h"
+#include "MCTargetDesc/X86BaseInfo.h"
 #include "X86TargetMachine.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/IR/Attributes.h"
@@ -286,6 +286,7 @@ void X86Subtarget::initializeEnvironment() {
   HasCDI = false;
   HasPFI = false;
   HasDQI = false;
+  HasVPOPCNTDQ = false;
   HasBWI = false;
   HasVLX = false;
   HasADX = false;

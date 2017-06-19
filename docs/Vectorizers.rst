@@ -44,12 +44,12 @@ Users can control the vectorization SIMD width using the command line flag "-for
   $ clang  -mllvm -force-vector-width=8 ...
   $ opt -loop-vectorize -force-vector-width=8 ...
 
-Users can control the unroll factor using the command line flag "-force-vector-unroll"
+Users can control the unroll factor using the command line flag "-force-vector-interleave"
 
 .. code-block:: console
 
-  $ clang  -mllvm -force-vector-unroll=2 ...
-  $ opt -loop-vectorize -force-vector-unroll=2 ...
+  $ clang  -mllvm -force-vector-interleave=2 ...
+  $ opt -loop-vectorize -force-vector-interleave=2 ...
 
 Pragma loop hint directives
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -381,6 +381,17 @@ The Y-axis shows the time in msec. Lower is better. The last column shows the ge
 And Linpack-pc with the same configuration. Result is Mflops, higher is better.
 
 .. image:: linpack-pc.png
+
+Ongoing Development Directions
+------------------------------
+
+.. toctree::
+   :hidden:
+
+   Proposals/VectorizationPlan
+
+:doc:`Proposals/VectorizationPlan`
+   Modeling the process and upgrading the infrastructure of LLVM's Loop Vectorizer.
 
 .. _slp-vectorizer:
 

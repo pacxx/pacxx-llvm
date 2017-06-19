@@ -861,12 +861,9 @@ bool InstCombiner::willNotOverflowSignedSub(const Value *LHS,
       ComputeNumSignBits(RHS, 0, &CxtI) > 1)
     return true;
 
-  unsigned BitWidth = LHS->getType()->getScalarSizeInBits();
-  KnownBits LHSKnown(BitWidth);
-  computeKnownBits(LHS, LHSKnown, 0, &CxtI);
+  KnownBits LHSKnown = computeKnownBits(LHS, 0, &CxtI);
 
-  KnownBits RHSKnown(BitWidth);
-  computeKnownBits(RHS, RHSKnown, 0, &CxtI);
+  KnownBits RHSKnown = computeKnownBits(RHS, 0, &CxtI);
 
   // Subtraction of two 2's complement numbers having identical signs will
   // never overflow.
@@ -994,8 +991,9 @@ static Instruction *foldAddWithConstant(BinaryOperator &Add,
   // Shifts and add used to flip and mask off the low bit:
   // add (ashr (shl i32 X, 31), 31), 1 --> and (not X), 1
   const APInt *C3;
-  if (*C == 1 && match(Op0, m_OneUse(m_AShr(m_Shl(m_Value(X), m_APInt(C2)),
-                                            m_APInt(C3)))) &&
+  if (C->isOneValue() &&
+      match(Op0,
+            m_OneUse(m_AShr(m_Shl(m_Value(X), m_APInt(C2)), m_APInt(C3)))) &&
       C2 == C3 && *C2 == Ty->getScalarSizeInBits() - 1) {
     Value *NotX = Builder.CreateNot(X);
     return BinaryOperator::CreateAnd(NotX, ConstantInt::get(Ty, 1));
@@ -1011,8 +1009,9 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifyAddInst(LHS, RHS, I.hasNoSignedWrap(),
-                                 I.hasNoUnsignedWrap(), SQ))
+  if (Value *V =
+          SimplifyAddInst(LHS, RHS, I.hasNoSignedWrap(), I.hasNoUnsignedWrap(),
+                          SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
    // (A*B)+(A*C) -> A*(B+C) etc
@@ -1059,9 +1058,7 @@ Instruction *InstCombiner::visitAdd(BinaryOperator &I) {
       // If this is a xor that was canonicalized from a sub, turn it back into
       // a sub and fuse this add with it.
       if (LHS->hasOneUse() && (XorRHS->getValue()+1).isPowerOf2()) {
-        IntegerType *IT = cast<IntegerType>(I.getType());
-        KnownBits LHSKnown(IT->getBitWidth());
-        computeKnownBits(XorLHS, LHSKnown, 0, &I);
+        KnownBits LHSKnown = computeKnownBits(XorLHS, 0, &I);
         if ((XorRHS->getValue() | LHSKnown.Zero).isAllOnesValue())
           return BinaryOperator::CreateSub(ConstantExpr::getAdd(XorRHS, CI),
                                            XorLHS);
@@ -1299,7 +1296,8 @@ Instruction *InstCombiner::visitFAdd(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifyFAddInst(LHS, RHS, I.getFastMathFlags(), SQ))
+  if (Value *V = SimplifyFAddInst(LHS, RHS, I.getFastMathFlags(),
+                                  SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
   if (isa<Constant>(RHS))
@@ -1489,8 +1487,9 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifySubInst(Op0, Op1, I.hasNoSignedWrap(),
-                                 I.hasNoUnsignedWrap(), SQ))
+  if (Value *V =
+          SimplifySubInst(Op0, Op1, I.hasNoSignedWrap(), I.hasNoUnsignedWrap(),
+                          SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
   // (A*B)-(A*C) -> A*(B-C) etc
@@ -1559,7 +1558,7 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
 
     // -(X >>u 31) -> (X >>s 31)
     // -(X >>s 31) -> (X >>u 31)
-    if (*Op0C == 0) {
+    if (Op0C->isNullValue()) {
       Value *X;
       const APInt *ShAmt;
       if (match(Op1, m_LShr(m_Value(X), m_APInt(ShAmt))) &&
@@ -1577,8 +1576,7 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
     // Turn this into a xor if LHS is 2^n-1 and the remaining bits are known
     // zero.
     if (Op0C->isMask()) {
-      KnownBits RHSKnown(BitWidth);
-      computeKnownBits(Op1, RHSKnown, 0, &I);
+      KnownBits RHSKnown = computeKnownBits(Op1, 0, &I);
       if ((*Op0C | RHSKnown.Zero).isAllOnesValue())
         return BinaryOperator::CreateXor(Op1, Op0);
     }
@@ -1696,7 +1694,8 @@ Instruction *InstCombiner::visitFSub(BinaryOperator &I) {
   if (Value *V = SimplifyVectorOp(I))
     return replaceInstUsesWith(I, V);
 
-  if (Value *V = SimplifyFSubInst(Op0, Op1, I.getFastMathFlags(), SQ))
+  if (Value *V = SimplifyFSubInst(Op0, Op1, I.getFastMathFlags(),
+                                  SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
   // fsub nsz 0, X ==> fsub nsz -0.0, X
