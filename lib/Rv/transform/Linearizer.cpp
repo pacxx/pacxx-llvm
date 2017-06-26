@@ -331,6 +331,8 @@ Linearizer::verifyBlockIndex() {
 
 bool
 Linearizer::needsFolding(TerminatorInst & termInst) {
+  if (isa<SwitchInst>(termInst))
+    termInst.getParent()->getParent()->dump();
   assert(!isa<SwitchInst>(termInst) && "switches unsupported at the moment");
 
   if (isa<ReturnInst>(termInst) || isa<UnreachableInst>(termInst)) return false;

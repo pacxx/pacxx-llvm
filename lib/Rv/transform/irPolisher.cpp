@@ -176,6 +176,9 @@ Value *IRPolisher::getMaskForInst(Instruction *inst, unsigned bitWidth) {
   } else if (auto castInst = dyn_cast<CastInst>(inst)) {
     auto destTy = castInst->getDestTy();
     auto newOp = getMaskForValueOrInst(builder, inst->getOperand(0), bitWidth);
+    castInst->dump();
+    newOp->dump();
+    destTy->dump();
     newInst = builder.CreateCast(castInst->getOpcode(), newOp, destTy);
   } else if (auto storeInst = dyn_cast<StoreInst>(inst)) {
     auto value = storeInst->getOperand(0);

@@ -231,6 +231,7 @@ namespace {
       (void) llvm::createPACXXIntrinsicSchedulerPass();
       (void) llvm::createPACXXTargetSelectPass({});
       (void) llvm::createPACXXGEPPass();
+      (void) llvm::createPACXXSelectEmitterPass();
 
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();
