@@ -33,6 +33,7 @@ Pass *createPACXXNativeBarrierPass();
 Pass *createPACXXNativeSMPass();
 Pass *createPACXXNativeLinkerPass();
 Pass *createPACXXIntrinsicSchedulerPass();
+Pass *createPACXXSelectEmitterPass();
 }
 
 namespace pacxx {
