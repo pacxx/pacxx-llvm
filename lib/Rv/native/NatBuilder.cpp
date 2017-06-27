@@ -515,10 +515,28 @@ void NatBuilder::fallbackVectorize(Instruction *const inst) {
   bool notVectorTy = type->isVoidTy() || !(type->isIntegerTy() || type->isFloatingPointTy() || type->isPointerTy());
   Value *resVec = notVectorTy ? nullptr : UndefValue::get(
       getVectorType(inst->getType(), vectorWidth()));
+  Instruction* condensed = nullptr;
+  if (isAlloca) { // PACXXMOD: create wider allocas
+    auto vType = VectorType::get(type->getPointerElementType(), vectorWidth());
+    condensed = builder.CreateAlloca(vType, 0, nullptr, "condensed_alloca");
+    auto M = condensed->getParent()->getParent()->getParent();
+    cast<AllocaInst>(condensed)->setAlignment(4); //M->getDataLayout().getPrefTypeAlignment(vType));
+    condensed = cast<Instruction>(builder.CreateBitCast(condensed, type, "condensed_cast"));
+  }
   for (unsigned lane = 0; lane < vectorWidth(); ++lane) {
-    Instruction *cpInst = inst->clone();
-    mapOperandsInto(inst, cpInst, false, lane);
-    builder.Insert(cpInst, inst->getName());
+    Instruction *cpInst = nullptr;
+    if (condensed){
+      SmallVector<Value*, 1> idx;
+      idx.push_back(builder.getInt32(lane));
+      auto gep = builder.CreateGEP(condensed, idx);
+      cpInst = cast<Instruction>(gep);
+    }
+    else {
+      cpInst = inst->clone();
+      mapOperandsInto(inst, cpInst, false, lane);
+      builder.Insert(cpInst, inst->getName());
+    }
+
     if (notVectorTy || isAlloca) mapScalarValue(inst, cpInst, lane);
     if (resVec) resVec = builder.CreateInsertElement(resVec, cpInst, lane, "fallBackInsert");
   }
