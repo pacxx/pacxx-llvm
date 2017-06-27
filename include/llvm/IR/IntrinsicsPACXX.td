@@ -35,4 +35,10 @@ defm int_pacxx_read_nctaid : PACXXIDIntrinsic_v4i32<"nctaid">;
 
 def int_pacxx_barrier0 : GCCBuiltin<"__pacxx_syncthreads">,
   Intrinsic<[], [], [IntrConvergent]>;
+
+def int_pacxx_offload : GCCBuiltin<"__pacxx_offload">,
+  Intrinsic<[], [], [IntrConvergent]>;
+
+def int_pacxx_synchronize : GCCBuiltin<"__pacxx_synchronize">,
+  Intrinsic<[], [], [IntrConvergent]>;
 }
