@@ -35,7 +35,7 @@ struct PACXXSelectEmitter : public ModulePass {
   PACXXSelectEmitter() : ModulePass(ID) { initializePACXXSelectEmitterPass(*PassRegistry::getPassRegistry()); }
   virtual ~PACXXSelectEmitter() {}
   virtual bool runOnModule(Module &M) override;
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
+  virtual void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
 bool PACXXSelectEmitter::runOnModule(Module &M) {
@@ -111,6 +111,9 @@ void PACXXSelectEmitter::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 }
+
+char PACXXSelectEmitter::ID = 0;
+
 INITIALIZE_PASS_BEGIN(PACXXSelectEmitter, "pacxx_emit_select",
                       "PACXXSelectEmitter: transform masked intrinsics to selects", true, true)
   INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)

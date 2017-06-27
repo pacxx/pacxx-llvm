@@ -660,6 +660,8 @@ void NatBuilder::vectorizeCallInstruction(CallInst *const scalCall) {
 
     // check if we need cascade first
     Value *predicate = vectorizationInfo.getPredicate(*scalCall->getParent());
+    if (!predicate)
+      scalCall->dump();
     assert(predicate && "expected predicate!");
     assert(predicate->getType()->isIntegerTy(1) && "predicate must be i1 type!");
     bool needCascade = !isa<Constant>(predicate) && HasSideEffects(*scalCall);
