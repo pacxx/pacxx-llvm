@@ -218,7 +218,6 @@ struct SPIRPass : public ModulePass {
           newName = F->getName().str() + ".sm" + to_string(i);
           newGV->setName(newName);
           SMMapping[F] = i + 1;
-          break;
         }
       }
     }
