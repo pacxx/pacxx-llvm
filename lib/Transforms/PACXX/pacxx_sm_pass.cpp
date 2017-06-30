@@ -70,7 +70,6 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 
         __verbose("created shared memory");
     }
-    M->dump();
 }
 
 set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal) {
