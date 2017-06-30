@@ -53,8 +53,11 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             // declare <N x T> @llvm.masked.load(<N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>, <N x T> <passthru>)
             ConstantInt *constint = cast<ConstantInt>(CI.getArgOperand(1));
             unsigned int alignment = constint->getZExtValue();
-            auto load = new LoadInst(CI.getType(), CI.getArgOperand(0), "unmasked_load", false, alignment, &CI);
-            auto select = SelectInst::Create(CI.getArgOperand(2), load, CI.getArgOperand(3), "selected_load", &CI);
+
+            IRBuilder<> builder(&CI);
+            auto unmasked_load = builder.CreateLoad(CI.getArgOperand(0));
+            unmasked_load->setAlignment(alignment);
+            auto select = builder.CreateSelect(CI.getArgOperand(2), unmasked_load, CI.getArgOperand(3));
             CI.replaceAllUsesWith(select);
             dead.push_back(&CI);
           }
@@ -65,12 +68,13 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             // declare void @llvm.masked.store (<N x T> <value>, <N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>)
             ConstantInt *constint = cast<ConstantInt>(CI.getArgOperand(2));
             unsigned int alignment = constint->getZExtValue();
-            auto select = SelectInst::Create(CI.getArgOperand(3),
-                                             CI.getArgOperand(0),
-                                             UndefValue::get(CI.getArgOperand(0)->getType()),
-                                             "selected_store",
-                                             &CI);
-            new StoreInst(select, CI.getArgOperand(1), false, alignment, &CI);
+
+            IRBuilder<> builder(&CI);
+            auto select = builder.CreateSelect(CI.getArgOperand(3),
+                                               CI.getArgOperand(0),
+                                               UndefValue::get(CI.getArgOperand(0)->getType()));
+            auto store = builder.CreateStore(select, CI.getArgOperand(1));
+            store->setAlignment(alignment);
             dead.push_back(&CI);
           }
         }
@@ -81,6 +85,7 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
     void finalize() {
       for (auto I : dead)
         I->eraseFromParent();
+      dead.clear();
     }
 
     std::vector<Instruction *> dead;
