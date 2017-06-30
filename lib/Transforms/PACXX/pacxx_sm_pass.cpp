@@ -70,6 +70,7 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 
         __verbose("created shared memory");
     }
+    M->dump();
 }
 
 set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal) {
@@ -210,9 +211,6 @@ void PACXXNativeSMTransformer::replaceAllUsesInKernel(Function *kernel, Value *f
         auto *Usr = dyn_cast<Instruction>(U.getUser());
         if (Usr && Usr->getParent()->getParent() == kernel)
             U.set(with);
-        else
-            //this is needed because of some leftover reflection calls that use the sm variable
-            U.set(UndefValue::get(from->getType()));
     }
     return;
 }
