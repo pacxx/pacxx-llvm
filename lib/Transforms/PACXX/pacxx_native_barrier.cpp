@@ -721,8 +721,6 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
     for(auto call : _inlineCalls) {
 	Function *calledFunction = call->getCalledFunction();
 	if (!calledFunction)
-	  __error("calledFunction is nullptr!"); 
-        calledFunction->dump(); 
         InlineFunctionInfo IFI;
         InlineFunction(call, IFI);
         calledFunction->eraseFromParent();
