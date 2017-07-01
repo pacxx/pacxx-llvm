@@ -699,18 +699,21 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
 
 
     //create Cases
-    for(unsigned i = 0; i < barrierInfo.size(); ++i) {
-        pair<Function *, Function *> calledFunctions = make_pair(barrierInfo[i]->_func,
-                                                                 vectorized ? vecBarrierInfo[i]->_func : nullptr);
-        pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
-                                                  vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
+    int i = 0;
+    auto vI = vecBarrierInfo.begin();
+    for(auto I = barrierInfo.begin(), E = barrierInfo.end(); I != E; ++I) {
+        pair<Function *, Function *> calledFunctions = make_pair((*I)->_func,
+                                                                 vectorized ? (*vI)->_func : nullptr);
+        pair<StructType*, StructType*> loadTypes = make_pair((*I)->_livingValuesType,
+                                                  vectorized ? (*vI)->_livingValuesType : nullptr);
 
         const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, kernel, switchBB, breakBB, allocSwitchParam, alloc_max,
                                  livingValuesMem, livingValuesMem, loadTypes, calledFunctions);
         BasicBlock *caseBlock = createCase(M, info, vectorized);
 
         //add case to switch
-        switchInst->addCase(cast<ConstantInt>(ConstantInt::get(int32_type, i)), caseBlock);
+        switchInst->addCase(cast<ConstantInt>(ConstantInt::get(int32_type, ++i)), caseBlock);
+        std::advance(vI, 1); 
     }
 
     //break from switch
