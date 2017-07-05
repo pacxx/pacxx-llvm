@@ -70,9 +70,11 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             unsigned int alignment = constint->getZExtValue();
 
             IRBuilder<> builder(&CI);
+
+            auto load = builder.CreateLoad(CI.getArgOperand(1));
             auto select = builder.CreateSelect(CI.getArgOperand(3),
                                                CI.getArgOperand(0),
-                                               UndefValue::get(CI.getArgOperand(0)->getType()));
+                                               load); //UndefValue::get(CI.getArgOperand(0)->getType()));
             auto store = builder.CreateStore(select, CI.getArgOperand(1));
             store->setAlignment(alignment);
             dead.push_back(&CI);
