@@ -5,7 +5,6 @@
 
 #include "Log.h"
 #include "pacxx_liveness_analysis.h"
-#include <set>
 
 using namespace llvm;
 using namespace std;
@@ -136,7 +135,7 @@ private:
 
     unsigned getVectorWidth(Function *kernel);
 
-    bool runOnFunction(Module &M, Function *kernel, set<unique_ptr<BarrierInfo>> &infoVec, bool vecVersion = false);
+    bool runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> &infoVec, bool vecVersion = false);
 
     vector<Instruction *> findBarriers(Function *kernel);
 
@@ -144,9 +143,9 @@ private:
 
     void splitAtBarriers(Module &M, vector<Instruction *> barriers);
 
-    unique_ptr<BarrierInfo> createFirstInfo(LLVMContext &ctx, Function *kernel);
+    BarrierInfo *createFirstInfo(LLVMContext &ctx, Function *kernel);
 
-    unique_ptr<BarrierInfo> createBarrierInfo(LLVMContext &ctx, Instruction *barrier, unsigned id);
+    BarrierInfo *createBarrierInfo(LLVMContext &ctx, Instruction *barrier, unsigned id);
 
     SetVector<const BasicBlock *> getPartsOfBarrier(Instruction *barrier);
 
@@ -158,15 +157,15 @@ private:
 
     StructType *getLivingValuesType(LLVMContext &ctx, SetVector<const Value *> &livingValues);
 
-    Function *createFunction(Module &M, Function *kernel, const unique_ptr<BarrierInfo> &info);
+    Function *createFunction(Module &M, Function *kernel, BarrierInfo *info);
 
-    void storeLiveValues(Module &M, const unique_ptr<BarrierInfo> &info, ValueToValueMapTy &origFnMap);
+    void storeLiveValues(Module &M, BarrierInfo *info, ValueToValueMapTy &origFnMap);
 
     void createSpecialFooWrapper(Module &M, Function *pacxx_block, Function *kernel,
-                                 set<unique_ptr<BarrierInfo>> &barrierInfo,
-                                 set<unique_ptr<BarrierInfo>> &vecBarrierInfo);
+                                 SetVector<BarrierInfo *> barrierInfo,
+                                 SetVector<BarrierInfo *> vecBarrierInfo);
 
-    uint64_t getMaxStructSize(const DataLayout &dl, set<unique_ptr<BarrierInfo>> &infos);
+    uint64_t getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos);
 
     AllocaInst *createMemForLivingValues(const DataLayout &dl, uint64_t maxStructSize,
                                          Value *numThreads, BasicBlock *BB);
@@ -218,8 +217,8 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
 
         string kernelName = kernel->getName().str();
 
-        set<unique_ptr<BarrierInfo>> barrierInfo;
-        set<unique_ptr<BarrierInfo>> vecBarrierInfo;
+        SetVector<BarrierInfo *> barrierInfo;
+        SetVector<BarrierInfo *> vecBarrierInfo;
 
         bool modified_kernel = runOnFunction(M, kernel, barrierInfo);
 
@@ -249,7 +248,7 @@ unsigned PACXXNativeBarrier::getVectorWidth(Function *kernel) {
     return numThreads;
 }
 
-bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, set<unique_ptr<BarrierInfo>> &infoVec,
+bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<BarrierInfo *> &infoVec,
                                        bool vecVersion) {
 
     LLVMContext &ctx = M.getContext();
@@ -281,13 +280,13 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, set<unique_p
         id++;
     }
 
-    for(auto &info : infoVec) {
+    for(auto info : infoVec) {
         createFunction(M, kernel, info);
     }
 
-    for(auto &info : infoVec) {
+    for(auto info : infoVec) {
         auto origBarrier = info->_barrier;
-        for(auto &lookForMap : infoVec) {
+        for(auto lookForMap : infoVec) {
             if (lookForMap->_OrigFnMap.count(origBarrier))
                 storeLiveValues(M, info, lookForMap->_OrigFnMap);
         }
@@ -341,7 +340,7 @@ void PACXXNativeBarrier::splitAtBarriers(Module &M, vector<Instruction *> barrie
     }
 }
 
-unique_ptr<PACXXNativeBarrier::BarrierInfo> PACXXNativeBarrier::createFirstInfo(LLVMContext &ctx, Function *kernel) {
+PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createFirstInfo(LLVMContext &ctx, Function *kernel) {
     __verbose("Creating info for first barrier \n");
     SetVector<const Value *> livingValues;
     SmallVector<Type*, 8> params;
@@ -353,7 +352,7 @@ unique_ptr<PACXXNativeBarrier::BarrierInfo> PACXXNativeBarrier::createFirstInfo(
     parts.insert(functionEntry);
     recursivePartFinding(functionEntry, parts);
 
-    auto info = std::make_unique<BarrierInfo>(0, nullptr, parts[0], parts, livingValues, type);
+    BarrierInfo *info = new BarrierInfo(0, nullptr, parts[0], parts, livingValues, type);
 
     __verbose("Finished creating barrier info\n");
     __verbose("Info: ", info->toString());
@@ -361,14 +360,12 @@ unique_ptr<PACXXNativeBarrier::BarrierInfo> PACXXNativeBarrier::createFirstInfo(
     return info;
 }
 
-unique_ptr<PACXXNativeBarrier::BarrierInfo> PACXXNativeBarrier::createBarrierInfo(LLVMContext &ctx,
-                                                                                  Instruction *barrier, unsigned id) {
+PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createBarrierInfo(LLVMContext &ctx, Instruction *barrier, unsigned id) {
 
     auto parts = getPartsOfBarrier(barrier);
     auto livingValues = getLivingValuesForBarrier(parts);
     auto livingValuesType = getLivingValuesType(ctx, livingValues);
-
-    auto info =  std::make_unique<BarrierInfo>(id, barrier, parts[0], parts, livingValues, livingValuesType);
+    BarrierInfo *info = new BarrierInfo(id, barrier, parts[0], parts, livingValues, livingValuesType);
 
     _indexMap[barrier] = id;
 
@@ -421,7 +418,7 @@ StructType *PACXXNativeBarrier::getLivingValuesType(LLVMContext &ctx, SetVector<
     return StructType::get(ctx, params, false);
 }
 
-Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, const unique_ptr<BarrierInfo> &info) {
+Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, BarrierInfo *info) {
 
     __verbose("Creating function for barrier \n");
 
@@ -574,7 +571,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, const 
     return newFunc;
 }
 
-void PACXXNativeBarrier::storeLiveValues(Module &M, const unique_ptr<BarrierInfo> &info, ValueToValueMapTy &origFnMap) {
+void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info, ValueToValueMapTy &origFnMap) {
 
     __verbose("create store for live values \n");
 
@@ -618,8 +615,8 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, const unique_ptr<BarrierInfo
 }
 
 void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_block, Function *kernel,
-                                                 set<unique_ptr<BarrierInfo>> &barrierInfo,
-                                                 set<unique_ptr<BarrierInfo>> &vecBarrierInfo) {
+                                                 SetVector<BarrierInfo *> barrierInfo,
+                                                 SetVector<BarrierInfo *> vecBarrierInfo) {
 
     __verbose("Creating special pacxx_block wrapper \n");
 
@@ -699,21 +696,19 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
 
 
     //create Cases
-    int i = 0;
-    auto vI = vecBarrierInfo.begin();
-    for(auto I = barrierInfo.begin(), E = barrierInfo.end(); I != E; ++I) {
-        pair<Function *, Function *> calledFunctions = make_pair((*I)->_func,
-                                                                 vectorized ? (*vI)->_func : nullptr);
-        pair<StructType*, StructType*> loadTypes = make_pair((*I)->_livingValuesType,
-                                                  vectorized ? (*vI)->_livingValuesType : nullptr);
+    for(unsigned i = 0; i < barrierInfo.size(); ++i) {
+
+        pair<Function *, Function *> calledFunctions = make_pair(barrierInfo[i]->_func,
+                                                                 vectorized ? vecBarrierInfo[i]->_func : nullptr);
+        pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
+                                                  vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
 
         const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, kernel, switchBB, breakBB, allocSwitchParam, alloc_max,
                                  livingValuesMem, livingValuesMem, loadTypes, calledFunctions);
         BasicBlock *caseBlock = createCase(M, info, vectorized);
 
         //add case to switch
-        switchInst->addCase(cast<ConstantInt>(ConstantInt::get(int32_type, ++i)), caseBlock);
-        std::advance(vI, 1); 
+        switchInst->addCase(cast<ConstantInt>(ConstantInt::get(int32_type, i)), caseBlock);
     }
 
     //break from switch
@@ -729,12 +724,12 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
         InlineFunction(call, IFI);
         calledFunction->eraseFromParent();
     }
-    _inlineCalls.clear();
+    _inlineCalls.clear(); 
 }
 
-uint64_t PACXXNativeBarrier::getMaxStructSize(const DataLayout &dl, set<unique_ptr<BarrierInfo>> &infos) {
+uint64_t PACXXNativeBarrier::getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos) {
     uint64_t  maxStructSize = 0;
-    for(auto &info : infos) {
+    for(auto info : infos) {
         if(info->_id == 0)
             continue;
         uint64_t size = dl.getTypeAllocSize(info->_livingValuesType);
