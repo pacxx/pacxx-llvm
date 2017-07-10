@@ -73,7 +73,7 @@ struct PACXXDeadCodeElim : public ModulePass {
 
 
     for (auto &F : M) {
-      if (std::find(kernels.begin(), kernels.end(), F) != kernels.end())
+      if (std::find(kernels.begin(), kernels.end(), &F) != kernels.end())
         F.setLinkage(GlobalValue::LinkageTypes::InternalLinkage);
     }
 
