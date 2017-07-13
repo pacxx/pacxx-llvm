@@ -11,7 +11,7 @@ build:
     - mkdir build
     - cd build
     - cmake ../pacxx-llvm -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3" -DCMAKE_INSTALL_PREFIX=$PWD/pacxx-llvm/local
-    - make -j8 install
+    - make -j${NUM_CORES:-1} install
   artifacts:
     paths:
     - local/
