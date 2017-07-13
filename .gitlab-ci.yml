@@ -1,0 +1,13 @@
+---
+
+before_script:
+- git clone https://m_haid02@zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
+
+eclipse:
+  image: eclipse/cpp_gcc
+  script:
+    - mkdir build
+    - cd build
+    - cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3"
+    - make -j8
+
