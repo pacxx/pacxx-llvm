@@ -1,7 +1,7 @@
 ---
 
 before_script:
-- git clone https://m_haid02@zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
+- git clone https://zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
 
 eclipse:
   image: eclipse/cpp_gcc
