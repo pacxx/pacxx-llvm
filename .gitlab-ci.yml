@@ -10,6 +10,6 @@ eclipse:
     - cd ..
     - mkdir build
     - cd build
-    - cmake ../llvm -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3"
+    - cmake ../pacxx-llvm -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3"
     - make -j8
 
