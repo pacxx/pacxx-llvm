@@ -4,7 +4,7 @@ before_script:
 - git clone https://zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
 
 eclipse:
-  image: duneci/base:16.04
+  image: duneci/base:9
   script:
     - mkdir build
     - cd build
