@@ -2,7 +2,8 @@
 
 before_script:
 - git clone https://zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
-
+- cd tools/clang
+- git checkout rollback 
 eclipse:
   image: pacxx/ubuntu
   script:
