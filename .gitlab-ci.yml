@@ -8,6 +8,6 @@ eclipse:
   script:
     - mkdir build
     - cd build
-    - CC=/usr/bin/clang CXX=/usr/bin/clang++ cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3"
+    - cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3"
     - make -j8
 
