@@ -68,17 +68,32 @@ struct PACXXDeadCodeElim : public ModulePass {
 
       to_insert.clear();
     }
+#if 1
+    cleanupDeadCode(&M);
+#else
 
-    //cleanupDeadCode(&M);
+    std::vector<GlobalValue*> dead;
+    for (auto &G : M.getGlobalList()) {
+      if (G.getLinkage() != GlobalValue::LinkageTypes::ExternalLinkage)
+        G.setLinkage(GlobalValue::LinkageTypes::InternalLinkage);
+      if (!G.hasLocalLinkage()) {
+        G.setVisibility(GlobalValue::VisibilityTypes::HiddenVisibility);
+      }
 
+      if(!isa<Function>(G) && G.hasNUses(0))
+        dead.push_back(&G);
+
+    }
+
+    for (auto G : dead)
+      G->eraseFromParent();
 
     for (auto &F : M) {
       if (std::find(kernels.begin(), kernels.end(), &F) == kernels.end()
           && !F.isDeclaration())
         F.setLinkage(GlobalValue::LinkageTypes::InternalLinkage);
     }
-
-
+#endif
     return true;
   }
 };

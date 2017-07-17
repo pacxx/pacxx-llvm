@@ -59,6 +59,9 @@ PTy getTagedFunction(MDNode *MD, StringRef desc) {
   return PTy(nullptr, -1);
 }
 
+
+
+
 template <typename CTy = std::set<Function *>>
 CTy getTagedFunctions(Module *M, StringRef twine, StringRef desc) {
   CTy functions;
@@ -84,4 +87,14 @@ CTy getTagedFunctionsWithTag(Module *M, StringRef twine, StringRef desc) {
   }
   return functions;
 }
+
+template <typename CTy = std::set<Function *>>
+CTy getKernels(Module *M) {
+  auto functions = getTagedFunctions(M, "nvvm.anntations", "kernel");
+  for (auto& F : *M)
+    if (F.getMetadata("kernel_arg_addr_space") != nullptr)
+      functions.insert(&F);
+  return functions;
+}
+
 }
