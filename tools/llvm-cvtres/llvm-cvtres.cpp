@@ -37,7 +37,7 @@ namespace {
 enum ID {
   OPT_INVALID = 0, // This is not an option ID.
 #define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
-               HELPTEXT, METAVAR)                                              \
+               HELPTEXT, METAVAR, VALUES)                                      \
   OPT_##ID,
 #include "Opts.inc"
 #undef OPTION
@@ -49,12 +49,12 @@ enum ID {
 
 static const opt::OptTable::Info InfoTable[] = {
 #define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
-               HELPTEXT, METAVAR)                                              \
+               HELPTEXT, METAVAR, VALUES)                                      \
   {                                                                            \
-      PREFIX,      NAME,     HELPTEXT,                                         \
-      METAVAR,     OPT_##ID, opt::Option::KIND##Class,                         \
-      PARAM,       FLAGS,    OPT_##GROUP,                                      \
-      OPT_##ALIAS, ALIASARGS},
+      PREFIX,      NAME,      HELPTEXT,                                        \
+      METAVAR,     OPT_##ID,  opt::Option::KIND##Class,                        \
+      PARAM,       FLAGS,     OPT_##GROUP,                                     \
+      OPT_##ALIAS, ALIASARGS, VALUES},
 #include "Opts.inc"
 #undef OPTION
 };
@@ -87,6 +87,12 @@ void error(Error EC) {
     return;
   handleAllErrors(std::move(EC),
                   [&](const ErrorInfoBase &EI) { reportError(EI.message()); });
+}
+
+template <typename T> T error(Expected<T> EC) {
+  if (!EC)
+    error(EC.takeError());
+  return std::move(EC.get());
 }
 
 int main(int argc_, const char *argv_[]) {
@@ -175,10 +181,7 @@ int main(int argc_, const char *argv_[]) {
 
     if (Verbose) {
       int EntryNumber = 0;
-      Expected<ResourceEntryRef> EntryOrErr = RF->getHeadEntry();
-      if (!EntryOrErr)
-        error(EntryOrErr.takeError());
-      ResourceEntryRef Entry = EntryOrErr.get();
+      ResourceEntryRef Entry = error(RF->getHeadEntry());
       bool End = false;
       while (!End) {
         error(Entry.moveNext(End));
@@ -194,9 +197,8 @@ int main(int argc_, const char *argv_[]) {
     Parser.printTree(outs());
   }
 
-  std::unique_ptr<MemoryBuffer> OutputBuffer;
-  error(llvm::object::writeWindowsResourceCOFF(OutputBuffer, MachineType,
-                                               Parser));
+  std::unique_ptr<MemoryBuffer> OutputBuffer =
+      error(llvm::object::writeWindowsResourceCOFF(MachineType, Parser));
   auto FileOrErr =
       FileOutputBuffer::create(OutputFile, OutputBuffer->getBufferSize());
   if (!FileOrErr)

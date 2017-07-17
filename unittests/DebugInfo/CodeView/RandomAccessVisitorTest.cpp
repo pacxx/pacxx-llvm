@@ -13,7 +13,6 @@
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/CodeView/TypeRecordMapping.h"
 #include "llvm/DebugInfo/CodeView/TypeSerializer.h"
-#include "llvm/DebugInfo/CodeView/TypeServerHandler.h"
 #include "llvm/DebugInfo/CodeView/TypeTableBuilder.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbacks.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
@@ -360,6 +359,7 @@ TEST_F(RandomAccessVisitorTest, CrossChunkName) {
   Class.Name = "FooClass";
   Class.Options = ClassOptions::None;
   Class.MemberCount = 0;
+  Class.Size = 4U;
   Class.DerivationList = TypeIndex::fromArrayIndex(0);
   Class.FieldList = TypeIndex::fromArrayIndex(0);
   Class.VTableShape = TypeIndex::fromArrayIndex(0);
