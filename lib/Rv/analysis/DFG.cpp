@@ -8,23 +8,6 @@ using namespace llvm;
 template<> char DFGBaseWrapper<true>::ID = 0;
 template<> char DFGBaseWrapper<false>::ID = 0;
 
-template<bool forward>
-bool DFGBaseWrapper<forward>::runOnFunction(Function& F)
-{
-    DominatorTreeBase<BasicBlock>& tree = forward ?
-                                          static_cast<DominatorTreeBase<BasicBlock>&>(getAnalysis<DominatorTreeWrapperPass>().getDomTree()) :
-                                          static_cast<DominatorTreeBase<BasicBlock>&>(getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree());
-
-    mDFGBase = new DFGBase<forward>(tree);
-    mDFGBase->create(F);
-    return false;
-}
-
-template<bool forward>
-DFGBase<forward>::~DFGBase() {
-  for (auto it : nodes_)
-    delete it.second;
-}
 
 template<bool forward>
 void DFGBase<forward>::create(Function& F) {

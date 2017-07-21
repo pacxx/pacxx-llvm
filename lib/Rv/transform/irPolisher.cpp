@@ -189,7 +189,7 @@ Value *IRPolisher::getMaskForInst(Instruction *inst, unsigned bitWidth) {
     newStore->setAlignment(storeInst->getAlignment());
     newStore->setVolatile(storeInst->isVolatile());
     newStore->setOrdering(storeInst->getOrdering());
-    newStore->setSynchScope(storeInst->getSynchScope());
+    newStore->setSyncScopeID(storeInst->getSyncScopeID());
 
     newInst = newStore;
   } else if (auto phiNode = dyn_cast<PHINode>(inst)) {

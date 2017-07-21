@@ -35,7 +35,8 @@
 
 
 namespace llvm {
-template<bool forward> class DFGBase;
+template <bool forward>
+class DFGBase;
 
 template<bool forward>
 class DFGBaseWrapper : public FunctionPass {
@@ -55,10 +56,30 @@ public:
         Info.setPreservesAll();
     }
 
-    bool runOnFunction(Function& F) override;
-
-    DFGBase<forward>* getDFG()
+    template <typename DomTree, typename std::enable_if<std::is_same<DomTree, DominatorTree>::value>::type* = nullptr>
+    void initialize(Function& F)
     {
+      auto& DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+      mDFGBase = new DFGBase<forward>(DT);
+      mDFGBase->create(F);
+    }
+
+    template <typename DomTree, typename std::enable_if<std::is_same<DomTree, PostDominatorTree>::value>::type* = nullptr>
+    void initialize(Function& F)
+    {
+      auto& DT = getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
+      mDFGBase = new DFGBase<forward>(DT);
+      mDFGBase->create(F);
+    }
+
+    virtual bool runOnFunction(Function& F) override
+    {
+      initialize<typename std::conditional<forward, DominatorTree, PostDominatorTree>::type>(F);
+      return false;
+    }
+
+
+    DFGBase<forward>* getDFG() {
         return mDFGBase;
     }
 };
@@ -66,6 +87,11 @@ public:
 template<bool forward>
 class DFGBase {
 public:
+
+    using DomTreeRef = typename std::conditional<forward,
+                                                  const llvm::DominatorTree&,
+                                                  const llvm::PostDominatorTree&>::type;
+
     class Node;
 
     using nodes_t = ArrayRef<const Node*>;
@@ -89,7 +115,7 @@ public:
 
     //----------------------------------------------------------------------------
 
-    DFGBase(const DominatorTreeBase<BasicBlock>& DT) : DT(DT)
+    DFGBase(DomTreeRef DT) : DT(DT)
     {
         assert (forward == !DT.isPostDominator() && "Wrong dominance tree specified!\n");
     }
@@ -99,12 +125,15 @@ public:
 
     void create(Function& F);
 
-    ~DFGBase();
+    ~DFGBase() {
+      for (auto it : nodes_)
+        delete it.second;
+    }
 
     Node* operator[](const BasicBlock* const BB) const { return get(BB); }
 
 private:
-    const DominatorTreeBase<BasicBlock>& DT;
+    DomTreeRef& DT;
 
     Node* get(const BasicBlock* const BB) const
     {
