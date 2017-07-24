@@ -231,7 +231,6 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
 
                 __verbose("Running for vectorized kernel");
                 _vectorWidth = getVectorWidth(vec_kernel);
-                _indexMap.clear();
                 runOnFunction(M, vec_kernel, vecBarrierInfo, true);
             }
 
@@ -253,7 +252,7 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
                                        bool vecVersion) {
 
     LLVMContext &ctx = M.getContext();
-
+    _indexMap.clear();
     auto barriers = findBarriers(kernel);
 
     unsigned numBarriers = barriers.size();
@@ -720,11 +719,12 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
 
     //now inline all calls and remove the no longer required functions
     for(auto call : _inlineCalls) {
-        Function *calledFunction = call->getCalledFunction();
+	Function *calledFunction = call->getCalledFunction();
         InlineFunctionInfo IFI;
         InlineFunction(call, IFI);
         calledFunction->eraseFromParent();
     }
+    _inlineCalls.clear(); 
 }
 
 uint64_t PACXXNativeBarrier::getMaxStructSize(const DataLayout &dl, SetVector<BarrierInfo *> infos) {

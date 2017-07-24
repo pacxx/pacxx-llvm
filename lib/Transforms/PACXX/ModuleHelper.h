@@ -35,7 +35,7 @@ template <typename T> void ReplaceUnsafe(T *from, T *to) {
 
 inline void cleanupDeadCode(Module *M) {
 
-  auto kernels = getTagedFunctions(M, "nvvm.annotations", "kernel");
+  auto kernels = getKernels(M);
   auto reflects = getTagedFunctions(M, "pacxx.reflection", "");
   auto visitor = make_CallVisitor([](CallInst *) {});
 

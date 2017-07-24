@@ -63,7 +63,6 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
   auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
   for (auto &F : kernels) {
-
     bool vectorized = F->hasFnAttribute("vectorized") ? true : false;
     bool barrier = F->hasFnAttribute("barrier") ? true : false;
 
@@ -104,7 +103,6 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
         vecFoo->eraseFromParent();
       }
     }
-
     F->eraseFromParent();
     pacxx_block->eraseFromParent();
 

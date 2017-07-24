@@ -1,0 +1,18 @@
+---
+
+before_script:
+- git clone https://zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
+- cd tools/clang
+- git checkout rollback 
+build:
+  image: pacxx/ubuntu
+  script:
+    - cd ../..
+    - mkdir -p build
+    - cd build
+    - cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3" -DCMAKE_INSTALL_PREFIX=$PWD/../local
+    - make -j${NUM_CORES:-1} install
+  artifacts:
+    paths:
+    - local/
+    expire_in: 30 days

@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <vector>
-#include <llvm/Analysis/TargetTransformInfo.h>
 
 #define DEBUG_TYPE "pacxx_emit_select"
 
@@ -21,6 +20,7 @@
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Transforms/PACXXTransforms.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 
 #include "ModuleHelper.h"
 
@@ -46,38 +46,39 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
     void visitCallInst(CallInst &CI) {
 
       auto F = CI.getCalledFunction();
-      auto alignment = 4; // M.getDataLayout().getPrefTypeAlignment(CI.getType());
 
       if (F && F->isIntrinsic()) {
-        if (F->getIntrinsicID() == Intrinsic::masked_gather) {
-          if (!TTI->isLegalMaskedGather(CI.getArgOperand(0)->getType())) {
+        if (F->getIntrinsicID() == Intrinsic::masked_load) {
+          if (TTI->isLegalMaskedLoad(CI.getArgOperand(0)->getType())) {
+            // declare <N x T> @llvm.masked.load(<N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>, <N x T> <passthru>)
+            ConstantInt *constint = cast<ConstantInt>(CI.getArgOperand(1));
+            unsigned int alignment = constint->getZExtValue();
 
-            llvm::errs() << "replace gather\n";
-            auto extr = ExtractElementInst::Create(CI.getArgOperand(0),
-                                                   ConstantInt::get(Type::getInt32Ty(CI.getContext()), 0),
-                                                   "extr_ptr",
-                                                   &CI);
-            auto cast = new BitCastInst(extr, CI.getType()->getPointerTo(0), "cast_ptr", &CI);
-            auto load = new LoadInst(CI.getType(), cast, "unsave_load", false, alignment, &CI);
-            auto select = SelectInst::Create(CI.getArgOperand(2), load, CI.getArgOperand(3), "selected_load", &CI);
+            auto mask = CI.getArgOperand(2);
 
+            IRBuilder<> builder(&CI);
+            auto unmasked_load = builder.CreateLoad(CI.getArgOperand(0));
+            unmasked_load->setAlignment(alignment);
+            auto select = builder.CreateSelect(mask, unmasked_load, CI.getArgOperand(3));
             CI.replaceAllUsesWith(select);
             dead.push_back(&CI);
           }
         }
 
-        if (F->getIntrinsicID() == Intrinsic::masked_scatter) {
-          if (!TTI->isLegalMaskedScatter(CI.getArgOperand(0)->getType())) {
-            llvm::errs() << "replace scatter\n";
+        if (F->getIntrinsicID() == Intrinsic::masked_store) {
+          if (TTI->isLegalMaskedStore(CI.getArgOperand(0)->getType())) {
+            // declare void @llvm.masked.store (<N x T> <value>, <N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>)
+            ConstantInt *constint = cast<ConstantInt>(CI.getArgOperand(2));
+            unsigned int alignment = constint->getZExtValue();
 
-            auto extr = ExtractElementInst::Create(CI.getArgOperand(1),
-                                                   ConstantInt::get(Type::getInt32Ty(CI.getContext()), 0),
-                                                   "extr_ptr",
-                                                   &CI);
-            auto cast = new BitCastInst(extr, CI.getArgOperand(0)->getType()->getPointerTo(0), "cast_ptr", &CI);
-            auto undef = UndefValue::get(CI.getArgOperand(0)->getType());
-            auto select = SelectInst::Create(CI.getArgOperand(3), CI.getArgOperand(0), undef, "selected_store", &CI);
-            auto store = new StoreInst(select, cast, false, alignment, &CI);
+            IRBuilder<> builder(&CI);
+            auto load = builder.CreateLoad(CI.getArgOperand(1));
+            load->setAlignment(alignment);
+            auto select = builder.CreateSelect(CI.getArgOperand(3),
+                                               CI.getArgOperand(0),
+                                               load);//UndefValue::get(CI.getArgOperand(0)->getType()));
+            auto store = builder.CreateStore(select, CI.getArgOperand(1));
+            store->setAlignment(alignment);
             dead.push_back(&CI);
           }
         }
@@ -88,6 +89,7 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
     void finalize() {
       for (auto I : dead)
         I->eraseFromParent();
+      dead.clear();
     }
 
     std::vector<Instruction *> dead;

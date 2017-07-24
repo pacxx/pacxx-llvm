@@ -210,9 +210,6 @@ void PACXXNativeSMTransformer::replaceAllUsesInKernel(Function *kernel, Value *f
         auto *Usr = dyn_cast<Instruction>(U.getUser());
         if (Usr && Usr->getParent()->getParent() == kernel)
             U.set(with);
-        else
-            //this is needed because of some leftover reflection calls that use the sm variable
-            U.set(UndefValue::get(from->getType()));
     }
     return;
 }
