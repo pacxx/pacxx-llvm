@@ -36,6 +36,7 @@ static bool is32bit(MachineTypes Machine) {
   switch (Machine) {
   default:
     llvm_unreachable("unsupported machine");
+  case IMAGE_FILE_MACHINE_ARM64:
   case IMAGE_FILE_MACHINE_AMD64:
     return false;
   case IMAGE_FILE_MACHINE_ARMNT:
@@ -52,6 +53,8 @@ static uint16_t getImgRelRelocation(MachineTypes Machine) {
     return IMAGE_REL_AMD64_ADDR32NB;
   case IMAGE_FILE_MACHINE_ARMNT:
     return IMAGE_REL_ARM_ADDR32NB;
+  case IMAGE_FILE_MACHINE_ARM64:
+    return IMAGE_REL_ARM64_ADDR32NB;
   case IMAGE_FILE_MACHINE_I386:
     return IMAGE_REL_I386_DIR32NB;
   }
@@ -542,15 +545,12 @@ NewArchiveMember ObjectFactory::createWeakExternal(StringRef Sym,
   SymbolTable[2].Name.Offset.Offset = sizeof(uint32_t);
 
   //__imp_ String Table
-  if (Imp) {
-    SymbolTable[3].Name.Offset.Offset = sizeof(uint32_t) + Sym.size() + 7;
-    writeStringTable(Buffer, {std::string("__imp_").append(Sym),
-                              std::string("__imp_").append(Weak)});
-  } else {
-    SymbolTable[3].Name.Offset.Offset = sizeof(uint32_t) + Sym.size() + 1;
-    writeStringTable(Buffer, {Sym, Weak});
-  }
+  StringRef Prefix = Imp ? "__imp_" : "";
+  SymbolTable[3].Name.Offset.Offset =
+      sizeof(uint32_t) + Sym.size() + Prefix.size() + 1;
   append(Buffer, SymbolTable);
+  writeStringTable(Buffer, {(Prefix + Sym).str(),
+                            (Prefix + Weak).str()});
 
   // Copied here so we can still use writeStringTable
   char *Buf = Alloc.Allocate<char>(Buffer.size());

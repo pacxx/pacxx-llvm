@@ -61,11 +61,13 @@ set(LLVM_TEST_DEPENDS
           llvm-modextract
           llvm-mt
           llvm-nm
+          llvm-objcopy
           llvm-objdump
           llvm-opt-report
           llvm-pdbutil
           llvm-profdata
           llvm-ranlib
+          llvm-rc
           llvm-readobj
           llvm-readelf
           llvm-rtdyld

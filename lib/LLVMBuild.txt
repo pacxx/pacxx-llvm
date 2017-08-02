@@ -42,6 +42,7 @@ subdirectories =
  Testing
  ToolDrivers
  Transforms
+ WindowsManifest
  Rv
 
 [component_0]

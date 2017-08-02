@@ -62,6 +62,7 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPUPromoteAlloca.cpp
   AMDGPURegAsmNames.inc.cpp
   AMDGPURegisterInfo.cpp
+  AMDGPURewriteOutArguments.cpp
   AMDGPUUnifyDivergentExitNodes.cpp
   GCNHazardRecognizer.cpp
   GCNSchedStrategy.cpp
@@ -96,6 +97,7 @@ add_llvm_target(AMDGPUCodeGen
   SIMachineScheduler.cpp
   SIMemoryLegalizer.cpp
   SIOptimizeExecMasking.cpp
+  SIOptimizeExecMaskingPreRA.cpp
   SIPeepholeSDWA.cpp
   SIRegisterInfo.cpp
   SIShrinkInstructions.cpp

@@ -2789,13 +2789,13 @@ void ExportEntry::pushNode(uint64_t offset) {
       return;
     }
   }
-  if (Children + 1 >= Trie.end()) {
+  State.ChildCount = *Children;
+  if (State.ChildCount != 0 && Children + 1 >= Trie.end()) {
     *E = malformedError("byte for count of childern in export trie data at "
            "node: 0x" + utohexstr(offset) + " extends past end of trie data");
     moveToEnd();
     return;
   }
-  State.ChildCount = *Children;
   State.Current = Children + 1;
   State.NextChildIndex = 0;
   State.ParentStringLength = CumulativeString.size();
@@ -2908,9 +2908,8 @@ MachOObjectFile::exports(Error &E, ArrayRef<uint8_t> Trie,
   return make_range(export_iterator(Start), export_iterator(Finish));
 }
 
-iterator_range<export_iterator> MachOObjectFile::exports(Error &Err,
-                                  const MachOObjectFile *O) const {
-  return exports(Err, getDyldInfoExportsTrie(), O);
+iterator_range<export_iterator> MachOObjectFile::exports(Error &Err) const {
+  return exports(Err, getDyldInfoExportsTrie(), this);
 }
 
 MachORebaseEntry::MachORebaseEntry(Error *E, const MachOObjectFile *O,

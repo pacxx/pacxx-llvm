@@ -94,6 +94,7 @@ bool DWARFVerifier::verifyUnitContents(DWARFUnit Unit) {
     auto Die = Unit.getDIEAtIndex(I);
     if (Die.getTag() == DW_TAG_null)
       continue;
+    NumUnitErrors += verifyDieRanges(Die);
     for (auto AttrValue : Die.attributes()) {
       NumUnitErrors += verifyDebugInfoAttribute(Die, AttrValue);
       NumUnitErrors += verifyDebugInfoForm(Die, AttrValue);
@@ -207,6 +208,19 @@ bool DWARFVerifier::handleDebugInfo() {
   }
   NumDebugInfoErrors += verifyDebugInfoReferences();
   return (isHeaderChainValid && NumDebugInfoErrors == 0);
+}
+
+unsigned DWARFVerifier::verifyDieRanges(const DWARFDie &Die) {
+  unsigned NumErrors = 0;
+  for (auto Range : Die.getAddressRanges()) {
+    if (Range.LowPC >= Range.HighPC) {
+      ++NumErrors;
+      OS << format("error: Invalid address range [0x%08" PRIx64
+                   " - 0x%08" PRIx64 "].\n",
+                   Range.LowPC, Range.HighPC);
+    }
+  }
+  return NumErrors;
 }
 
 unsigned DWARFVerifier::verifyDebugInfoAttribute(const DWARFDie &Die,
@@ -450,94 +464,123 @@ bool DWARFVerifier::handleDebugLine() {
   return NumDebugLineErrors == 0;
 }
 
-bool DWARFVerifier::handleAppleNames() {
-  NumAppleNamesErrors = 0;
-  const DWARFObject &D = DCtx.getDWARFObj();
-  DWARFDataExtractor AppleNamesSection(D, D.getAppleNamesSection(),
-                                       DCtx.isLittleEndian(), 0);
-  DataExtractor StrData(D.getStringSection(), DCtx.isLittleEndian(), 0);
-  DWARFAcceleratorTable AppleNames(AppleNamesSection, StrData);
+unsigned DWARFVerifier::verifyAccelTable(const DWARFSection *AccelSection,
+                                         DataExtractor *StrData,
+                                         const char *SectionName) {
+  unsigned NumErrors = 0;
+  DWARFDataExtractor AccelSectionData(DCtx.getDWARFObj(), *AccelSection,
+                                      DCtx.isLittleEndian(), 0);
+  DWARFAcceleratorTable AccelTable(AccelSectionData, *StrData);
 
-  if (!AppleNames.extract()) {
-    return true;
+  OS << "Verifying " << SectionName << "...\n";
+  // Verify that the fixed part of the header is not too short.
+
+  if (!AccelSectionData.isValidOffset(AccelTable.getSizeHdr())) {
+    OS << "\terror: Section is too small to fit a section header.\n";
+    return 1;
   }
-
-  OS << "Verifying .apple_names...\n";
-
+  // Verify that the section is not too short.
+  if (!AccelTable.extract()) {
+    OS << "\terror: Section is smaller than size described in section header.\n";
+    return 1;
+  }
   // Verify that all buckets have a valid hash index or are empty.
-  uint32_t NumBuckets = AppleNames.getNumBuckets();
-  uint32_t NumHashes = AppleNames.getNumHashes();
+  uint32_t NumBuckets = AccelTable.getNumBuckets();
+  uint32_t NumHashes = AccelTable.getNumHashes();
 
   uint32_t BucketsOffset =
-      AppleNames.getSizeHdr() + AppleNames.getHeaderDataLength();
+      AccelTable.getSizeHdr() + AccelTable.getHeaderDataLength();
   uint32_t HashesBase = BucketsOffset + NumBuckets * 4;
   uint32_t OffsetsBase = HashesBase + NumHashes * 4;
-
   for (uint32_t BucketIdx = 0; BucketIdx < NumBuckets; ++BucketIdx) {
-    uint32_t HashIdx = AppleNamesSection.getU32(&BucketsOffset);
+    uint32_t HashIdx = AccelSectionData.getU32(&BucketsOffset);
     if (HashIdx >= NumHashes && HashIdx != UINT32_MAX) {
-      OS << format("error: Bucket[%d] has invalid hash index: %u\n", BucketIdx,
+      OS << format("\terror: Bucket[%d] has invalid hash index: %u.\n", BucketIdx,
                    HashIdx);
-      ++NumAppleNamesErrors;
+      ++NumErrors;
     }
   }
-
-  uint32_t NumAtoms = AppleNames.getAtomsDesc().size();
+  uint32_t NumAtoms = AccelTable.getAtomsDesc().size();
   if (NumAtoms == 0) {
-    OS << "error: no atoms; failed to read HashData\n";
-    ++NumAppleNamesErrors;
-    return false;
+    OS << "\terror: no atoms; failed to read HashData.\n";
+    return 1;
   }
-
-  if (!AppleNames.validateForms()) {
-    OS << "error: unsupported form; failed to read HashData\n";
-    ++NumAppleNamesErrors;
-    return false;
+  if (!AccelTable.validateForms()) {
+    OS << "\terror: unsupported form; failed to read HashData.\n";
+    return 1;
   }
 
   for (uint32_t HashIdx = 0; HashIdx < NumHashes; ++HashIdx) {
     uint32_t HashOffset = HashesBase + 4 * HashIdx;
     uint32_t DataOffset = OffsetsBase + 4 * HashIdx;
-    uint32_t Hash = AppleNamesSection.getU32(&HashOffset);
-    uint32_t HashDataOffset = AppleNamesSection.getU32(&DataOffset);
-    if (!AppleNamesSection.isValidOffsetForDataOfSize(HashDataOffset,
-                                                      sizeof(uint64_t))) {
-      OS << format("error: Hash[%d] has invalid HashData offset: 0x%08x\n",
+    uint32_t Hash = AccelSectionData.getU32(&HashOffset);
+    uint32_t HashDataOffset = AccelSectionData.getU32(&DataOffset);
+    if (!AccelSectionData.isValidOffsetForDataOfSize(HashDataOffset,
+                                                     sizeof(uint64_t))) {
+      OS << format("\terror: Hash[%d] has invalid HashData offset: 0x%08x.\n",
                    HashIdx, HashDataOffset);
-      ++NumAppleNamesErrors;
+      ++NumErrors;
     }
 
     uint32_t StrpOffset;
     uint32_t StringOffset;
     uint32_t StringCount = 0;
-    uint32_t DieOffset = dwarf::DW_INVALID_OFFSET;
-
-    while ((StrpOffset = AppleNamesSection.getU32(&HashDataOffset)) != 0) {
+    unsigned Offset;
+    unsigned Tag;
+    while ((StrpOffset = AccelSectionData.getU32(&HashDataOffset)) != 0) {
       const uint32_t NumHashDataObjects =
-          AppleNamesSection.getU32(&HashDataOffset);
+          AccelSectionData.getU32(&HashDataOffset);
       for (uint32_t HashDataIdx = 0; HashDataIdx < NumHashDataObjects;
            ++HashDataIdx) {
-        DieOffset = AppleNames.readAtoms(HashDataOffset);
-        if (!DCtx.getDIEForOffset(DieOffset)) {
+        std::tie(Offset, Tag) = AccelTable.readAtoms(HashDataOffset);
+        auto Die = DCtx.getDIEForOffset(Offset);
+        if (!Die) {
           const uint32_t BucketIdx =
               NumBuckets ? (Hash % NumBuckets) : UINT32_MAX;
           StringOffset = StrpOffset;
-          const char *Name = StrData.getCStr(&StringOffset);
+          const char *Name = StrData->getCStr(&StringOffset);
           if (!Name)
             Name = "<NULL>";
 
           OS << format(
-              "error: .apple_names Bucket[%d] Hash[%d] = 0x%08x "
+              "\terror: %s Bucket[%d] Hash[%d] = 0x%08x "
               "Str[%u] = 0x%08x "
               "DIE[%d] = 0x%08x is not a valid DIE offset for \"%s\".\n",
-              BucketIdx, HashIdx, Hash, StringCount, StrpOffset, HashDataIdx,
-              DieOffset, Name);
+              SectionName, BucketIdx, HashIdx, Hash, StringCount, StrpOffset,
+              HashDataIdx, Offset, Name);
 
-          ++NumAppleNamesErrors;
+          ++NumErrors;
+          continue;
+        }
+        if ((Tag != dwarf::DW_TAG_null) && (Die.getTag() != Tag)) {
+          OS << "\terror: Tag " << dwarf::TagString(Tag)
+             << " in accelerator table does not match Tag "
+             << dwarf::TagString(Die.getTag()) << " of DIE[" << HashDataIdx
+             << "].\n";
+          ++NumErrors;
         }
       }
       ++StringCount;
     }
   }
-  return NumAppleNamesErrors == 0;
+  return NumErrors;
+}
+
+bool DWARFVerifier::handleAccelTables() {
+  const DWARFObject &D = DCtx.getDWARFObj();
+  DataExtractor StrData(D.getStringSection(), DCtx.isLittleEndian(), 0);
+  unsigned NumErrors = 0;
+  if (!D.getAppleNamesSection().Data.empty())
+    NumErrors +=
+        verifyAccelTable(&D.getAppleNamesSection(), &StrData, ".apple_names");
+  if (!D.getAppleTypesSection().Data.empty())
+    NumErrors +=
+        verifyAccelTable(&D.getAppleTypesSection(), &StrData, ".apple_types");
+  if (!D.getAppleNamespacesSection().Data.empty())
+    NumErrors += verifyAccelTable(&D.getAppleNamespacesSection(), &StrData,
+                                  ".apple_namespaces");
+  if (!D.getAppleObjCSection().Data.empty())
+    NumErrors +=
+        verifyAccelTable(&D.getAppleObjCSection(), &StrData, ".apple_objc");
+  return NumErrors == 0;
 }
