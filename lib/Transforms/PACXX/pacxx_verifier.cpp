@@ -64,7 +64,7 @@ struct PACXXVerifier : public ModulePass {
 
 char PACXXVerifier::ID = 0;
 static RegisterPass<PACXXVerifier>
-    X("pacxx_verifier", "PACXX: verifier to check if the llvm module is valid.", false,
+    X("pacxx_verifier", "PACXX: verifier to check if the llvm module is valid for the PACXX RT.", false,
       false);
 }
 

@@ -63,6 +63,24 @@ struct NVVMPass : public ModulePass {
                           "v128:128:128-n16:32:64");
     }
 
+    auto replaceSubstring = [](string Str, const StringRef &From,
+                               const StringRef &To) {
+      size_t Pos = 0;
+      while ((Pos = Str.find(From, Pos)) != std::string::npos) {
+        Str.replace(Pos, From.size(), To.data(), To.size());
+        Pos += To.size();
+      }
+      return Str;
+    };
+
+    // replace the . to _ according to the PTX standard
+    for (auto &GV : M.getGlobalList()) {
+      if (GV.getType()->isPointerTy() && GV.getType()->getAddressSpace() == 3) {
+        auto newName = replaceSubstring(GV.getName(), ".", "_");
+        GV.setName(newName);
+      }
+    }
+
     auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
     auto visitor = make_CallVisitor([](CallInst *I) {

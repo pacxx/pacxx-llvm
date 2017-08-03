@@ -44,43 +44,80 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
   struct IntrinsicVisitor : public InstVisitor<IntrinsicVisitor> {
 
     void visitCallInst(CallInst &CI) {
-
       auto F = CI.getCalledFunction();
 
       if (F && F->isIntrinsic()) {
-        if (F->getIntrinsicID() == Intrinsic::masked_load) {
-          //if (!TTI->isLegalMaskedLoad(CI.getArgOperand(0)->getType())) {
-            // declare <N x T> @llvm.masked.load(<N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>, <N x T> <passthru>)
-            ConstantInt *constint = cast<ConstantInt>(CI.getArgOperand(1));
-            unsigned int alignment = constint->getZExtValue();
-
-            auto mask = CI.getArgOperand(2);
-
-            IRBuilder<> builder(&CI);
-            auto unmasked_load = builder.CreateLoad(CI.getArgOperand(0));
-            unmasked_load->setAlignment(alignment);
-            auto select = builder.CreateSelect(mask, unmasked_load, CI.getArgOperand(3));
-            CI.replaceAllUsesWith(select);
+        if (F->getIntrinsicID() == Intrinsic::masked_load || F->getIntrinsicID() == Intrinsic::masked_store) {
+      //    if (!TTI->isLegalMaskedLoad(CI.getArgOperand(0)->getType())
+      //        || !TTI->isLegalMaskedStore(CI.getArgOperand(0)->getType()))
             dead.push_back(&CI);
-        //  }
         }
+      }
+    }
 
-        if (F->getIntrinsicID() == Intrinsic::masked_store) {
-          //if (!TTI->isLegalMaskedStore(CI.getArgOperand(0)->getType())) {
-            // declare void @llvm.masked.store (<N x T> <value>, <N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>)
-            ConstantInt *constint = cast<ConstantInt>(CI.getArgOperand(2));
+    void transform() {
+      for (auto CI : dead) {
+
+        auto F = CI->getCalledFunction();
+
+        if (F && F->isIntrinsic()) {
+          if (F->getIntrinsicID() == Intrinsic::masked_load) {
+            // declare <N x T> @llvm.masked.load(<N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>, <N x T> <passthru>)
+            ConstantInt *constint = cast<ConstantInt>(CI->getArgOperand(1));
             unsigned int alignment = constint->getZExtValue();
 
-            IRBuilder<> builder(&CI);
-            auto load = builder.CreateLoad(CI.getArgOperand(1));
+            auto mask = CI->getArgOperand(2);
+
+            IRBuilder<> builder(CI);
+            auto reduction = builder.CreateOrReduce(mask);
+
+            auto BB = CI->getParent();
+            auto GuardBB = BB->splitBasicBlock(CI);
+            auto I = BB->getTerminator();
+            IRBuilder<> bb_builder(I);
+
+            auto unmasked_load = builder.CreateLoad(CI->getArgOperand(0));
+            unmasked_load->setAlignment(alignment);
+            auto select = builder.CreateSelect(mask, unmasked_load, CI->getArgOperand(3));
+            auto Successor = GuardBB->splitBasicBlock(CI);
+
+            bb_builder.CreateCondBr(reduction, GuardBB, Successor);
+            I->eraseFromParent();
+
+            IRBuilder<> succ_builder(CI);
+            auto phi = succ_builder.CreatePHI(select->getType(), 2);
+            phi->addIncoming(select, GuardBB);
+            phi->addIncoming(UndefValue::get(select->getType()), BB);
+            CI->replaceAllUsesWith(phi);
+          }
+
+          if (F->getIntrinsicID() == Intrinsic::masked_store) {
+            // declare void @llvm.masked.store (<N x T> <value>, <N x T>* <ptr>, i32 <alignment>, <N x i1> <mask>)
+
+            ConstantInt *constint = cast<ConstantInt>(CI->getArgOperand(2));
+            unsigned int alignment = constint->getZExtValue();
+
+            auto mask = CI->getArgOperand(3);
+
+            IRBuilder<> builder(CI);
+            auto reduction = builder.CreateOrReduce(mask);
+
+            auto BB = CI->getParent();
+            auto GuardBB = BB->splitBasicBlock(CI);
+            auto I = BB->getTerminator();
+            IRBuilder<> bb_builder(I);
+
+            auto load = builder.CreateLoad(CI->getArgOperand(1));
             load->setAlignment(alignment);
-            auto select = builder.CreateSelect(CI.getArgOperand(3),
-                                               CI.getArgOperand(0),
+            auto select = builder.CreateSelect(CI->getArgOperand(3),
+                                               CI->getArgOperand(0),
                                                load);//UndefValue::get(CI.getArgOperand(0)->getType()));
-            auto store = builder.CreateStore(select, CI.getArgOperand(1));
+            auto store = builder.CreateStore(select, CI->getArgOperand(1));
             store->setAlignment(alignment);
-            dead.push_back(&CI);
-        //  }
+            auto Successor = GuardBB->splitBasicBlock(CI);
+            bb_builder.CreateCondBr(reduction, GuardBB, Successor);
+            I->eraseFromParent();
+          }
         }
       }
 
@@ -92,7 +129,7 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
       dead.clear();
     }
 
-    std::vector<Instruction *> dead;
+    std::vector<CallInst *> dead;
     TargetTransformInfo *TTI;
   } visitor;
 
@@ -103,6 +140,7 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
     visitor.visit(F);
   }
 
+  visitor.transform();
   visitor.finalize();
   return modified;
 }

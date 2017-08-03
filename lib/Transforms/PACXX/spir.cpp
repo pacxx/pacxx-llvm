@@ -125,6 +125,7 @@ struct SPIRPass : public ModulePass {
       }
     });
 
+    // handle parameters to bring them into AS 1
     for (auto &F : kernels) {
       visitor.visit(F);
 
@@ -194,7 +195,7 @@ struct SPIRPass : public ModulePass {
     }
 
     kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
-
+    // handle shared memory declarations
     map<Function *, unsigned> SMMapping;
     map<GlobalVariable *, Constant *> repGV;
     for (auto &GV : M.globals()) {
@@ -233,6 +234,7 @@ struct SPIRPass : public ModulePass {
       TB->replaceAllUsesWith(barrier);
     }
 
+    // delete old kernel functions
     cleanupDeadCode(_M);
     return modified;
   }
