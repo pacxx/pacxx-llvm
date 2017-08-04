@@ -69,8 +69,10 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             auto mask = CI->getArgOperand(2);
 
             IRBuilder<> builder(CI);
-            auto reduction = builder.CreateOrReduce(mask);
-
+           // auto reduction = builder.CreateOrReduce(mask);
+            auto Ty = cast<VectorType>(mask->getType());
+            auto cast = builder.CreateBitCast(mask, Type::getIntNTy(builder.getContext(), Ty->getVectorNumElements()));
+            auto cmp = builder.CreateICmpNE(cast, ConstantInt::get(cast->getType(), 0));
             auto BB = CI->getParent();
             auto GuardBB = BB->splitBasicBlock(CI);
             auto I = BB->getTerminator();
@@ -81,7 +83,7 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             auto select = builder.CreateSelect(mask, unmasked_load, CI->getArgOperand(3));
             auto Successor = GuardBB->splitBasicBlock(CI);
 
-            bb_builder.CreateCondBr(reduction, GuardBB, Successor);
+            bb_builder.CreateCondBr(cmp, GuardBB, Successor);
             I->eraseFromParent();
 
             IRBuilder<> succ_builder(CI);
@@ -100,7 +102,10 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             auto mask = CI->getArgOperand(3);
 
             IRBuilder<> builder(CI);
-            auto reduction = builder.CreateOrReduce(mask);
+            //auto reduction = builder.CreateOrReduce(mask);
+            auto Ty = cast<VectorType>(mask->getType());
+            auto cast = builder.CreateBitCast(mask, Type::getIntNTy(builder.getContext(), Ty->getVectorNumElements()));
+            auto cmp = builder.CreateICmpNE(cast, ConstantInt::get(cast->getType(), 0));
 
             auto BB = CI->getParent();
             auto GuardBB = BB->splitBasicBlock(CI);
@@ -115,7 +120,7 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             auto store = builder.CreateStore(select, CI->getArgOperand(1));
             store->setAlignment(alignment);
             auto Successor = GuardBB->splitBasicBlock(CI);
-            bb_builder.CreateCondBr(reduction, GuardBB, Successor);
+            bb_builder.CreateCondBr(cmp, GuardBB, Successor);
             I->eraseFromParent();
           }
         }
