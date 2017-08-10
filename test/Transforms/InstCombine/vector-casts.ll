@@ -15,8 +15,8 @@ define <2 x i1> @test1(<2 x i64> %a) {
 ; The ashr turns into an lshr.
 define <2 x i64> @test2(<2 x i64> %a) {
 ; CHECK-LABEL: @test2(
-; CHECK-NEXT:    [[B:%.*]] = and <2 x i64> %a, <i64 65534, i64 65534>
-; CHECK-NEXT:    [[TMP1:%.*]] = lshr exact <2 x i64> [[B]], <i64 1, i64 1>
+; CHECK-NEXT:    [[B:%.*]] = lshr <2 x i64> [[A:%.*]], <i64 1, i64 1>
+; CHECK-NEXT:    [[TMP1:%.*]] = and <2 x i64> [[B]], <i64 32767, i64 32767>
 ; CHECK-NEXT:    ret <2 x i64> [[TMP1]]
 ;
   %b = and <2 x i64> %a, <i64 65535, i64 65535>
@@ -61,7 +61,7 @@ define <2 x i64> @test5(<4 x float> %a, <4 x float> %b) {
 ; CHECK-LABEL: @test5(
 ; CHECK-NEXT:    [[CMP:%.*]] = fcmp ult <4 x float> %a, zeroinitializer
 ; CHECK-NEXT:    [[CMP4:%.*]] = fcmp ult <4 x float> %b, zeroinitializer
-; CHECK-NEXT:    [[NARROW:%.*]] = and <4 x i1> [[CMP4]], [[CMP]]
+; CHECK-NEXT:    [[NARROW:%.*]] = and <4 x i1> [[CMP]], [[CMP4]]
 ; CHECK-NEXT:    [[AND:%.*]] = sext <4 x i1> [[NARROW]] to <4 x i32>
 ; CHECK-NEXT:    [[CONV:%.*]] = bitcast <4 x i32> [[AND]] to <2 x i64>
 ; CHECK-NEXT:    ret <2 x i64> [[CONV]]

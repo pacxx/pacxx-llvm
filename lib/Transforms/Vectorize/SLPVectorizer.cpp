@@ -293,6 +293,26 @@ static bool isOdd(unsigned Value) {
   return Value & 1;
 }
 
+static bool sameOpcodeOrAlt(unsigned Opcode, unsigned AltOpcode,
+                            unsigned CheckedOpcode) {
+  return Opcode == CheckedOpcode || AltOpcode == CheckedOpcode;
+}
+
+/// Chooses the correct key for scheduling data. If \p Op has the same (or
+/// alternate) opcode as \p OpValue, the key is \p Op. Otherwise the key is \p
+/// OpValue.
+static Value *isOneOf(Value *OpValue, Value *Op) {
+  auto *I = dyn_cast<Instruction>(Op);
+  if (!I)
+    return OpValue;
+  auto *OpInst = cast<Instruction>(OpValue);
+  unsigned OpInstOpcode = OpInst->getOpcode();
+  unsigned IOpcode = I->getOpcode();
+  if (sameOpcodeOrAlt(OpInstOpcode, getAltOpcode(OpInstOpcode), IOpcode))
+    return Op;
+  return OpValue;
+}
+
 ///\returns bool representing if Opcode \p Op can be part
 /// of an alternate sequence which can later be merged as
 /// a ShuffleVector instruction.
@@ -565,7 +585,7 @@ private:
 
   /// \brief Set the Builder insert point to one after the last instruction in
   /// the bundle
-  void setInsertPointAfterBundle(ArrayRef<Value *> VL);
+  void setInsertPointAfterBundle(ArrayRef<Value *> VL, Value *OpValue);
 
   /// \returns a vector from a collection of scalars in \p VL.
   Value *Gather(ArrayRef<Value *> VL, VectorType *Ty);
@@ -751,9 +771,10 @@ private:
         : Inst(nullptr), FirstInBundle(nullptr), NextInBundle(nullptr),
           NextLoadStore(nullptr), SchedulingRegionID(0), SchedulingPriority(0),
           Dependencies(InvalidDeps), UnscheduledDeps(InvalidDeps),
-          UnscheduledDepsInBundle(InvalidDeps), IsScheduled(false) {}
+          UnscheduledDepsInBundle(InvalidDeps), IsScheduled(false),
+          OpValue(nullptr) {}
 
-    void init(int BlockSchedulingRegionID) {
+    void init(int BlockSchedulingRegionID, Value *OpVal) {
       FirstInBundle = this;
       NextInBundle = nullptr;
       NextLoadStore = nullptr;
@@ -761,6 +782,7 @@ private:
       SchedulingRegionID = BlockSchedulingRegionID;
       UnscheduledDepsInBundle = UnscheduledDeps;
       clearDependencies();
+      OpValue = OpVal;
     }
 
     /// Returns true if the dependency information has been calculated.
@@ -865,6 +887,9 @@ private:
     /// True if this instruction is scheduled (or considered as scheduled in the
     /// dry-run).
     bool IsScheduled;
+
+    /// Opcode of the current instruction in the schedule data.
+    Value *OpValue;
   };
 
 #ifndef NDEBUG
@@ -2478,14 +2503,18 @@ void BoUpSLP::reorderInputsAccordingToOpcode(ArrayRef<Value *> VL,
   }
 }
 
-void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL) {
+void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL, Value *OpValue) {
 
   // Get the basic block this bundle is in. All instructions in the bundle
   // should be in this block.
-  auto *Front = cast<Instruction>(VL.front());
+  auto *Front = cast<Instruction>(OpValue);
   auto *BB = Front->getParent();
-  assert(all_of(make_range(VL.begin(), VL.end()), [&](Value *V) -> bool {
-    return cast<Instruction>(V)->getParent() == BB;
+  const unsigned Opcode = cast<Instruction>(OpValue)->getOpcode();
+  const unsigned AltOpcode = getAltOpcode(Opcode);
+  assert(all_of(make_range(VL.begin(), VL.end()), [=](Value *V) -> bool {
+    return !sameOpcodeOrAlt(Opcode, AltOpcode,
+                            cast<Instruction>(V)->getOpcode()) ||
+           cast<Instruction>(V)->getParent() == BB;
   }));
 
   // The last instruction in the bundle in program order.
@@ -2496,10 +2525,12 @@ void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL) {
   // VL.back() and iterate over schedule data until we reach the end of the
   // bundle. The end of the bundle is marked by null ScheduleData.
   if (BlocksSchedules.count(BB)) {
-    auto *Bundle = BlocksSchedules[BB]->getScheduleData(VL.back());
+    auto *Bundle =
+        BlocksSchedules[BB]->getScheduleData(isOneOf(OpValue, VL.back()));
     if (Bundle && Bundle->isPartOfBundle())
       for (; Bundle; Bundle = Bundle->NextInBundle)
-        LastInst = Bundle->Inst;
+        if (Bundle->OpValue == Bundle->Inst)
+          LastInst = Bundle->Inst;
   }
 
   // LastInst can still be null at this point if there's either not an entry
@@ -2523,7 +2554,7 @@ void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL) {
   if (!LastInst) {
     SmallPtrSet<Value *, 16> Bundle(VL.begin(), VL.end());
     for (auto &I : make_range(BasicBlock::iterator(Front), BB->end())) {
-      if (Bundle.erase(&I))
+      if (Bundle.erase(&I) && sameOpcodeOrAlt(Opcode, AltOpcode, I.getOpcode()))
         LastInst = &I;
       if (Bundle.empty())
         break;
@@ -2601,7 +2632,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
   VectorType *VecTy = VectorType::get(ScalarTy, E->Scalars.size());
 
   if (E->NeedToGather) {
-    setInsertPointAfterBundle(E->Scalars);
+    setInsertPointAfterBundle(E->Scalars, VL0);
     auto *V = Gather(E->Scalars, VecTy);
     E->VectorizedValue = V;
     return V;
@@ -2651,7 +2682,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         E->VectorizedValue = V;
         return V;
       }
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
       auto *V = Gather(E->Scalars, VecTy);
       E->VectorizedValue = V;
       return V;
@@ -2666,7 +2697,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         E->VectorizedValue = V;
         return propagateMetadata(V, E->Scalars);
       }
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
       auto *V = Gather(E->Scalars, VecTy);
       E->VectorizedValue = V;
       return V;
@@ -2687,7 +2718,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       for (Value *V : E->Scalars)
         INVL.push_back(cast<Instruction>(V)->getOperand(0));
 
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       Value *InVec = vectorizeTree(INVL);
 
@@ -2708,7 +2739,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         RHSV.push_back(cast<Instruction>(V)->getOperand(1));
       }
 
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       Value *L = vectorizeTree(LHSV);
       Value *R = vectorizeTree(RHSV);
@@ -2736,7 +2767,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         FalseVec.push_back(cast<Instruction>(V)->getOperand(2));
       }
 
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       Value *Cond = vectorizeTree(CondVec);
       Value *True = vectorizeTree(TrueVec);
@@ -2777,7 +2808,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
           RHSVL.push_back(cast<Instruction>(V)->getOperand(1));
         }
 
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       Value *LHS = vectorizeTree(LHSVL);
       Value *RHS = vectorizeTree(RHSVL);
@@ -2799,7 +2830,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     case Instruction::Load: {
       // Loads are inserted at the head of the tree because we don't want to
       // sink them all the way down past store instructions.
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       LoadInst *LI = cast<LoadInst>(VL0);
       Type *ScalarLoadTy = LI->getType();
@@ -2834,7 +2865,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       for (Value *V : E->Scalars)
         ValueOp.push_back(cast<StoreInst>(V)->getValueOperand());
 
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       Value *VecValue = vectorizeTree(ValueOp);
       Value *VecPtr = Builder.CreateBitCast(SI->getPointerOperand(),
@@ -2857,7 +2888,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       return propagateMetadata(S, E->Scalars);
     }
     case Instruction::GetElementPtr: {
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       ValueList Op0VL;
       for (Value *V : E->Scalars)
@@ -2888,7 +2919,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     }
     case Instruction::Call: {
       CallInst *CI = cast<CallInst>(VL0);
-      setInsertPointAfterBundle(VL0);
+      setInsertPointAfterBundle(E->Scalars, VL0);
       Function *FI;
       Intrinsic::ID IID  = Intrinsic::not_intrinsic;
       Value *ScalarArg = nullptr;
@@ -2939,7 +2970,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       ValueList LHSVL, RHSVL;
       assert(isa<BinaryOperator>(VL0) && "Invalid Shuffle Vector Operand");
       reorderAltShuffleOperands(E->Scalars, LHSVL, RHSVL);
-      setInsertPointAfterBundle(E->Scalars);
+      setInsertPointAfterBundle(E->Scalars, VL0);
 
       Value *LHS = vectorizeTree(LHSVL);
       Value *RHS = vectorizeTree(RHSVL);
@@ -3421,7 +3452,7 @@ void BoUpSLP::BlockScheduling::initScheduleData(Instruction *FromI,
     }
     assert(!isInSchedulingRegion(SD) &&
            "new ScheduleData already in scheduling region");
-    SD->init(SchedulingRegionID);
+    SD->init(SchedulingRegionID, I);
 
     if (I->mayReadOrWriteMemory()) {
       // Update the linked list of memory accessing instructions.
@@ -4356,7 +4387,7 @@ bool SLPVectorizerPass::tryToVectorize(Instruction *I, BoUpSLP &R) {
   if (!I)
     return false;
 
-  if (!isa<BinaryOperator>(I))
+  if (!isa<BinaryOperator>(I) && !isa<CmpInst>(I))
     return false;
 
   Value *P = I->getParent();
@@ -4894,39 +4925,30 @@ private:
 ///  %rb = insertelement <4 x float> %ra, float %s1, i32 1
 ///  %rc = insertelement <4 x float> %rb, float %s2, i32 2
 ///  %rd = insertelement <4 x float> %rc, float %s3, i32 3
+///  starting from the last insertelement instruction.
 ///
 /// Returns true if it matches
 ///
-static bool findBuildVector(InsertElementInst *FirstInsertElem,
+static bool findBuildVector(InsertElementInst *LastInsertElem,
                             SmallVectorImpl<Value *> &BuildVector,
                             SmallVectorImpl<Value *> &BuildVectorOpds) {
-  if (!isa<UndefValue>(FirstInsertElem->getOperand(0)))
-    return false;
-
-  InsertElementInst *IE = FirstInsertElem;
-  while (true) {
-    BuildVector.push_back(IE);
-    BuildVectorOpds.push_back(IE->getOperand(1));
-
-    if (IE->use_empty())
+  Value *V = nullptr;
+  do {
+    BuildVector.push_back(LastInsertElem);
+    BuildVectorOpds.push_back(LastInsertElem->getOperand(1));
+    V = LastInsertElem->getOperand(0);
+    if (isa<UndefValue>(V))
+      break;
+    LastInsertElem = dyn_cast<InsertElementInst>(V);
+    if (!LastInsertElem || !LastInsertElem->hasOneUse())
       return false;
-
-    InsertElementInst *NextUse = dyn_cast<InsertElementInst>(IE->user_back());
-    if (!NextUse)
-      return true;
-
-    // If this isn't the final use, make sure the next insertelement is the only
-    // use. It's OK if the final constructed vector is used multiple times
-    if (!IE->hasOneUse())
-      return false;
-
-    IE = NextUse;
-  }
-
-  return false;
+  } while (true);
+  std::reverse(BuildVector.begin(), BuildVector.end());
+  std::reverse(BuildVectorOpds.begin(), BuildVectorOpds.end());
+  return true;
 }
 
-/// \brief Like findBuildVector, but looks backwards for construction of aggregate.
+/// \brief Like findBuildVector, but looks for construction of aggregate.
 ///
 /// \return true if it matches.
 static bool findBuildAggregate(InsertValueInst *IV,
@@ -5111,6 +5133,64 @@ bool SLPVectorizerPass::vectorizeRootInstruction(PHINode *P, Value *V,
                                                   ExtraVectorization);
 }
 
+bool SLPVectorizerPass::vectorizeInsertValueInst(InsertValueInst *IVI,
+                                                 BasicBlock *BB, BoUpSLP &R) {
+  const DataLayout &DL = BB->getModule()->getDataLayout();
+  if (!R.canMapToVector(IVI->getType(), DL))
+    return false;
+
+  SmallVector<Value *, 16> BuildVector;
+  SmallVector<Value *, 16> BuildVectorOpds;
+  if (!findBuildAggregate(IVI, BuildVector, BuildVectorOpds))
+    return false;
+
+  DEBUG(dbgs() << "SLP: array mappable to vector: " << *IVI << "\n");
+  return tryToVectorizeList(BuildVectorOpds, R, BuildVector, false);
+}
+
+bool SLPVectorizerPass::vectorizeInsertElementInst(InsertElementInst *IEI,
+                                                   BasicBlock *BB, BoUpSLP &R) {
+  SmallVector<Value *, 16> BuildVector;
+  SmallVector<Value *, 16> BuildVectorOpds;
+  if (!findBuildVector(IEI, BuildVector, BuildVectorOpds))
+    return false;
+
+  // Vectorize starting with the build vector operands ignoring the BuildVector
+  // instructions for the purpose of scheduling and user extraction.
+  return tryToVectorizeList(BuildVectorOpds, R, BuildVector);
+}
+
+bool SLPVectorizerPass::vectorizeCmpInst(CmpInst *CI, BasicBlock *BB,
+                                         BoUpSLP &R) {
+  if (tryToVectorizePair(CI->getOperand(0), CI->getOperand(1), R))
+    return true;
+
+  bool OpsChanged = false;
+  for (int Idx = 0; Idx < 2; ++Idx) {
+    OpsChanged |=
+        vectorizeRootInstruction(nullptr, CI->getOperand(Idx), BB, R, TTI);
+  }
+  return OpsChanged;
+}
+
+bool SLPVectorizerPass::vectorizeSimpleInstructions(
+    SmallVectorImpl<WeakVH> &Instructions, BasicBlock *BB, BoUpSLP &R) {
+  bool OpsChanged = false;
+  for (auto &VH : reverse(Instructions)) {
+    auto *I = dyn_cast_or_null<Instruction>(VH);
+    if (!I)
+      continue;
+    if (auto *LastInsertValue = dyn_cast<InsertValueInst>(I))
+      OpsChanged |= vectorizeInsertValueInst(LastInsertValue, BB, R);
+    else if (auto *LastInsertElem = dyn_cast<InsertElementInst>(I))
+      OpsChanged |= vectorizeInsertElementInst(LastInsertElem, BB, R);
+    else if (auto *CI = dyn_cast<CmpInst>(I))
+      OpsChanged |= vectorizeCmpInst(CI, BB, R);
+  }
+  Instructions.clear();
+  return OpsChanged;
+}
+
 bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
   bool Changed = false;
   SmallVector<Value *, 4> Incoming;
@@ -5170,10 +5250,21 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
 
   VisitedInstrs.clear();
 
+  SmallVector<WeakVH, 8> PostProcessInstructions;
+  SmallDenseSet<Instruction *, 4> KeyNodes;
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; it++) {
     // We may go through BB multiple times so skip the one we have checked.
-    if (!VisitedInstrs.insert(&*it).second)
+    if (!VisitedInstrs.insert(&*it).second) {
+      if (it->use_empty() && KeyNodes.count(&*it) > 0 &&
+          vectorizeSimpleInstructions(PostProcessInstructions, BB, R)) {
+        // We would like to start over since some instructions are deleted
+        // and the iterator may become invalid value.
+        Changed = true;
+        it = BB->begin();
+        e = BB->end();
+      }
       continue;
+    }
 
     if (isa<DbgInfoIntrinsic>(it))
       continue;
@@ -5195,96 +5286,37 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
       continue;
     }
 
-    if (ShouldStartVectorizeHorAtStore) {
-      if (StoreInst *SI = dyn_cast<StoreInst>(it)) {
-        // Try to match and vectorize a horizontal reduction.
-        if (vectorizeRootInstruction(nullptr, SI->getValueOperand(), BB, R,
-                                     TTI)) {
-          Changed = true;
-          it = BB->begin();
-          e = BB->end();
-          continue;
+    // Ran into an instruction without users, like terminator, or function call
+    // with ignored return value, store. Ignore unused instructions (basing on
+    // instruction type, except for CallInst and InvokeInst).
+    if (it->use_empty() && (it->getType()->isVoidTy() || isa<CallInst>(it) ||
+                            isa<InvokeInst>(it))) {
+      KeyNodes.insert(&*it);
+      bool OpsChanged = false;
+      if (ShouldStartVectorizeHorAtStore || !isa<StoreInst>(it)) {
+        for (auto *V : it->operand_values()) {
+          // Try to match and vectorize a horizontal reduction.
+          OpsChanged |= vectorizeRootInstruction(nullptr, V, BB, R, TTI);
         }
       }
-    }
-
-    // Try to vectorize horizontal reductions feeding into a return.
-    if (ReturnInst *RI = dyn_cast<ReturnInst>(it)) {
-      if (RI->getNumOperands() != 0) {
-        // Try to match and vectorize a horizontal reduction.
-        if (vectorizeRootInstruction(nullptr, RI->getOperand(0), BB, R, TTI)) {
-          Changed = true;
-          it = BB->begin();
-          e = BB->end();
-          continue;
-        }
-      }
-    }
-
-    // Try to vectorize trees that start at compare instructions.
-    if (CmpInst *CI = dyn_cast<CmpInst>(it)) {
-      if (tryToVectorizePair(CI->getOperand(0), CI->getOperand(1), R)) {
-        Changed = true;
+      // Start vectorization of post-process list of instructions from the
+      // top-tree instructions to try to vectorize as many instructions as
+      // possible.
+      OpsChanged |= vectorizeSimpleInstructions(PostProcessInstructions, BB, R);
+      if (OpsChanged) {
         // We would like to start over since some instructions are deleted
         // and the iterator may become invalid value.
-        it = BB->begin();
-        e = BB->end();
-        continue;
-      }
-
-      for (int I = 0; I < 2; ++I) {
-        if (vectorizeRootInstruction(nullptr, CI->getOperand(I), BB, R, TTI)) {
-          Changed = true;
-          // We would like to start over since some instructions are deleted
-          // and the iterator may become invalid value.
-          it = BB->begin();
-          e = BB->end();
-          break;
-        }
-      }
-      continue;
-    }
-
-    // Try to vectorize trees that start at insertelement instructions.
-    if (InsertElementInst *FirstInsertElem = dyn_cast<InsertElementInst>(it)) {
-      SmallVector<Value *, 16> BuildVector;
-      SmallVector<Value *, 16> BuildVectorOpds;
-      if (!findBuildVector(FirstInsertElem, BuildVector, BuildVectorOpds))
-        continue;
-
-      // Vectorize starting with the build vector operands ignoring the
-      // BuildVector instructions for the purpose of scheduling and user
-      // extraction.
-      if (tryToVectorizeList(BuildVectorOpds, R, BuildVector)) {
         Changed = true;
         it = BB->begin();
         e = BB->end();
-      }
-
-      continue;
-    }
-
-    // Try to vectorize trees that start at insertvalue instructions feeding into
-    // a store.
-    if (StoreInst *SI = dyn_cast<StoreInst>(it)) {
-      if (InsertValueInst *LastInsertValue = dyn_cast<InsertValueInst>(SI->getValueOperand())) {
-        const DataLayout &DL = BB->getModule()->getDataLayout();
-        if (R.canMapToVector(SI->getValueOperand()->getType(), DL)) {
-          SmallVector<Value *, 16> BuildVector;
-          SmallVector<Value *, 16> BuildVectorOpds;
-          if (!findBuildAggregate(LastInsertValue, BuildVector, BuildVectorOpds))
-            continue;
-
-          DEBUG(dbgs() << "SLP: store of array mappable to vector: " << *SI << "\n");
-          if (tryToVectorizeList(BuildVectorOpds, R, BuildVector, false)) {
-            Changed = true;
-            it = BB->begin();
-            e = BB->end();
-          }
-          continue;
-        }
+        continue;
       }
     }
+
+    if (isa<InsertElementInst>(it) || isa<CmpInst>(it) ||
+        isa<InsertValueInst>(it))
+      PostProcessInstructions.push_back(&*it);
+
   }
 
   return Changed;

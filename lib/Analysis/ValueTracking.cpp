@@ -54,12 +54,6 @@ const unsigned MaxDepth = 6;
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
                                               cl::Hidden, cl::init(20));
 
-// This optimization is known to cause performance regressions is some cases,
-// keep it under a temporary flag for now.
-static cl::opt<bool>
-DontImproveNonNegativePhiBits("dont-improve-non-negative-phi-bits",
-                              cl::Hidden, cl::init(true));
-
 /// Returns the bitwidth of the given scalar or pointer type. For vector types,
 /// returns the element type's bitwidth.
 static unsigned getBitWidth(Type *Ty, const DataLayout &DL) {
@@ -275,47 +269,7 @@ static void computeKnownBitsAddSub(bool Add, const Value *Op0, const Value *Op1,
   computeKnownBits(Op0, LHSKnown, Depth + 1, Q);
   computeKnownBits(Op1, Known2, Depth + 1, Q);
 
-  // Carry in a 1 for a subtract, rather than a 0.
-  uint64_t CarryIn = 0;
-  if (!Add) {
-    // Sum = LHS + ~RHS + 1
-    std::swap(Known2.Zero, Known2.One);
-    CarryIn = 1;
-  }
-
-  APInt PossibleSumZero = ~LHSKnown.Zero + ~Known2.Zero + CarryIn;
-  APInt PossibleSumOne = LHSKnown.One + Known2.One + CarryIn;
-
-  // Compute known bits of the carry.
-  APInt CarryKnownZero = ~(PossibleSumZero ^ LHSKnown.Zero ^ Known2.Zero);
-  APInt CarryKnownOne = PossibleSumOne ^ LHSKnown.One ^ Known2.One;
-
-  // Compute set of known bits (where all three relevant bits are known).
-  APInt LHSKnownUnion = LHSKnown.Zero | LHSKnown.One;
-  APInt RHSKnownUnion = Known2.Zero | Known2.One;
-  APInt CarryKnownUnion = CarryKnownZero | CarryKnownOne;
-  APInt Known = LHSKnownUnion & RHSKnownUnion & CarryKnownUnion;
-
-  assert((PossibleSumZero & Known) == (PossibleSumOne & Known) &&
-         "known bits of sum differ");
-
-  // Compute known bits of the result.
-  KnownOut.Zero = ~PossibleSumOne & Known;
-  KnownOut.One = PossibleSumOne & Known;
-
-  // Are we still trying to solve for the sign bit?
-  if (!Known.isSignBitSet()) {
-    if (NSW) {
-      // Adding two non-negative numbers, or subtracting a negative number from
-      // a non-negative one, can't wrap into negative.
-      if (LHSKnown.isNonNegative() && Known2.isNonNegative())
-        KnownOut.makeNonNegative();
-      // Adding two negative numbers, or subtracting a non-negative number from
-      // a negative one, can't wrap into non-negative.
-      else if (LHSKnown.isNegative() && Known2.isNegative())
-        KnownOut.makeNegative();
-    }
-  }
+  KnownOut = KnownBits::computeForAddSub(Add, NSW, LHSKnown, Known2);
 }
 
 static void computeKnownBitsMul(const Value *Op0, const Value *Op1, bool NSW,
@@ -1297,9 +1251,6 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
 
           Known.Zero.setLowBits(std::min(Known2.countMinTrailingZeros(),
                                          Known3.countMinTrailingZeros()));
-
-          if (DontImproveNonNegativePhiBits)
-            break;
 
           auto *OverflowOp = dyn_cast<OverflowingBinaryOperator>(LU);
           if (OverflowOp && OverflowOp->hasNoSignedWrap()) {
@@ -3994,6 +3945,62 @@ static bool isKnownNonZero(const Value *V) {
   return false;
 }
 
+/// Match clamp pattern for float types without care about NaNs or signed zeros.
+/// Given non-min/max outer cmp/select from the clamp pattern this
+/// function recognizes if it can be substitued by a "canonical" min/max
+/// pattern.
+static SelectPatternResult matchFastFloatClamp(CmpInst::Predicate Pred,
+                                               Value *CmpLHS, Value *CmpRHS,
+                                               Value *TrueVal, Value *FalseVal,
+                                               Value *&LHS, Value *&RHS) {
+  // Try to match
+  //   X < C1 ? C1 : Min(X, C2) --> Max(C1, Min(X, C2))
+  //   X > C1 ? C1 : Max(X, C2) --> Min(C1, Max(X, C2))
+  // and return description of the outer Max/Min.
+
+  // First, check if select has inverse order:
+  if (CmpRHS == FalseVal) {
+    std::swap(TrueVal, FalseVal);
+    Pred = CmpInst::getInversePredicate(Pred);
+  }
+
+  // Assume success now. If there's no match, callers should not use these anyway.
+  LHS = TrueVal;
+  RHS = FalseVal;
+
+  const APFloat *FC1;
+  if (CmpRHS != TrueVal || !match(CmpRHS, m_APFloat(FC1)) || !FC1->isFinite())
+    return {SPF_UNKNOWN, SPNB_NA, false};
+
+  const APFloat *FC2;
+  switch (Pred) {
+  case CmpInst::FCMP_OLT:
+  case CmpInst::FCMP_OLE:
+  case CmpInst::FCMP_ULT:
+  case CmpInst::FCMP_ULE:
+    if (match(FalseVal,
+              m_CombineOr(m_OrdFMin(m_Specific(CmpLHS), m_APFloat(FC2)),
+                          m_UnordFMin(m_Specific(CmpLHS), m_APFloat(FC2)))) &&
+        FC1->compare(*FC2) == APFloat::cmpResult::cmpLessThan)
+      return {SPF_FMAXNUM, SPNB_RETURNS_ANY, false};
+    break;
+  case CmpInst::FCMP_OGT:
+  case CmpInst::FCMP_OGE:
+  case CmpInst::FCMP_UGT:
+  case CmpInst::FCMP_UGE:
+    if (match(FalseVal,
+              m_CombineOr(m_OrdFMax(m_Specific(CmpLHS), m_APFloat(FC2)),
+                          m_UnordFMax(m_Specific(CmpLHS), m_APFloat(FC2)))) &&
+        FC1->compare(*FC2) == APFloat::cmpResult::cmpGreaterThan)
+      return {SPF_FMINNUM, SPNB_RETURNS_ANY, false};
+    break;
+  default:
+    break;
+  }
+
+  return {SPF_UNKNOWN, SPNB_NA, false};
+}
+
 /// Match non-obvious integer minimum and maximum sequences.
 static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
                                        Value *CmpLHS, Value *CmpRHS,
@@ -4201,7 +4208,18 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
     }
   }
 
-  return matchMinMax(Pred, CmpLHS, CmpRHS, TrueVal, FalseVal, LHS, RHS);
+  if (CmpInst::isIntPredicate(Pred))
+    return matchMinMax(Pred, CmpLHS, CmpRHS, TrueVal, FalseVal, LHS, RHS);
+
+  // According to (IEEE 754-2008 5.3.1), minNum(0.0, -0.0) and similar
+  // may return either -0.0 or 0.0, so fcmp/select pair has stricter
+  // semantics than minNum. Be conservative in such case.
+  if (NaNBehavior != SPNB_RETURNS_ANY ||
+      (!FMF.noSignedZeros() && !isKnownNonZero(CmpLHS) &&
+       !isKnownNonZero(CmpRHS)))
+    return {SPF_UNKNOWN, SPNB_NA, false};
+
+  return matchFastFloatClamp(Pred, CmpLHS, CmpRHS, TrueVal, FalseVal, LHS, RHS);
 }
 
 static Value *lookThroughCast(CmpInst *CmpI, Value *V1, Value *V2,
@@ -4504,9 +4522,7 @@ static Optional<bool> isImpliedCondAndOr(const BinaryOperator *LHS,
           LHS->getOpcode() == Instruction::Or) &&
          "Expected LHS to be 'and' or 'or'.");
 
-  // The remaining tests are all recursive, so bail out if we hit the limit.
-  if (Depth == MaxDepth)
-    return None;
+  assert(Depth <= MaxDepth && "Hit recursion limit");
 
   // If the result of an 'or' is false, then we know both legs of the 'or' are
   // false.  Similarly, if the result of an 'and' is true, then we know both
@@ -4529,6 +4545,10 @@ static Optional<bool> isImpliedCondAndOr(const BinaryOperator *LHS,
 Optional<bool> llvm::isImpliedCondition(const Value *LHS, const Value *RHS,
                                         const DataLayout &DL, bool LHSIsTrue,
                                         unsigned Depth) {
+  // Bail out when we hit the limit.
+  if (Depth == MaxDepth)
+    return None;
+
   // A mismatch occurs when we compare a scalar cmp to a vector cmp, for
   // example.
   if (LHS->getType() != RHS->getType())

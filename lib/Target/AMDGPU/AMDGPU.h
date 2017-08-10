@@ -34,6 +34,7 @@ FunctionPass *createR600ClauseMergePass();
 FunctionPass *createR600Packetizer();
 FunctionPass *createR600ControlFlowFinalizer();
 FunctionPass *createAMDGPUCFGStructurizerPass();
+FunctionPass *createR600ISelDag(TargetMachine *TM, CodeGenOpt::Level OptLevel);
 
 // SI Passes
 FunctionPass *createSIAnnotateControlFlowPass();
@@ -50,9 +51,12 @@ FunctionPass *createSIMemoryLegalizerPass();
 FunctionPass *createSIDebuggerInsertNopsPass();
 FunctionPass *createSIInsertWaitsPass();
 FunctionPass *createSIInsertWaitcntsPass();
+FunctionPass *createSIFixWWMLivenessPass();
 FunctionPass *createAMDGPUCodeGenPreparePass();
 FunctionPass *createAMDGPUMachineCFGStructurizerPass();
 FunctionPass *createAMDGPURewriteOutArgumentsPass();
+
+void initializeAMDGPUDAGToDAGISelPass(PassRegistry&);
 
 void initializeAMDGPUMachineCFGStructurizerPass(PassRegistry&);
 extern char &AMDGPUMachineCFGStructurizerID;
@@ -118,14 +122,18 @@ extern char &SIInsertSkipsPassID;
 void initializeSIOptimizeExecMaskingPass(PassRegistry &);
 extern char &SIOptimizeExecMaskingID;
 
+void initializeSIFixWWMLivenessPass(PassRegistry &);
+extern char &SIFixWWMLivenessID;
+
 // Passes common to R600 and SI
 FunctionPass *createAMDGPUPromoteAlloca();
 void initializeAMDGPUPromoteAllocaPass(PassRegistry&);
 extern char &AMDGPUPromoteAllocaID;
 
 Pass *createAMDGPUStructurizeCFGPass();
-FunctionPass *createAMDGPUISelDag(TargetMachine &TM,
-                                  CodeGenOpt::Level OptLevel);
+FunctionPass *createAMDGPUISelDag(
+  TargetMachine *TM = nullptr,
+  CodeGenOpt::Level OptLevel = CodeGenOpt::Default);
 ModulePass *createAMDGPUAlwaysInlinePass(bool GlobalOpt = true);
 ModulePass *createAMDGPUOpenCLImageTypeLoweringPass();
 FunctionPass *createAMDGPUAnnotateUniformValues();
@@ -133,9 +141,6 @@ FunctionPass *createAMDGPUAnnotateUniformValues();
 ModulePass* createAMDGPUUnifyMetadataPass();
 void initializeAMDGPUUnifyMetadataPass(PassRegistry&);
 extern char &AMDGPUUnifyMetadataID;
-
-void initializeSIFixControlFlowLiveIntervalsPass(PassRegistry&);
-extern char &SIFixControlFlowLiveIntervalsID;
 
 void initializeSIOptimizeExecMaskingPreRAPass(PassRegistry&);
 extern char &SIOptimizeExecMaskingPreRAID;
@@ -166,6 +171,8 @@ extern char &AMDGPUUnifyDivergentExitNodesID;
 
 ImmutablePass *createAMDGPUAAWrapperPass();
 void initializeAMDGPUAAWrapperPassPass(PassRegistry&);
+
+void initializeAMDGPUArgumentUsageInfoPass(PassRegistry &);
 
 Target &getTheAMDGPUTarget();
 Target &getTheGCNTarget();
