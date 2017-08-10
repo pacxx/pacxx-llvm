@@ -69,7 +69,6 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             auto mask = CI->getArgOperand(2);
 
             IRBuilder<> builder(CI);
-           // auto reduction = builder.CreateOrReduce(mask);
             auto Ty = cast<VectorType>(mask->getType());
             auto cast = builder.CreateBitCast(mask, Type::getIntNTy(builder.getContext(), Ty->getVectorNumElements()));
             auto cmp = builder.CreateICmpNE(cast, ConstantInt::get(cast->getType(), 0));
@@ -102,7 +101,6 @@ bool PACXXSelectEmitter::runOnModule(Module &M) {
             auto mask = CI->getArgOperand(3);
 
             IRBuilder<> builder(CI);
-            //auto reduction = builder.CreateOrReduce(mask);
             auto Ty = cast<VectorType>(mask->getType());
             auto cast = builder.CreateBitCast(mask, Type::getIntNTy(builder.getContext(), Ty->getVectorNumElements()));
             auto cmp = builder.CreateICmpNE(cast, ConstantInt::get(cast->getType(), 0));
