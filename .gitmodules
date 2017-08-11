@@ -3,7 +3,7 @@
 	url = https://github.com/llvm-mirror/libcxx
 [submodule "tools/clang"]
 	path = tools/clang
-	url = git@zivgitlab.uni-muenster.de:HPC2SE-Project/pacxx-clang.git
+	url = ../pacxx-clang.git
 [submodule "projects/pacxxrt"]
 	path = projects/pacxxrt
-	url = git@zivgitlab.uni-muenster.de:HPC2SE-Project/pacxx-runtime.git
+	url = ../pacxx-runtime.git
