@@ -3,7 +3,9 @@
 	url = https://github.com/llvm-mirror/libcxx
 [submodule "tools/clang"]
 	path = tools/clang
-	url = ../pacxx-clang.git
+        url = ../pacxx-clang.git
+        branch = master
 [submodule "projects/pacxxrt"]
 	path = projects/pacxxrt
-	url = ../pacxx-runtime.git
+        url = ../pacxx-runtime.git
+        branch = master
