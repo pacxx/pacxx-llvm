@@ -15,16 +15,17 @@
 #include <llvm/Analysis/LoopInfo.h>
 
 #include "rv/analysis/DFG.h"
+#include "rv/analysis/DivPathDecider.h"
 
 namespace llvm {
   class Function;
   class BasicBlock;
   class TerminatorInst;
   class DominatorTree;
+  struct DominatorTree;
   struct PostDominatorTree;
 }
 
-using llvm::DenseMap;
 using ConstBlockSet = llvm::SmallPtrSet<const llvm::BasicBlock*, 4>;
 
 using Edge = llvm::LoopBase<llvm::BasicBlock, llvm::Loop>::Edge;
@@ -55,11 +56,14 @@ namespace rv {
 class BranchDependenceAnalysis {
   static ConstBlockSet emptySet;
 
-  // iterated post dominance frontier
-  DenseMap<const llvm::BasicBlock*, ConstBlockSet> pdClosureMap;
-  DenseMap<const llvm::BasicBlock*, ConstBlockSet> domClosureMap;
+  mutable DivPathDecider DPD;
 
-  DenseMap<const llvm::TerminatorInst*, ConstBlockSet> effectedBlocks;
+  // iterated post dominance frontier
+  llvm::DenseMap<const llvm::BasicBlock*, ConstBlockSet> pdClosureMap;
+  llvm::DenseMap<const llvm::BasicBlock*, ConstBlockSet> domClosureMap;
+
+  llvm::DenseMap<const llvm::TerminatorInst*, ConstBlockSet> effectedBlocks_old;
+  mutable llvm::DenseMap<const llvm::TerminatorInst*, ConstBlockSet> effectedBlocks_new;
   const llvm::CDG & cdg;
   const llvm::DFG & dfg;
   const llvm::LoopInfo & loopInfo;
@@ -68,12 +72,17 @@ class BranchDependenceAnalysis {
   void computeDomClosure(const llvm::BasicBlock & b, ConstBlockSet & closure);
 
 public:
-  BranchDependenceAnalysis(llvm::Function & F, const llvm::CDG & cdg, const llvm::DFG & dfg, const llvm::LoopInfo & loopInfo);
+  BranchDependenceAnalysis(llvm::Function & F,
+                           const llvm::CDG & cdg,
+                           const llvm::DFG & dfg,
+                           const llvm::LoopInfo & loopInfo);
 
   /// \brief returns the set of blocks whose PHI nodes become divergent if @branch is divergent
-  const ConstBlockSet & getEffectedBlocks(const llvm::TerminatorInst & term) const {
-    auto it = effectedBlocks.find(&term);
-    if (it == effectedBlocks.end()) return emptySet;
+  const ConstBlockSet & getEffectedBlocks(const llvm::TerminatorInst & term) const;
+
+  const ConstBlockSet& getEffectedBlocks_old(const llvm::TerminatorInst & term) const {
+    auto it = effectedBlocks_old.find(&term);
+    if (it == effectedBlocks_old.end()) return emptySet;
     return it->second;
   }
 };

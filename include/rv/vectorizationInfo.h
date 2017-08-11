@@ -17,12 +17,11 @@ namespace llvm {
   class Loop;
 }
 
-using namespace llvm;
-
 #include "llvm/IR/ValueHandle.h"
 
 #include "vectorShape.h"
 #include "vectorMapping.h"
+#include "region/Region.h"
 
 #include <unordered_map>
 #include <set>
@@ -36,82 +35,60 @@ class Region;
 class VectorizationInfo
 {
     VectorMapping mapping;
-    std::unordered_map<const BasicBlock*, WeakVH> predicates;
-    std::unordered_map<const Value*, VectorShape> shapes;
+    std::unordered_map<const llvm::BasicBlock*, llvm::WeakVH> predicates;
+    std::unordered_map<const llvm::Value*, VectorShape> shapes;
 
-    std::set<const Loop*> mDivergentLoops;
-
-    std::set<const BasicBlock*> ABABlocks;
-    std::set<const BasicBlock*> ABAONBlocks;
-    std::set<const BasicBlock*> NotABABlocks;
-
-    std::set<const BasicBlock*> MandatoryBlocks;
+    std::set<const llvm::Loop*> mDivergentLoops;
+    std::set<const llvm::BasicBlock*> NonKillExits;
 
     Region* region;
-    std::set<const Instruction*> MetadataMaskInsts;
 
 public:
     bool inRegion(const llvm::Instruction & inst) const;
     bool inRegion(const llvm::BasicBlock & block) const;
+    llvm::BasicBlock & getEntry() const;
 
-    Region* getRegion() const
-    {
-        return region;
-    }
+    Region* getRegion() const { return region; }
 
-    const VectorMapping& getMapping() const
-    {
-        return mapping;
-    }
+    const VectorMapping& getMapping() const { return mapping; }
 
-    uint getVectorWidth() const
-    {
-        return mapping.vectorWidth;
-    }
+    uint getVectorWidth() const { return mapping.vectorWidth; }
 
     VectorizationInfo(VectorMapping _mapping);
     VectorizationInfo(llvm::Function& parentFn, uint vectorWidth, Region& _region);
 
-    bool hasKnownShape(const Value& val) const;
+    bool hasKnownShape(const llvm::Value& val) const;
 
-    VectorShape getVectorShape(const Value& val) const;
-    void setVectorShape(const Value& val, VectorShape shape);
-    void dropVectorShape(const Value& val);
+    VectorShape getVectorShape(const llvm::Value& val) const;
+    void setVectorShape(const llvm::Value& val, VectorShape shape);
+    void dropVectorShape(const llvm::Value& val);
 
     // return the predicate value for this instruction
-    Value* getPredicate(const BasicBlock& block) const;
+    llvm::Value* getPredicate(const llvm::BasicBlock& block) const;
 
-    void setPredicate(const BasicBlock& block, Value& predicate);
-    void dropPredicate(const BasicBlock& block);
+    void setPredicate(const llvm::BasicBlock& block, llvm::Value& predicate);
+    void dropPredicate(const llvm::BasicBlock& block);
 
-    void remapPredicate(Value& dest, Value& old);
+    void remapPredicate(llvm::Value& dest, llvm::Value& old);
 
-    bool isDivergentLoop(const Loop* loop) const;
-    bool isDivergentLoopTopLevel(const Loop* loop) const;
+    bool isDivergentLoop(const llvm::Loop* loop) const;
+    bool isDivergentLoopTopLevel(const llvm::Loop* loop) const;
 
     void dump() const;
-    void dump(const Value * val) const;
-    void dumpBlockInfo(const BasicBlock & block) const;
+    void dump(const llvm::Value * val) const;
+    void dumpBlockInfo(const llvm::BasicBlock & block) const;
     void dumpArguments() const;
 
-    void setDivergentLoop(const Loop* loop);
-    void setLoopDivergence(const Loop & loop, bool toUniform);
+    void setDivergentLoop(const llvm::Loop* loop);
+    void setLoopDivergence(const llvm::Loop & loop, bool toUniform);
 
-    bool isAlwaysByAll(const BasicBlock* block) const;
-    bool isAlwaysByAllOrNone(const BasicBlock* block) const;
-    bool isNotAlwaysByAll(const BasicBlock* block) const;
-    bool isMandatory(const BasicBlock* block) const;
-    bool isMetadataMask(const Instruction* inst) const;
+    // whether this exit block terminates the loop
+    bool isKillExit(const llvm::BasicBlock & block) const;
+    void setNotKillExit(const llvm::BasicBlock* block);
 
-    void markAlwaysByAll(const BasicBlock* block);
-    void markAlwaysByAllOrNone(const BasicBlock* block);
-    void markNotAlwaysByAll(const BasicBlock* block);
-    void markMandatory(const BasicBlock* block);
-    void markMetadataMask(const Instruction* inst);
-
-    LLVMContext & getContext() const;
-    Function & getScalarFunction() { return *mapping.scalarFn; }
-    Function & getVectorFunction() { return *mapping.vectorFn; }
+    llvm::LLVMContext & getContext() const;
+    llvm::Function & getScalarFunction() { return *mapping.scalarFn; }
+    llvm::Function & getVectorFunction() { return *mapping.vectorFn; }
 };
 
 

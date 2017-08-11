@@ -7,17 +7,39 @@
 //
 // @author montada
 
+#include <deque>
 #include "ShuffleBuilder.h"
 #include "Utils.h"
 
 using namespace native;
 using namespace llvm;
 
+void ShuffleBuilder::prepareCroppedVector(IRBuilder<> &builder) {
+  Value *croppedVector = inputVectors.back();
+  Type *croppedType = croppedVector->getType();
+  Value *undefVal = UndefValue::get(croppedType);
+  Value *shuffleVal = createContiguousVector(vectorWidth, builder.getInt32Ty(), 0, 1);
+
+  Value *prepareShuffle = builder.CreateShuffleVector(croppedVector, undefVal, shuffleVal, "prepare_shuffle");
+  inputVectors[inputVectors.size() - 1] = prepareShuffle;
+}
+
 void ShuffleBuilder::add(Value *vector) {
   inputVectors.push_back(vector);
+  if (vector->getType()->getVectorNumElements() < vectorWidth)
+    cropped = true;
+}
+
+void ShuffleBuilder::add(std::vector<Value *> &sources) {
+  inputVectors = sources;
+  if (sources.back()->getType()->getVectorNumElements() < vectorWidth)
+    cropped = true;
 }
 
 llvm::Value *ShuffleBuilder::shuffleFromInterleaved(llvm::IRBuilder<> &builder, unsigned stride, unsigned start) {
+  if (cropped)
+    prepareCroppedVector(builder);
+
   // expects that the values of each input vector ARE interleaved. creates an non-interleaved value
   // use a loop that builds shuffles until all input vectors have been used
   // shuffles are build like this: take the last shuffle and the next input vector and the shuffle mask
@@ -77,6 +99,9 @@ llvm::Value *ShuffleBuilder::shuffleFromInterleaved(llvm::IRBuilder<> &builder, 
 }
 
 llvm::Value *ShuffleBuilder::shuffleToInterleaved(llvm::IRBuilder<> &builder, unsigned stride, unsigned start) {
+  if (cropped)
+    prepareCroppedVector(builder);
+
   // expects that the values of each input vector are NOT interleaved. creates an interleaved value
   // use a loop that builds shuffles until all <vectorWidth> positions are set
   // shuffles are build like this: take the last shuffle and the next input vector and the shuffle mask
@@ -119,6 +144,13 @@ llvm::Value *ShuffleBuilder::shuffleToInterleaved(llvm::IRBuilder<> &builder, un
       index += stride;
     }
 
+    // if we create the right-most transposition for pseudo-shuffling, remove the very last index in the last iteration
+    // to get a vector size conform with the cropped size
+    if (start == inputVectors.size() - 1 && counter == inputVectors.size() - 1 && cropped)
+      for (unsigned k = 1; k < inputVectors.size(); ++k) {
+        shuffleMask.pop_back();
+      }
+
     // create shuffle
     Value *idxVector = ConstantVector::get(shuffleMask);
     lastShuffle = builder.CreateShuffleVector(lastShuffle, nextInput, idxVector, "native_shuffle");
@@ -139,4 +171,42 @@ llvm::Value *ShuffleBuilder::shuffleToInterleaved(llvm::IRBuilder<> &builder, un
   } while (counter < inputVectors.size());
 
   return lastShuffle;
+}
+
+Value *ShuffleBuilder::append(IRBuilder<> &builder) {
+  assert(!inputVectors.empty() && "no vectors to append!");
+  std::deque<Value *> appendQueue(inputVectors.begin(), inputVectors.end());
+
+  Value *shuffle = nullptr;
+  while (!appendQueue.empty()) {
+    if (appendQueue.size() == 1) {
+      shuffle = appendQueue.back();
+      break;
+    }
+
+    Value *vec1 = appendQueue.front();
+    appendQueue.pop_front();
+
+    Value *vec2 = appendQueue.front();
+    appendQueue.pop_front();
+
+    Type *ty1 = vec1->getType(), *ty2 = vec2->getType();
+
+    unsigned numElements = ty1->getVectorNumElements() + ty2->getVectorNumElements();
+    Value *shuffleMask = createContiguousVector(numElements, builder.getInt32Ty(), 0, 1);
+    shuffle = builder.CreateShuffleVector(vec1, vec2, shuffleMask, "append_shuffle");
+
+    appendQueue.push_back(shuffle);
+  }
+  assert(shuffle->getType()->getVectorNumElements() == vectorWidth && "mismatch between append length and vector width!");
+  return shuffle;
+}
+
+Value *ShuffleBuilder::extractVector(IRBuilder<> &builder, unsigned index, unsigned offset) {
+  assert(index < inputVectors.size() && "index out of bounds!");
+
+  Value *shuffleMask = createContiguousVector(vectorWidth, builder.getInt32Ty(), offset, 1);
+  Value *vec = inputVectors[index];
+
+  return builder.CreateShuffleVector(vec, UndefValue::get(vec->getType()), shuffleMask, "extract_shuffle");
 }

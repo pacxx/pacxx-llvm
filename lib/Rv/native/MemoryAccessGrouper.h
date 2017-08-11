@@ -13,7 +13,7 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/MemoryDependenceAnalysis.h>
 
-namespace native {
+namespace rv {
   class MemoryGroup {
     unsigned topIdx;
     std::vector<const llvm::SCEV *> elements;
@@ -27,6 +27,9 @@ namespace native {
     unsigned size() const { return topIdx; }
     std::vector<const llvm::SCEV *>::iterator begin() { return elements.begin(); }
     std::vector<const llvm::SCEV *>::iterator end() { return elements.end(); }
+
+    void print(llvm::raw_ostream &) const;
+    void dump() const;
   };
 
   class MemoryAccessGrouper {
@@ -34,15 +37,18 @@ namespace native {
     unsigned laneByteSize;
     bool getConstantOffset(const llvm::SCEV *a, const llvm::SCEV *b, int &offset);
 
-    llvm::Type *laneFloatTy;
-    llvm::Type *laneIntTy;
-
   public:
     std::vector<MemoryGroup> memoryGroups;
 
+    // relaxed diffing
+    bool getConstantDiff(const llvm::SCEV * A, const llvm::SCEV * B, int64_t & oDelta);
+
+    // relaxed equality check
+    bool equals(const llvm::SCEV * A, const llvm::SCEV * B);
+
     MemoryAccessGrouper(llvm::ScalarEvolution &SE, unsigned laneByteSize);
     const llvm::SCEV *add(llvm::Value *addrVal);
-    MemoryGroup getMemoryGroup(const llvm::SCEV *scev);
+    const MemoryGroup & getMemoryGroup(const llvm::SCEV *scev);
   };
 
   class InstructionGroup {
@@ -69,7 +75,7 @@ namespace native {
     void add(llvm::Instruction *instr, llvm::MemoryDependenceResults &MDR);
     void clearAll();
     bool empty();
-    InstructionGroup getInstructionGroup(llvm::Instruction *instr);
+    const InstructionGroup & getInstructionGroup(llvm::Instruction *instr);
   };
 }
 

@@ -26,7 +26,6 @@
 #include "llvm/Support/FileSystem.h"
 
 #include "rv/rv.h"
-#include "rv/analysis/maskAnalysis.h"
 #include "rv/transform/loopExitCanonicalizer.h"
 
 using namespace llvm;
@@ -112,26 +111,38 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         rv::PlatformInfo platformInfo(M, TTI, TLI);
 
-        rv::VectorizerInterface vectorizer(platformInfo);
+        rv::Config config;
+        config.useAVX = true;
+        config.useAVX2 = true;
+        config.useSLEEF = false;
+
+        rv::VectorizerInterface vectorizer(platformInfo, config);
 
         // build Analysis that is independent of vecInfo
         DominatorTree domTree(*scalarCopy);
-        PostDominatorTree postDomTree;
-        postDomTree.recalculate(*scalarCopy);
-        LoopInfo loopInfo(domTree);
 
+        //normalize loop exits
+        {
+          LoopInfo loopInfo(domTree);
+          LoopExitCanonicalizer canonicalizer(loopInfo);
+          canonicalizer.canonicalize(*scalarCopy);
+          domTree.recalculate(*scalarCopy);
+        }
+
+        LoopInfo loopInfo(domTree);
 
         // Dominance Frontier Graph
         DFG dfg(domTree);
         dfg.create(*scalarCopy);
 
+        // post dom
+        PostDominatorTree postDomTree;
+        postDomTree.recalculate(*scalarCopy);
+
         // Control Dependence Graph
         CDG cdg(postDomTree);
         cdg.create(*scalarCopy);
 
-        // normalize loop exits
-        LoopExitCanonicalizer canonicalizer(loopInfo);
-        canonicalizer.canonicalize(*scalarCopy);
 
         //return and arguments are uniform
         rv::VectorShape resShape = rv::VectorShape::uni(1u);
@@ -152,7 +163,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         prepareForVectorization(scalarCopy, tmpInfo);
 
         // vectorizationAnalysis
-        vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo, postDomTree, domTree);
+        vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo);
 
         unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, TTI);
 
@@ -162,24 +173,29 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         prepareForVectorization(scalarCopy, vecInfo);
 
-        vectorizer.analyze(vecInfo, cdg, dfg, loopInfo, postDomTree, domTree);
+        //early math function lowering
+        vectorizer.lowerRuntimeCalls(vecInfo, loopInfo);
+        domTree.recalculate(*scalarCopy);
+        postDomTree.recalculate(*scalarCopy);
+        cdg.create(*scalarCopy);
+        dfg.create(*scalarCopy);
 
-        // mask analysis
-        auto maskAnalysis = vectorizer.analyzeMasks(vecInfo, loopInfo);
-        assert(maskAnalysis);
+        loopInfo.verify(domTree);
+
+        vectorizer.analyze(vecInfo, cdg, dfg, loopInfo);
 
         // mask generator
-        bool genMaskOk = vectorizer.generateMasks(vecInfo, *maskAnalysis, loopInfo);
-        if (!genMaskOk)
-            errs() << "mask generation failed.";
+        vectorizer.linearize(vecInfo, cdg, dfg, loopInfo, postDomTree, domTree);
 
+#if 0
         // control conversion
         bool linearizeOk = vectorizer.linearizeCFG(vecInfo, *maskAnalysis, loopInfo, domTree);
         if (!linearizeOk)
             errs() << "linearization failed";
+#endif
 
         // Control conversion does not preserve the domTree so we have to rebuild it for now
-        const DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
+        DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
         bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo, *SE, *MDR, nullptr);
         if (!vectorizeOk)
             errs() << "vector code generation failed";
@@ -193,7 +209,7 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         scalarCopy->eraseFromParent();
 
-        if(genMaskOk && linearizeOk && vectorizeOk)
+        if(vectorizeOk)
             vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
 
         __verbose("vectorized: ", vectorized);

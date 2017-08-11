@@ -35,8 +35,7 @@
 
 
 namespace llvm {
-template <bool forward>
-class DFGBase;
+template<bool forward> class DFGBase;
 
 template<bool forward>
 class DFGBaseWrapper : public FunctionPass {
@@ -72,14 +71,13 @@ public:
       mDFGBase->create(F);
     }
 
-    virtual bool runOnFunction(Function& F) override
-    {
+    bool runOnFunction(Function& F) override {
       initialize<typename std::conditional<forward, DominatorTree, PostDominatorTree>::type>(F);
       return false;
     }
 
-
-    DFGBase<forward>* getDFG() {
+    DFGBase<forward>* getDFG()
+    {
         return mDFGBase;
     }
 };
@@ -88,9 +86,8 @@ template<bool forward>
 class DFGBase {
 public:
 
-    using DomTreeRef = typename std::conditional<forward,
-                                                  const llvm::DominatorTree&,
-                                                  const llvm::PostDominatorTree&>::type;
+    using DomTreeRef = typename std::conditional<forward, const llvm::DominatorTree&,
+                                                          const llvm::PostDominatorTree&>::type;
 
     class Node;
 
@@ -102,7 +99,7 @@ public:
         explicit Node(BasicBlock* const BB) : BB(BB) { }
 
     public:
-        const BasicBlock* getBB() const { return BB; }
+       BasicBlock* getBB() const { return BB; }
 
         nodes_t preds() const { return preds_; }
         nodes_t succs() const { return succs_; }
@@ -125,15 +122,12 @@ public:
 
     void create(Function& F);
 
-    ~DFGBase() {
-      for (auto it : nodes_)
-        delete it.second;
-    }
+    ~DFGBase();
 
     Node* operator[](const BasicBlock* const BB) const { return get(BB); }
 
 private:
-    DomTreeRef& DT;
+    DomTreeRef DT;
 
     Node* get(const BasicBlock* const BB) const
     {

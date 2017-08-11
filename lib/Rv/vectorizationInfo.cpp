@@ -66,7 +66,9 @@ VectorizationInfo::dumpBlockInfo(const BasicBlock & block) const {
   llvm::raw_ostream & out = llvm::errs();
   const Value * predicate = getPredicate(block);
 
-  out << "Block " << block.getName() << ", predicate ";
+  out << "Block ";
+  block.printAsOperand(out, false);
+  out << ", predicate ";
   if (predicate) out << *predicate; else out << "null";
   out << "\n";
 
@@ -152,9 +154,15 @@ VectorizationInfo::hasKnownShape(const llvm::Value& val) const {
 VectorShape
 VectorizationInfo::getVectorShape(const llvm::Value& val) const
 {
+ // return default shape for constants
+    auto * constVal = dyn_cast<Constant>(&val);
+    if (constVal) {
+      return VectorShape::fromConstant(constVal);
+    }
+
     auto it = shapes.find(&val);
 
-  // explicit shape annotations take precedence
+  // for all other objects return a explicit shape first
     if (it != shapes.end()) {
       return it->second;
     }
@@ -165,6 +173,7 @@ VectorizationInfo::getVectorShape(const llvm::Value& val) const
       return VectorShape::uni(); // TODO getAlignment(*inst));
     }
 
+    // return VectorShape::undef();
     assert (it != shapes.end());
     return it->second;
 }
@@ -236,69 +245,26 @@ VectorizationInfo::isDivergentLoopTopLevel(const llvm::Loop* loop) const
     return isDivergentLoop(loop) && (!parent || !isDivergentLoop(parent));
 }
 
-
-void
-VectorizationInfo::markAlwaysByAll(const llvm::BasicBlock* BB)
-{
-    ABABlocks.insert(BB);
+bool
+VectorizationInfo::isKillExit(const BasicBlock& BB) const {
+    return NonKillExits.count(&BB) == 0;
 }
 
 void
-VectorizationInfo::markAlwaysByAllOrNone(const llvm::BasicBlock* BB)
-{
-    ABAONBlocks.insert(BB);
-}
-
-void
-VectorizationInfo::markNotAlwaysByAll(const llvm::BasicBlock* BB)
-{
-    NotABABlocks.insert(BB);
-}
-
-bool
-VectorizationInfo::isAlwaysByAll(const llvm::BasicBlock* BB) const
-{
-    return (bool) ABABlocks.count(BB);
-}
-
-bool
-VectorizationInfo::isAlwaysByAllOrNone(const llvm::BasicBlock* BB) const
-{
-    return (bool) ABAONBlocks.count(BB);
-}
-
-bool
-VectorizationInfo::isNotAlwaysByAll(const llvm::BasicBlock* BB) const
-{
-    return (bool) NotABABlocks.count(BB);
-}
-
-void
-VectorizationInfo::markMandatory(const BasicBlock* BB)
-{
-    MandatoryBlocks.insert(BB);
-}
-
-bool
-VectorizationInfo::isMandatory(const BasicBlock* BB) const
-{
-    return (bool) MandatoryBlocks.count(BB);
-}
-
-void
-VectorizationInfo::markMetadataMask(const Instruction* inst)
-{
-    MetadataMaskInsts.insert(inst);
-}
-
-bool
-VectorizationInfo::isMetadataMask(const Instruction* inst) const
-{
-    return (bool) MetadataMaskInsts.count(inst);
+VectorizationInfo::setNotKillExit(const BasicBlock* block) {
+    assert(block);
+    NonKillExits.insert(block);
 }
 
 LLVMContext &
 VectorizationInfo::getContext() const { return mapping.scalarFn->getContext(); }
+
+BasicBlock&
+VectorizationInfo::getEntry() const {
+   if (region) return region->getRegionEntry();
+   else return *mapping.scalarFn->begin();
+ }
+
 
 } /* namespace rv */
 

@@ -15,14 +15,18 @@
 
 #include <vector>
 #include <rv/PlatformInfo.h>
+#include <llvm/IR/IRBuilder.h>
 
 llvm::Type *getVectorType(llvm::Type *type, unsigned width);
 
-llvm::Value *createContiguousVector(unsigned width, Type *type, int start, int stride);
+llvm::Value *createContiguousVector(unsigned width, llvm::Type *type, int start, int stride);
 
-llvm::Value *getConstantVectorPadded(unsigned width, Type *type, std::vector<unsigned> &values);
+llvm::Value *getConstantVector(unsigned width, llvm::Type *type, unsigned value);
+llvm::Value *getConstantVector(unsigned width, llvm::Constant *constant);
+llvm::Value *getConstantVectorPadded(unsigned width, llvm::Type *type, std::vector<unsigned> &values, bool padWithZero = false);
 
 llvm::Value *getPointerOperand(llvm::Instruction *instr);
+llvm::Value *getBasePointer(llvm::Value *addr);
 
 
 llvm::BasicBlock *createCascadeBlocks(llvm::Function *insertInto, unsigned vectorWidth,
@@ -31,6 +35,14 @@ llvm::BasicBlock *createCascadeBlocks(llvm::Function *insertInto, unsigned vecto
 
 bool isSupportedOperation(llvm::Instruction *const inst);
 
-bool isStructAccess(llvm::Value * const address);
+bool isHomogeneousStruct(llvm::StructType *const type, llvm::DataLayout &layout);
+
+llvm::StructType * isStructAccess(llvm::Value *const address);
+llvm::StructType * containsStruct(llvm::Type *const type);
+
+unsigned getNumLeafElements(llvm::Type *const type, llvm::Type *const leafType, llvm::DataLayout &layout);
+unsigned getStructOffset(llvm::GetElementPtrInst *const gep);
+
+void setInsertionToDomBlockEnd(llvm::IRBuilder<> &builder, std::vector<llvm::BasicBlock *> &blocks);
 
 #endif //NATIVE_UTILS_H

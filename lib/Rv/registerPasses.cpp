@@ -24,7 +24,9 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 
+#include "rv/transform/loopExitCanonicalizer.h"
 
 using namespace llvm;
 
@@ -36,20 +38,40 @@ static cl::opt<bool>
     rvLoopVecEnabled("rv-loopvec", cl::desc("Enable RV's outer-loop vectorizer"),
                  cl::init(false), cl::ZeroOrMore, cl::cat(rvCategory));
 
-static bool
-shouldEnableRV() {
-  return rvLoopVecEnabled;
-}
+static cl::opt<bool>
+    rvOnlyPolish("rv-polish", cl::desc("Only run RV's polish phase"),
+                 cl::init(false), cl::ZeroOrMore, cl::cat(rvCategory));
+
+
+static cl::opt<bool>
+    rvOnlyCNS("rv-cns", cl::desc("Only run RV's Irreducible Loop Normalizer"),
+                 cl::init(false), cl::ZeroOrMore, cl::cat(rvCategory));
 
 static void
 registerRVPasses(const llvm::PassManagerBuilder &Builder,
                                        llvm::legacy::PassManagerBase &PM) {
-  if (!shouldEnableRV()) {
+  if (rvOnlyPolish) {
+    PM.add(rv::createIRPolisherWrapperPass());
     return;
   }
 
-  PM.add(rv::createLoopVectorizerPass());
-  PM.add(createAggressiveDCEPass());
+  if (rvOnlyCNS) {
+    PM.add(rv::createCNSPass());
+    return;
+  }
+
+  if (rvLoopVecEnabled) {
+    // PM.add(rv::createCNSPass());
+    PM.add(createLoopSimplifyPass());
+    PM.add(createLCSSAPass());
+    // PM.add(createLoopExitCanonicalizerPass()); //FIXME
+    PM.add(rv::createLoopVectorizerPass());
+
+    // post rv cleanup
+    PM.add(createAlwaysInlinerLegacyPass());
+    PM.add(createInstructionCombiningPass());
+    PM.add(createAggressiveDCEPass());
+  }
 }
 
 
