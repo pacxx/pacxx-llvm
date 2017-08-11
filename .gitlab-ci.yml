@@ -1,8 +1,5 @@
 ---
 
-before_script:
-- git clone https://zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-clang.git tools/clang
-- git clone https://zivgitlab.uni-muenster.de/HPC2SE-Project/pacxx-runtime.git projects/pacxxrt
 build:
   image: pacxx/ubuntu
   script:
