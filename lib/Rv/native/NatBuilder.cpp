@@ -476,9 +476,10 @@ void NatBuilder::mapOperandsInto(Instruction *const scalInst, Instruction *inst,
   assert(builder.GetInsertBlock() && "no insertion point set");
 
   // check for division. opcodes for divisions are (in order) UDiv, SDiv, FDiv. only care if non-trivial mask
+  // added rem instructions because of mandelbrot
   auto opCode = scalInst->getOpcode();
   auto * pred = vecInfo.getPredicate(*scalInst->getParent());
-  bool isPredicatedDiv = (opCode >= BinaryOperator::UDiv) && (opCode <= BinaryOperator::FDiv) && (pred && !isa<Constant>(pred));
+  bool isPredicatedDiv = (opCode >= BinaryOperator::UDiv) && (opCode <= BinaryOperator::FRem) && (pred && !isa<Constant>(pred));
 
   unsigned e = isa<CallInst>(scalInst) ? inst->getNumOperands() - 1 : inst->getNumOperands();
   for (unsigned i = 0; i < e; ++i) {

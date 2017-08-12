@@ -111,10 +111,17 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         rv::PlatformInfo platformInfo(M, TTI, TLI);
 
+        auto featureString = kernel->getFnAttribute("target-features").getValueAsString().str();
+
+        // configure RV
         rv::Config config;
-        config.useAVX = true;
-        config.useAVX2 = true;
+        config.useAVX = featureString.find("+avx") != std::string::npos;
+        config.useAVX2 = featureString.find("+avx2") != std::string::npos;
+        config.useNEON = featureString.find("+neon") != std::string::npos;
         config.useSLEEF = false;
+        config.enableIRPolish = false;
+
+        config.print(outs());
 
         rv::VectorizerInterface vectorizer(platformInfo, config);
 
@@ -145,14 +152,14 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
 
         //return and arguments are uniform
-        rv::VectorShape resShape = rv::VectorShape::uni(1u);
+        rv::VectorShape resShape = rv::VectorShape::uni();
         rv::VectorShapeVec argShapes;
 
         for (auto& it : scalarCopy->args()) {
             if(it.getType()->isPointerTy())
-                argShapes.push_back(rv::VectorShape::uni(it.getPointerAlignment(DL)));
+                argShapes.push_back(rv::VectorShape::uni());
             else
-                argShapes.push_back(rv::VectorShape::uni(DL.getPrefTypeAlignment(it.getType())));
+                argShapes.push_back(rv::VectorShape::uni());
         }
 
         // tmp mapping to determine possible vector width
@@ -329,7 +336,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(DL.getPrefTypeAlignment(CI->getType())));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont());
                         break;
                     }
                     case Intrinsic::pacxx_read_tid_y:
@@ -343,7 +350,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(DL.getPrefTypeAlignment(CI->getType())));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni());
                         break;
                     }
                     default: break;
@@ -352,7 +359,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(DL.getPrefTypeAlignment(barrierFunc->getType())));
+        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni());
 }
 
 
