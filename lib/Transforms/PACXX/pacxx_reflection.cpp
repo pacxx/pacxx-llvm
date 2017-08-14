@@ -236,6 +236,7 @@ PACXXReflection::ReflectionHandler::ReflectionHandler(Module *module)
 void PACXXReflection::ReflectionHandler::visitCallInst(CallInst &CI) {
 
   Function *F = CI.getCalledFunction();
+
   if (F) {
     if (find(reflects.begin(), reflects.end(), F) != reflects.end()) {
       Function *PRF = M->getFunction("__pacxx_reflect");
@@ -248,6 +249,7 @@ void PACXXReflection::ReflectionHandler::visitCallInst(CallInst &CI) {
                                "__pacxx_reflect", M);
         PRF->setAttributes(AttributeList{});
       }
+
       SmallVector<Value *, 1> args;
       args.push_back(
           ConstantInt::get(IntegerType::getInt32Ty(M->getContext()), ++count));
@@ -394,31 +396,36 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
 
   auto FTy =
       FunctionType::get(F->getReturnType(), Type::getInt8PtrTy(Ctx), false);
-
   auto wrapper = cast<Function>(M->getOrInsertFunction(
       std::string("__pacxx_reflection_stub") + std::to_string(c), FTy));
 
   auto BB = BasicBlock::Create(Ctx, "enter", wrapper);
 
-  // size_t argBufferSize = 0;
-  SmallVector<Value *, 1> callArgs;
+  SmallVector<Value *, 5> callArgs;
   auto &input = *wrapper->arg_begin();
   input.setName("arg0");
 
-  auto &argument = *F->arg_begin();
-
-  Value *arg_cast = BitCastInst::Create(Instruction::CastOps::BitCast, &input,
-                                    argument.getType(), "", BB);
-
-  auto &config_obj = *(F->arg_begin()+1);
-  callArgs.push_back(arg_cast);
-  callArgs.push_back(ConstantPointerNull::get(cast<PointerType>(config_obj.getType())));
-
-  auto argBufferSize = M->getDataLayout().getTypeAllocSize(argument.getType());
+  unsigned argBufferSize = 0;
+  unsigned offset = 0;
+  for (auto I = F->arg_begin(), E = F->arg_end(); I != E; ++I) {
+    auto &argument = *I;
+    SmallVector<Value *, 3> idx;
+    APInt off(64, offset);
+    idx.push_back(
+        ConstantInt::get(static_cast<Type *>(Type::getInt64Ty(Ctx)), off));
+    Value *address = GetElementPtrInst::Create(
+        input.getType()->getPointerElementType(), &input, idx, "", BB);
+    address = BitCastInst::Create(Instruction::CastOps::BitCast, address,
+                                  argument.getType()->getPointerTo(), "", BB);
+    Value *load = new LoadInst(address, "", false, BB);
+    callArgs.push_back(load);
+    auto size = M->getDataLayout().getTypeAllocSize(argument.getType());
+    offset += size;
+    argBufferSize += size;
+  }
 
   auto call = CallInst::Create(F, callArgs, "call", BB);
   ReturnInst::Create(Ctx, call, BB);
-
   wrapper->setMetadata("pacxx.reflection.argBufferSize",
                        MDNode::get(Ctx, llvm::ConstantAsMetadata::get(ConstantInt::get(
                            IntegerType::getInt32Ty(Ctx), argBufferSize))));
@@ -430,7 +437,6 @@ Function *PACXXReflection::ReflectionHandler::createCallWrapper(Function *F,
   MDArgs.push_back(llvm::ConstantAsMetadata::get(
       ConstantInt::get(IntegerType::getInt32Ty(Ctx), c)));
   MD->addOperand(MDNode::get(Ctx, MDArgs));
-
   return wrapper;
 }
 
