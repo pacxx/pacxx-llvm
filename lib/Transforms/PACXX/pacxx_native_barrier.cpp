@@ -966,7 +966,7 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
         idx.push_back(ConstantInt::get(ctx, APInt(32, i)));
         GetElementPtrInst *struct_gep = GetElementPtrInst::Create(nullptr,
                                                                   cast, idx, "", loopBody);
-        LoadInst *load = new LoadInst(struct_gep, "", loopBody);
+        LoadInst *load = new LoadInst(struct_gep, "",false, M.getDataLayout().getPrefTypeAlignment(struct_gep->getResultElementType()), loopBody);
         args.push_back(load);
     }
 

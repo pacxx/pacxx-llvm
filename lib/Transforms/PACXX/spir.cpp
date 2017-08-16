@@ -207,7 +207,7 @@ struct SPIRPass : public ModulePass {
 
           auto newGV = new GlobalVariable(
                   M, elemType, false,
-                 GV.getLinkage(), // llvm::GlobalValue::LinkageTypes::InternalLinkage,
+                  llvm::GlobalValue::LinkageTypes::ExternalLinkage,
                  nullptr, // ConstantAggregateZero::get(elemType),
                   newName, &GV, GV.getThreadLocalMode(), 3, false);
 
