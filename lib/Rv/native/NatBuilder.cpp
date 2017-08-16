@@ -476,7 +476,6 @@ void NatBuilder::mapOperandsInto(Instruction *const scalInst, Instruction *inst,
   assert(builder.GetInsertBlock() && "no insertion point set");
 
   // check for division. opcodes for divisions are (in order) UDiv, SDiv, FDiv. only care if non-trivial mask
-  // added rem instructions because of mandelbrot
   auto opCode = scalInst->getOpcode();
   auto * pred = vecInfo.getPredicate(*scalInst->getParent());
   bool isPredicatedDiv = (opCode >= BinaryOperator::UDiv) && (opCode <= BinaryOperator::FRem) && (pred && !isa<Constant>(pred));
@@ -2312,7 +2311,7 @@ NatBuilder::materializeVaryingReduction(Reduction & red, PHINode & scaPhi) {
 
   // construct a 1...10 mask
   std::vector<Constant*> selElems;
-  for (unsigned i = 1; i < vectorWidth; ++i) {
+  for (size_t i = 1; i < vectorWidth; ++i) {
     selElems.push_back(ConstantInt::getTrue(vecPhi->getContext()));
   }
   selElems.push_back(ConstantInt::getFalse(vecPhi->getContext()));

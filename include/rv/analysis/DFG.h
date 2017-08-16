@@ -55,7 +55,7 @@ public:
         Info.setPreservesAll();
     }
 
-    template <typename DomTree, typename std::enable_if<std::is_same<DomTree, DominatorTree>::value>::type* = nullptr>
+      template <typename DomTree, typename std::enable_if<std::is_same<DomTree, DominatorTree>::value>::type* = nullptr>
     void initialize(Function& F)
     {
       auto& DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
@@ -71,7 +71,8 @@ public:
       mDFGBase->create(F);
     }
 
-    bool runOnFunction(Function& F) override {
+    virtual bool runOnFunction(Function& F) override
+    {
       initialize<typename std::conditional<forward, DominatorTree, PostDominatorTree>::type>(F);
       return false;
     }
@@ -86,9 +87,9 @@ template<bool forward>
 class DFGBase {
 public:
 
-    using DomTreeRef = typename std::conditional<forward, const llvm::DominatorTree&,
-                                                          const llvm::PostDominatorTree&>::type;
-
+    using DomTreeRef = typename std::conditional<forward,
+                                                  const llvm::DominatorTree&,
+                                                  const llvm::PostDominatorTree&>::type;
     class Node;
 
     using nodes_t = ArrayRef<const Node*>;
