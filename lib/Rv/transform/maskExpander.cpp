@@ -178,7 +178,7 @@ MaskExpander::requestBranchMask(TerminatorInst & term, int succIdx, IRBuilder<> 
 
     // case test, mask = (switchVal == caseVal)
     } else {
-      auto  caseVal = (*itCase).getCaseValue();
+      auto caseVal = (*itCase).getCaseValue();
       auto & caseCmp = *builder.CreateICmp(ICmpInst::ICMP_EQ, caseVal, &switchVal, "caseeq_" + std::to_string(caseVal->getSExtValue()));
       vecInfo.setVectorShape(caseCmp, valShape);
       setBranchMask(sourceBlock, succIdx, caseCmp);

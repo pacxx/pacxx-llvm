@@ -149,9 +149,6 @@ VectorMapping *PlatformInfo::inferMapping(llvm::Function &scalarFnc,
                                           llvm::Function &simdFnc,
                                           int maskPos) {
 
-  // Find out which arguments are UNIFORM and which are VARYING.
-  SmallVector<bool, 4> uniformArgs;
-  uniformArgs.reserve(scalarFnc.arg_size());
   // return shape
   rv::VectorShape resultShape;
 
@@ -168,48 +165,51 @@ VectorMapping *PlatformInfo::inferMapping(llvm::Function &scalarFnc,
   // argument shapes
   rv::VectorShapeVec argShapes;
 
+  //auto &scalarArgList = scalarFnc.getArgumentList();
+  //auto itScalarArg = scalarArgList.begin();
   auto itScalarArg = scalarFnc.arg_begin();
+
+  //auto &simdArgList = simdFnc.getArgumentList();
+  //auto itSimdArg = simdArgList.begin();
   auto itSimdArg = simdFnc.arg_begin();
 
   for (uint i = 0; i < simdFnc.arg_size(); ++i) {
-	// mask special case
-		if (maskPos >= 0 && (i == (uint) maskPos)) {
-			argShapes.push_back(VectorShape::varying());
-			++itSimdArg;
-			continue;
-		}
+    // mask special case
+    if (maskPos >= 0 && (i == (uint)maskPos)) {
+      argShapes.push_back(VectorShape::varying());
+      ++itSimdArg;
+      continue;
+    }
 
-	// trailing additional argument case
-		if (itScalarArg == scalarFnc.arg_end()) {
-			IF_DEBUG errs() << "Unexpected additional argument (pos " << i << ") in simd function " << simdFnc << "\n";
-			argShapes.push_back(VectorShape::varying());
-			++itSimdArg;
-			continue;
-		}
+    // trailing additional argument case
+    if (itScalarArg == simdFnc.arg_end()) {
+      IF_DEBUG errs() << "Unexpected additional argument (pos " << i
+                      << ") in simd function " << simdFnc << "\n";
+      argShapes.push_back(VectorShape::varying());
+      ++itSimdArg;
+      continue;
+    }
 
-	// default argument case
-		if (typesMatch(itScalarArg->getType(), itSimdArg->getType())) {
-			argShapes.push_back(VectorShape::uni()); // unaligned
-		} else {
-			argShapes.push_back(VectorShape::varying());
-		}
+    // default argument case
+    if (typesMatch(itScalarArg->getType(), itSimdArg->getType())) {
+      argShapes.push_back(VectorShape::uni()); // unaligned
+    } else {
+      argShapes.push_back(VectorShape::varying());
+    }
 
-		++itScalarArg;
-		++itSimdArg;
-	}
+    ++itScalarArg;
+    ++itSimdArg;
+  }
 
-	assert(itScalarArg == scalarFnc.arg_end());
-	assert(itSimdArg == simdFnc.arg_end());
+  assert(itScalarArg == scalarFnc.arg_end());
+  assert(itSimdArg == simdFnc.arg_end());
 
   int vecWidth = 0; // FIXME
-	return new rv::VectorMapping(
-				&scalarFnc,
-				&simdFnc,
-				vecWidth, // if all arguments have shapes this function is suitable for all possible widths
-				maskPos,
-				resultShape,
-				argShapes
-			);
+  return new rv::VectorMapping(&scalarFnc, &simdFnc,
+                               vecWidth, // if all arguments have shapes this
+                                         // function is suitable for all
+                                         // possible widths
+                               maskPos, resultShape, argShapes);
 }
 
 Function *PlatformInfo::requestVectorMaskReductionFunc(const std::string &name, size_t width) {

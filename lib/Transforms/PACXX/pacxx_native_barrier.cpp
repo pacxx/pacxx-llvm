@@ -606,6 +606,7 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info, ValueToVa
         GetElementPtrInst *gep = GetElementPtrInst::Create(nullptr, cast, idx, "", barrier);
         unsigned align = M.getDataLayout().getPrefTypeAlignment(value->getType());
         new StoreInst(value, gep, false, align, barrier);
+        new StoreInst(value, gep, barrier);
     }
 
     //now we can remove the barrier
@@ -956,6 +957,7 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
     StructType *type = vectorized ? info._loadType.second : info._loadType.first;
     AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
 
+
     GetElementPtrInst *mem_gep = GetElementPtrInst::Create(Type::getInt8Ty(ctx), mem, offset, "", loopBody);
     CastInst *cast = CastInst::Create(CastInst::BitCast, mem_gep, PointerType::getUnqual(type), "", loopBody);
 
@@ -966,7 +968,9 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
         idx.push_back(ConstantInt::get(ctx, APInt(32, i)));
         GetElementPtrInst *struct_gep = GetElementPtrInst::Create(nullptr,
                                                                   cast, idx, "", loopBody);
-        LoadInst *load = new LoadInst(struct_gep, "",false, M.getDataLayout().getPrefTypeAlignment(struct_gep->getResultElementType()), loopBody);
+
+        unsigned align = M.getDataLayout().getPrefTypeAlignment(struct_gep->getResultElementType());
+        LoadInst *load = new LoadInst(struct_gep, "", false, align, loopBody);
         args.push_back(load);
     }
 

@@ -13,7 +13,6 @@
 // to work around code quality issues in LLVM 4.0.
 //
 //===----------------------------------------------------------------------===//
-//
 
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"

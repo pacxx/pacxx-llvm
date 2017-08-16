@@ -20,12 +20,14 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Scalar.h"
 
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/FileSystem.h"
 
 #include "rv/rv.h"
+#include "rv/passes.h"
 #include "rv/transform/loopExitCanonicalizer.h"
 
 using namespace llvm;
@@ -55,6 +57,8 @@ namespace {
         Function *createScalarCopy(Module *M, Function *kernel);
 
         Function *createVectorizedKernelHeader(Module *M, Function *kernel);
+
+        void normalizeFunction(Function *F);
 
         unsigned determineVectorWidth(Function *F, rv::VectorizationInfo &vecInfo, TargetTransformInfo *TTI);
 
@@ -102,14 +106,21 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         Function *scalarCopy = createScalarCopy(&M, kernel);
 
-        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-        TargetTransformInfo *TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*scalarCopy);
-        ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>(*scalarCopy).getSE();
-        MemoryDependenceResults *MDR = &getAnalysis<MemoryDependenceWrapperPass>(*scalarCopy).getMemDep();
+        normalizeFunction(scalarCopy);
+        FunctionAnalysisManager fam;
+        ModuleAnalysisManager mam;
 
-        Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
+        PassBuilder PB;
+        PB.registerFunctionAnalyses(fam);
+        PB.registerModuleAnalyses(mam);
+
+        //platform API
+        TargetTransformInfo *TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*scalarCopy);
+        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 
         rv::PlatformInfo platformInfo(M, TTI, TLI);
+
+        Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
 
         auto featureString = kernel->getFnAttribute("target-features").getValueAsString().str();
 
@@ -137,6 +148,9 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         }
 
         LoopInfo loopInfo(domTree);
+
+        ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>(*scalarCopy).getSE();
+        MemoryDependenceResults *MDR = &getAnalysis<MemoryDependenceWrapperPass>(*scalarCopy).getMemDep();
 
         // Dominance Frontier Graph
         DFG dfg(domTree);
@@ -167,12 +181,23 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         rv::VectorizationInfo tmpInfo(tmpMapping);
 
+        // early math func lowering
+        vectorizer.lowerRuntimeCalls(tmpInfo, loopInfo);
+        domTree.recalculate(*scalarCopy);
+        postDomTree.recalculate(*scalarCopy);
+        cdg.create(*scalarCopy);
+        dfg.create(*scalarCopy);
+
+        loopInfo.verify(domTree);
+
         prepareForVectorization(scalarCopy, tmpInfo);
 
         // vectorizationAnalysis
         vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo);
 
         unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, TTI);
+
+        __verbose("width: ", vectorWidth);
 
         rv::VectorMapping targetMapping(scalarCopy, vectorizedKernel, vectorWidth, -1, resShape, argShapes);
 
@@ -207,10 +232,6 @@ bool SPMDVectorizer::runOnModule(Module& M) {
         if (!vectorizeOk)
             errs() << "vector code generation failed";
 
-        std::error_code EC;
-        raw_fd_ostream OS("vectorized.kernel.ll", EC, sys::fs::F_None);
-        vectorizedKernel->print(OS, nullptr);
-
         // cleanup
         vectorizer.finalize();
 
@@ -220,12 +241,15 @@ bool SPMDVectorizer::runOnModule(Module& M) {
             vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
 
         __verbose("vectorized: ", vectorized);
-        __verbose("width: ", vectorWidth);
 
         if (vectorized) {
             vectorizedKernel->setName("__vectorized__" + kernel->getName());
             vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
             kernel->addFnAttr("vectorized");
+
+            std::error_code EC;
+            raw_fd_ostream OS("vectorized.kernel.ll", EC, sys::fs::F_None);
+            vectorizedKernel->print(OS, nullptr);
         } else
             vectorizedKernel->eraseFromParent();
 
@@ -261,6 +285,15 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
     }
 
     return vectorizedKernel;
+}
+
+void SPMDVectorizer::normalizeFunction(Function *F) {
+  legacy::FunctionPassManager FPM(F->getParent());
+  FPM.add(rv::createCNSPass());
+  FPM.add(createPromoteMemoryToRegisterPass());
+  FPM.add(createLoopSimplifyPass());
+  FPM.add(createLCSSAPass());
+  FPM.run(*F);
 }
 
 unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo &vecInfo, TargetTransformInfo *TTI) {
@@ -305,7 +338,9 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
         }
     }
 
-    return TTI->getRegisterBitWidth(true) / MaxWidth;
+    unsigned vectorWidth = TTI->getRegisterBitWidth(true) / MaxWidth;
+
+    return vectorWidth == 0 ? 1 : vectorWidth;
 }
 
 void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::VectorizationInfo &vecInfo) {
