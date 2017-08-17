@@ -384,6 +384,7 @@ void initializePACXXNativeBarrierPass(PassRegistry&);
 void initializePACXXNativeLivenessAnalyzerPass(PassRegistry&);
 void initializePACXXNativeSMTransformerPass(PassRegistry&);
 void initializePACXXSelectEmitterPass(PassRegistry&);
+void initializePACXXIntrinsicMapperPass(PassRegistry&);
 }
 
 #endif

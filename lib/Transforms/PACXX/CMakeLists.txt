@@ -20,6 +20,7 @@ add_llvm_library(LLVMPACXXTransforms
   pacxx_addrspace_transform.cpp
   pacxx_intrinsic_scheduler.cpp
   pacxx_select_emitter.cpp
+  pacxx_intrinsic_mapper.cpp
   Log.cpp
   Common.cpp
   gep_fixer.cpp
