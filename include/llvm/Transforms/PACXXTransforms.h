@@ -34,6 +34,7 @@ Pass *createPACXXNativeSMPass();
 Pass *createPACXXNativeLinkerPass();
 Pass *createPACXXIntrinsicSchedulerPass();
 Pass *createPACXXSelectEmitterPass();
+Pass *createPACXXIntrinsicMapperPass();
 }
 
 namespace pacxx {
