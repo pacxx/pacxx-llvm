@@ -80,6 +80,14 @@ private:
         }
     };
 
+    struct BarrierInfoLess : public binary_function< const unique_ptr<BarrierInfo> &, const unique_ptr<BarrierInfo> &, bool> {
+        bool operator() (const unique_ptr<BarrierInfo> &lhs, const unique_ptr<BarrierInfo> &rhs) {
+            return lhs->_id < rhs->_id;
+        }
+    };
+
+    typedef std::set<std::unique_ptr<PACXXNativeBarrier::BarrierInfo>, PACXXNativeBarrier::BarrierInfoLess> BarrierInfoSet;
+
     struct Alloca3 {
 
         Alloca3(AllocaInst *x, AllocaInst *y, AllocaInst *z) : _x(x), _y(y), _z(z) {}
@@ -140,7 +148,7 @@ private:
 
     unsigned getVectorWidth(Function *kernel);
 
-    bool runOnFunction(Module &M, Function *kernel, std::set<std::unique_ptr<BarrierInfo>> &infoVec, bool vecVersion = false);
+    bool runOnFunction(Module &M, Function *kernel, BarrierInfoSet &infoVec, bool vecVersion = false);
 
     vector<Instruction *> findBarriers(Function *kernel);
 
@@ -167,10 +175,10 @@ private:
     void storeLiveValues(Module &M, const std::unique_ptr<BarrierInfo> &info, ValueToValueMapTy &origFnMap);
 
     void createSpecialFooWrapper(Module &M, Function *pacxx_block, Function *kernel,
-                                 std::set<std::unique_ptr<BarrierInfo>> &barrierInfo,
-                                 std::set<std::unique_ptr<BarrierInfo>> &vecBarrierInfo);
+                                 BarrierInfoSet &barrierInfo,
+                                 BarrierInfoSet &vecBarrierInfo);
 
-    uint64_t getMaxStructSize(const DataLayout &dl, std::set<std::unique_ptr<BarrierInfo>> &infos);
+    uint64_t getMaxStructSize(const DataLayout &dl, BarrierInfoSet &infos);
 
     AllocaInst *createMemForLivingValues(const DataLayout &dl, uint64_t maxStructSize,
                                          Value *numThreads, BasicBlock *BB);
@@ -222,8 +230,8 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
 
         string kernelName = kernel->getName().str();
 
-        std::set<std::unique_ptr<BarrierInfo>> barrierInfo;
-        std::set<std::unique_ptr<BarrierInfo>> vecBarrierInfo;
+        BarrierInfoSet barrierInfo;
+        BarrierInfoSet vecBarrierInfo;
 
         bool modified_kernel = runOnFunction(M, kernel, barrierInfo);
 
@@ -257,7 +265,7 @@ unsigned PACXXNativeBarrier::getVectorWidth(Function *kernel) {
     return numThreads;
 }
 
-bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, std::set<std::unique_ptr<BarrierInfo>> &infoVec,
+bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, BarrierInfoSet &infoVec,
                                        bool vecVersion) {
 
     LLVMContext &ctx = M.getContext();
@@ -296,8 +304,6 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, std::set<std
     for(auto &info : infoVec) {
         createFunction(M, kernel, info);
     }
-
-    // TODO pad structs to maxstructSize
 
     for(auto &info : infoVec) {
         auto origBarrier = info->_barrier;
@@ -650,8 +656,8 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, const std::unique_ptr<Barrie
 }
 
 void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_block, Function *kernel,
-                                                 std::set<std::unique_ptr<BarrierInfo>> &barrierInfo,
-                                                 std::set<std::unique_ptr<BarrierInfo>> &vecBarrierInfo) {
+                                                 BarrierInfoSet &barrierInfo,
+                                                 BarrierInfoSet &vecBarrierInfo) {
 
     __verbose("Creating special pacxx_block wrapper \n");
 
@@ -731,16 +737,26 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
 
 
     //create Cases
-    auto infoIter = barrierInfo.begin();
-    auto vecInfoIter = vecBarrierInfo.begin();
+
+    auto it = barrierInfo.begin();
+    auto vecIt = vecBarrierInfo.begin();
     for(unsigned i = 0; i < barrierInfo.size(); ++i) {
 
-        pair<Function *, Function *> calledFunctions = make_pair((*infoIter)->_func,
-                                                                 vectorized ? (*vecInfoIter)->_func : nullptr);
-        pair<StructType*, StructType*> loadTypes = make_pair((*infoIter)->_livingValuesType,
-                                                  vectorized ? (*vecInfoIter)->_livingValuesType : nullptr);
-        pair<StructType*, StructType*> castedLoadTypes = make_pair((*infoIter)->_origLivingValuesType,
-                                                  vectorized ? (*vecInfoIter)->_origLivingValuesType: nullptr);
+        const unsigned id = (*it)->_id;
+
+        assert(id == i);
+
+        if(vectorized) {
+            const unsigned vecId = (*vecIt)->_id;
+            assert(vecId == i);
+        }
+
+        pair<Function *, Function *> calledFunctions = make_pair((*it)->_func,
+                                                                 vectorized ? (*vecIt)->_func : nullptr);
+        pair<StructType*, StructType*> loadTypes = make_pair((*it)->_livingValuesType,
+                                                  vectorized ? (*vecIt)->_livingValuesType : nullptr);
+        pair<StructType*, StructType*> castedLoadTypes = make_pair((*it)->_origLivingValuesType,
+                                                  vectorized ? (*vecIt)->_origLivingValuesType: nullptr);
 
         const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, kernel, switchBB, breakBB, allocSwitchParam, alloc_max,
                                  livingValuesMem, livingValuesMem, loadTypes, castedLoadTypes, calledFunctions);
@@ -749,9 +765,10 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
         //add case to switch
         switchInst->addCase(cast<ConstantInt>(ConstantInt::get(int32_type, i)), caseBlock);
 
-        ++infoIter;
+        ++it;
+
         if(vectorized)
-            ++vecInfoIter;
+            ++vecIt;
     }
 
     //break from switch
@@ -762,15 +779,15 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
 
     //now inline all calls and remove the no longer required functions
     for(auto call : _inlineCalls) {
-	Function *calledFunction = call->getCalledFunction();
+	    Function *calledFunction = call->getCalledFunction();
         InlineFunctionInfo IFI;
         InlineFunction(call, IFI);
         calledFunction->eraseFromParent();
     }
-    _inlineCalls.clear(); 
+    _inlineCalls.clear();
 }
 
-uint64_t PACXXNativeBarrier::getMaxStructSize(const DataLayout &dl, std::set<std::unique_ptr<BarrierInfo>> &infos) {
+uint64_t PACXXNativeBarrier::getMaxStructSize(const DataLayout &dl, BarrierInfoSet &infos) {
     uint64_t  maxStructSize = 0;
     for(auto &info : infos) {
         if(info->_id == 0)
