@@ -53,7 +53,7 @@ private:
 
     void computeLiveSets(Function &F);
 
-    set<Use *> getPhiUses(BasicBlock *BB);
+    void getPhiUses(BasicBlock *current, set<BasicBlock *> &visited, set<Use *> &uses, BasicBlock *orig);
 
     set<Value *> getPhiDefs(BasicBlock *BB);
 

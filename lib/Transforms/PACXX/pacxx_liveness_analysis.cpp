@@ -36,7 +36,9 @@ void PACXXNativeLivenessAnalyzer::computeLiveSets(Function &F) {
     for (auto BI = F.begin(), BE = F.end(); BI != BE; ++BI) {
 
         BasicBlock *BB = &*BI;
-        set<Use *> phiUses = getPhiUses(BB);
+        set<Use *> phiUses;
+        set<BasicBlock *> visitedBlocks;
+        getPhiUses(BB, visitedBlocks, phiUses, BB);
 
         for(auto use : phiUses) {
             _out[BB].insert(use->get());
@@ -76,24 +78,28 @@ void PACXXNativeLivenessAnalyzer::upAndMark(BasicBlock *BB, Use *use) {
     }
 }
 
-set<Use *> PACXXNativeLivenessAnalyzer::getPhiUses(BasicBlock *BB) {
-    set<Use *> uses;
-    for (auto I = succ_begin(BB), IE = succ_end(BB); I != IE; ++I) {
+void PACXXNativeLivenessAnalyzer::getPhiUses(BasicBlock *current,
+                                             set<BasicBlock *> &visited,
+                                             set<Use *> &uses,
+                                             BasicBlock *orig) {
+
+    if(visited.find(current) != visited.end()) return;
+    visited.insert(current);
+
+    for (auto I = succ_begin(current), IE = succ_end(current); I != IE; ++I) {
         BasicBlock *succ = *I;
         for(auto BI = succ->begin(), BE = succ->end(); BI != BE; ++BI) {
             // find PHINodes of successors
             if(PHINode *phi = dyn_cast<PHINode>(&*BI)) {
                 for(auto &use : phi->incoming_values()) {
-                    // if use is an instruction and defined in BB insert it into uses
-                    if(Instruction *useInst = dyn_cast<Instruction>(use.get())) {
-                        if(useInst->getParent() == BB)
-                            uses.insert(&use);
-                    }
+                    if(phi->getIncomingBlock(use) == orig && isa<Instruction>(use.get()))
+                        uses.insert(&use);
                 }
             }
         }
+        //recurse
+        getPhiUses(succ, visited, uses, orig);
     }
-    return uses;
 }
 
 
