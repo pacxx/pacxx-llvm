@@ -7,7 +7,6 @@
 #include "pacxx_liveness_analysis.h"
 
 using namespace llvm;
-using namespace std;
 using namespace pacxx;
 
 
@@ -34,13 +33,15 @@ private:
                     const BasicBlock *entry,
                     SetVector<const BasicBlock *> parts,
                     SetVector<const Value *> livingValues,
-                    StructType *livingValuesType)
+                    StructType *livingValuesType,
+                    StructType *origLivingValuesType)
                 : _id(id),
                   _barrier(barrier),
                   _entry(entry),
                   _parts(parts),
                   _livingValues(livingValues),
                   _livingValuesType(livingValuesType),
+                  _origLivingValuesType(origLivingValuesType),
                   _func(nullptr) {}
 
         ~BarrierInfo() {}
@@ -51,6 +52,7 @@ private:
         SetVector<const BasicBlock *> _parts;
         SetVector<const Value *> _livingValues;
         StructType *_livingValuesType;
+        StructType *_origLivingValuesType;
 
 
         Function *_func;
@@ -103,6 +105,7 @@ private:
                  pair<AllocaInst *, AllocaInst *> loadStruct,
                  pair<AllocaInst *, AllocaInst *> nextStruct,
                  pair<StructType *, StructType *> loadType,
+                 pair<StructType *, StructType *> origLoadType,
                  pair<Function *, Function *> calledFunctions)
                 : _id(id),
                   _maxStructSize(maxStructSize),
@@ -115,6 +118,7 @@ private:
                   _loadStruct(loadStruct),
                   _nextStruct(nextStruct),
                   _loadType(loadType),
+                  _origLoadType(origLoadType),
                   _calledFunctions(calledFunctions) {}
 
         ~CaseInfo() {}
@@ -130,6 +134,7 @@ private:
         const pair<AllocaInst *, AllocaInst *> _loadStruct;
         const pair<AllocaInst *, AllocaInst *> _nextStruct;
         const pair<StructType *, StructType *> _loadType;
+        const pair<StructType *, StructType *> _origLoadType;
         const pair<Function *, Function *> _calledFunctions;
     };
 
@@ -240,6 +245,10 @@ bool PACXXNativeBarrier::runOnModule(llvm::Module &M) {
         modified |= modified_kernel;
     }
 
+    std::error_code EC;
+    raw_fd_ostream OS("module.after.barrier.ll", EC, sys::fs::F_None);
+    M.print(OS, nullptr);
+
     return modified;
 }
 
@@ -268,6 +277,10 @@ bool PACXXNativeBarrier::runOnFunction(Module &M, Function *kernel, SetVector<Ba
 
 
     splitAtBarriers(M, barriers);
+
+    std::error_code EC;
+    raw_fd_ostream OS("module.after.split.ll", EC, sys::fs::F_None);
+    M.print(OS, nullptr);
 
     __verbose("Getting living value analysis \n");
     _livenessAnalyzer = &getAnalysis<PACXXNativeLivenessAnalyzer>(*kernel);
@@ -352,7 +365,7 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createFirstInfo(LLVMContext
     parts.insert(functionEntry);
     recursivePartFinding(functionEntry, parts);
 
-    BarrierInfo *info = new BarrierInfo(0, nullptr, parts[0], parts, livingValues, type);
+    BarrierInfo *info = new BarrierInfo(0, nullptr, parts[0], parts, livingValues, type, type);
 
     __verbose("Finished creating barrier info\n");
     __verbose("Info: ", info->toString());
@@ -364,8 +377,19 @@ PACXXNativeBarrier::BarrierInfo* PACXXNativeBarrier::createBarrierInfo(LLVMConte
 
     auto parts = getPartsOfBarrier(barrier);
     auto livingValues = getLivingValuesForBarrier(parts);
-    auto livingValuesType = getLivingValuesType(ctx, livingValues);
-    BarrierInfo *info = new BarrierInfo(id, barrier, parts[0], parts, livingValues, livingValuesType);
+    auto origLivingValuesType = getLivingValuesType(ctx, livingValues);
+
+    SmallVector<Type*, 8> params;
+    for (unsigned i = 0; i < origLivingValuesType->getStructNumElements(); ++i) {
+        Type *type = origLivingValuesType->getStructElementType(i);
+        if(type->isIntegerTy(1))
+            type = IntegerType::getInt8Ty(ctx);
+        params.push_back(type);
+    }
+
+    auto livingValuesType = StructType::get(ctx, params, false);
+
+    BarrierInfo *info = new BarrierInfo(id, barrier, parts[0], parts, livingValues, livingValuesType, origLivingValuesType);
 
     _indexMap[barrier] = id;
 
@@ -429,7 +453,7 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
     SetVector<const BasicBlock *> &parts = info->_parts;
     SetVector<const Value *> &livingValues = info->_livingValues;
 
-    StructType *livingValuesType = info->_livingValuesType;
+    StructType *livingValuesType = info->_origLivingValuesType;
 
     SmallVector < Type * , 8 > params;
 
@@ -566,6 +590,11 @@ Function *PACXXNativeBarrier::createFunction(Module &M, Function *kernel, Barrie
 
     __verbose("Finished creating function \n");
 
+    std::error_code EC;
+    std::string filename = std::string("newFunc") + std::to_string(info->_id) +".ll";
+    raw_fd_ostream OS(filename, EC, sys::fs::F_None);
+    newFunc->print(OS, nullptr);
+
     info->_func = newFunc;
 
     return newFunc;
@@ -605,8 +634,10 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, BarrierInfo *info, ValueToVa
         idx.push_back(ConstantInt::get(ctx, APInt(32, i++)));
         GetElementPtrInst *gep = GetElementPtrInst::Create(nullptr, cast, idx, "", barrier);
         unsigned align = M.getDataLayout().getPrefTypeAlignment(value->getType());
+        Type *type = value->getType();
+        if(type->isIntegerTy(1))
+            value = new ZExtInst(value, Type::getInt8Ty(ctx), "", barrier);
         new StoreInst(value, gep, false, align, barrier);
-        new StoreInst(value, gep, barrier);
     }
 
     //now we can remove the barrier
@@ -703,9 +734,11 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
                                                                  vectorized ? vecBarrierInfo[i]->_func : nullptr);
         pair<StructType*, StructType*> loadTypes = make_pair(barrierInfo[i]->_livingValuesType,
                                                   vectorized ? vecBarrierInfo[i]->_livingValuesType : nullptr);
+        pair<StructType*, StructType*> castedLoadTypes = make_pair(barrierInfo[i]->_origLivingValuesType,
+                                                  vectorized ? vecBarrierInfo[i]->_origLivingValuesType: nullptr);
 
         const CaseInfo info = CaseInfo(i, maxStructSize, newFoo, kernel, switchBB, breakBB, allocSwitchParam, alloc_max,
-                                 livingValuesMem, livingValuesMem, loadTypes, calledFunctions);
+                                 livingValuesMem, livingValuesMem, loadTypes, castedLoadTypes, calledFunctions);
         BasicBlock *caseBlock = createCase(M, info, vectorized);
 
         //add case to switch
@@ -955,6 +988,7 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
     }
 
     StructType *type = vectorized ? info._loadType.second : info._loadType.first;
+    StructType *origType = vectorized ? info._origLoadType.second : info._origLoadType.first;
     AllocaInst *mem = vectorized ? info._loadStruct.second : info._loadStruct.first;
 
 
@@ -971,7 +1005,12 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
         unsigned align = M.getDataLayout().getPrefTypeAlignment(struct_gep->getResultElementType());
         LoadInst *load = new LoadInst(struct_gep, "", false, align, loopBody);
-        args.push_back(load);
+        if(origType->getStructElementType(i)->isIntegerTy(1)) {
+            TruncInst *trunc = new TruncInst(load, IntegerType::getInt1Ty(ctx), "", loopBody);
+            args.push_back(trunc);
+        }
+        else
+            args.push_back(load);
     }
 
     __verbose("Setting ptr to next struct \n");
