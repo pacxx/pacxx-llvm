@@ -6,7 +6,6 @@
 #include "pacxx_liveness_analysis.h"
 
 using namespace llvm;
-using namespace std;
 using namespace pacxx;
 
 namespace llvm {

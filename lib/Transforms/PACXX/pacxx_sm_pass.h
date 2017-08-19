@@ -27,7 +27,6 @@
 #include "ModuleHelper.h"
 
 using namespace llvm;
-using namespace std;
 using namespace pacxx;
 
 class PACXXNativeSMTransformer : public ModulePass {
