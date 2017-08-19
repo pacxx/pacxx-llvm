@@ -799,6 +799,7 @@ Linearizer::foldPhis(BasicBlock & block) {
     Value * replacement = nullptr;
     if (flatPhi.getNumIncomingValues() == 1) {
       replacement = flatPhi.getIncomingValue(0);
+      flatPhi.replaceAllUsesWith(replacement);
       flatPhi.eraseFromParent();
     } else {
       vecInfo.setVectorShape(flatPhi, phiShape); // TODO infer from operands
@@ -806,6 +807,8 @@ Linearizer::foldPhis(BasicBlock & block) {
     }
 
   // remove the old phi node
+
+    //vecInfo.remapPredicate(*replacement, *phi);
     phi->replaceAllUsesWith(replacement);
     phi->eraseFromParent();
   }
@@ -1607,6 +1610,7 @@ Linearizer::simplifyBlends() {
           if (isa<Instruction>(val)) vecInfo.setVectorShape(*val, selectShape);
         }
 
+        //vecInfo.remapPredicate(*simplified, *select);
         select->replaceAllUsesWith(simplified);
         select->eraseFromParent();
         continue;

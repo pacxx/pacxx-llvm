@@ -16,6 +16,7 @@
 #include <llvm/IR/Metadata.h>
 #include <report.h>
 #include <fstream>
+#include <llvm/Support/FileSystem.h>
 
 #include "NatBuilder.h"
 #include "Utils.h"
@@ -1063,6 +1064,13 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
 
   Value *mask = nullptr;
   Value *predicate = vecInfo.getPredicate(*inst->getParent());
+  if (!predicate) {
+    inst->dump();
+    std::error_code EC;
+    raw_fd_ostream OS("failed.kernel.ll", EC, sys::fs::F_None);
+    inst->getParent()->getParent()->print(OS, nullptr);
+  }
+
   assert(predicate && predicate->getType()->isIntegerTy(1) && "predicate must have i1 type!");
   bool needsMask = !isa<Constant>(predicate);
 

@@ -35,7 +35,7 @@ class Region;
 class VectorizationInfo
 {
     VectorMapping mapping;
-    std::unordered_map<const llvm::BasicBlock*, llvm::WeakVH> predicates;
+    std::unordered_map<const llvm::BasicBlock*, llvm::TrackingVH<llvm::Value>> predicates;
     std::unordered_map<const llvm::Value*, VectorShape> shapes;
 
     std::set<const llvm::Loop*> mDivergentLoops;
@@ -67,9 +67,11 @@ public:
     llvm::Value* getPredicate(const llvm::BasicBlock& block) const;
 
     void setPredicate(const llvm::BasicBlock& block, llvm::Value& predicate);
+    void replacePredicate(const llvm::Value& old, llvm::Value& predicate);
     void dropPredicate(const llvm::BasicBlock& block);
 
     void remapPredicate(llvm::Value& dest, llvm::Value& old);
+    const llvm::BasicBlock* getBlockForPredicate(llvm::Value& pred);
 
     bool isDivergentLoop(const llvm::Loop* loop) const;
     bool isDivergentLoopTopLevel(const llvm::Loop* loop) const;
