@@ -35,13 +35,23 @@ VectorizationInfo::inRegion(const Instruction & inst) const {
 void
 VectorizationInfo::remapPredicate(Value& dest, Value& old)
 {
-    for (auto it : predicates)
+    for (auto& it : predicates)
     {
         if (it.second == &old)
         {
-            predicates[it.first] = &dest;
+            it.second = &dest;
         }
     }
+}
+
+const llvm::BasicBlock* VectorizationInfo::getBlockForPredicate(llvm::Value &pred) {
+  for (auto& it : predicates)
+  {
+    if (it.second == &pred)
+    {
+      return it.first;
+    }
+  }
 }
 
 void
@@ -189,6 +199,7 @@ VectorizationInfo::dropVectorShape(const Value& val)
 void
 VectorizationInfo::dropPredicate(const BasicBlock& block)
 {
+    llvm::errs() << "droped predicate " << block.getName().str() << "\n";
     auto it = predicates.find(&block);
     if (it == predicates.end()) return;
     predicates.erase(it);
@@ -206,11 +217,11 @@ VectorizationInfo::getPredicate(const llvm::BasicBlock& block) const
     auto it = predicates.find(&block);
     if (it == predicates.end())
     {
-        return nullptr;
+      return nullptr;
     }
     else
     {
-        return it->second;
+      return it->second;
     }
 }
 
