@@ -402,10 +402,10 @@ std::unique_ptr<PACXXNativeBarrier::BarrierInfo> PACXXNativeBarrier::createBarri
     SmallVector<Type*, 8> params;
     for (unsigned i = 0; i < origLivingValuesType->getStructNumElements(); ++i) {
         Type *type = origLivingValuesType->getStructElementType(i);
-//        if(type->isIntegerTy(1))
-//            type = IntegerType::getInt8Ty(ctx);
-//        if(type->isVectorTy() && type->getVectorElementType()->isIntegerTy(1))
-//            type = IntegerType::getInt32Ty(ctx);
+        if(type->isIntegerTy(1))
+            type = IntegerType::getInt32Ty(ctx);
+        if(type->isVectorTy() && type->getVectorElementType()->isIntegerTy(1))
+            type = IntegerType::getInt32Ty(ctx);
         params.push_back(type);
     }
 
@@ -694,15 +694,15 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, Function* F, const std::uniq
         //SmallVector<unsigned int, 1> idx;
         //idx.push_back(i++);
 
-//        Type *type = value->getType();
-//        if (type->isIntegerTy(1)) {
-//            value = new ZExtInst(value, Type::getInt8Ty(ctx), "", barrier);
-//        }
-//        if (type->isVectorTy() && type->getVectorElementType()->isIntegerTy(1)) {
-//          IRBuilder<> builder(barrier);
-//          auto cast = builder.CreateBitCast(value, builder.getIntNTy(type->getVectorNumElements()));
-//          value = builder.CreateZExt(cast, builder.getInt32Ty());
-//        }
+        Type *type = value->getType();
+        if (type->isIntegerTy(1)) {
+            value = new ZExtInst(value, Type::getInt32Ty(ctx), "", barrier);
+        }
+        if (type->isVectorTy() && type->getVectorElementType()->isIntegerTy(1)) {
+          IRBuilder<> builder(barrier);
+          auto cast = builder.CreateBitCast(value, builder.getIntNTy(type->getVectorNumElements()));
+          value = builder.CreateZExt(cast, builder.getInt32Ty());
+        }
         auto vcast = builder.CreateBitCast(storeTo, value->getType()->getPointerTo());
         builder.CreateStore(value, vcast);
         storeTo = builder.CreateGEP(storeTo, builder.getInt32(M.getDataLayout().getTypeAllocSize(value->getType())));
@@ -899,7 +899,7 @@ BasicBlock *PACXXNativeBarrier::createCase(Module &M,
 
     // alloc z
     AllocaInst *alloc_z = new AllocaInst(int32_type, 0, nullptr,
-                                                  dl.getPrefTypeAlignment(int32_type), "__z", newFoo->begin()->getTerminator());
+                                                  dl.getPrefTypeAlignment(int32_type), "__z", caseEntry);
     alloc_z->setMetadata("pacxx_read_tid_z", nullNode);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_z, caseEntry);
 
@@ -919,13 +919,13 @@ BasicBlock *PACXXNativeBarrier::createCase(Module &M,
 
     // alloc y
     AllocaInst *alloc_y = new AllocaInst(int32_type, 0, nullptr,
-                                                  dl.getPrefTypeAlignment(int32_type), "__y", newFoo->begin()->getTerminator());
+                                                  dl.getPrefTypeAlignment(int32_type), "__y", loopHeader_z);
     alloc_y->setMetadata("pacxx_read_tid_y", nullNode);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_y, loopHeader_z);
 
     // alloc x
     AllocaInst *alloc_x = new AllocaInst(int32_type, 0, nullptr,
-                                                  dl.getPrefTypeAlignment(int32_type), "__x", newFoo->begin()->getTerminator());
+                                                  dl.getPrefTypeAlignment(int32_type), "__x", loopHeader_y);
     alloc_x->setMetadata("pacxx_read_tid_x", nullNode);
     new StoreInst(ConstantInt::get(int32_type, 0), alloc_x, loopHeader_y);
 
@@ -1096,12 +1096,12 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
    // type->dump();
   auto threadMem = builder.CreateGEP(mem, offset, "threadMem");
   if (type->getStructNumElements()) {
-    auto reCast = builder.CreateBitCast(threadMem, type->getPointerTo(0));
+  //  auto reCast = builder.CreateBitCast(threadMem, type->getPointerTo(0));
     // CastInst *cast = CastInst::Create(CastInst::BitCast, mem_gep, PointerType::getUnqual(type), "", loopBody);
    // auto mem_gep = builder.CreateGEP(reCast, blockId);
 
 
-    auto loadStruct = builder.CreateLoad(reCast);
+    //auto loadStruct = builder.CreateLoad(reCast);
     //loadStruct->setAlignment(M.getDataLayout().getPrefTypeAlignment(loadStruct->getType()));
 
     Value* loadFrom = threadMem;
@@ -1120,22 +1120,24 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
       //auto load = builder.CreateExtractValue(loadStruct, idx);
       auto vcast = builder.CreateBitCast(loadFrom, type->getStructElementType(i)->getPointerTo());
-      Value* load = builder.CreateLoad(vcast);
-//      if (origType->getStructElementType(i)->isIntegerTy(1)) {
-//        load = new TruncInst(load, IntegerType::getInt1Ty(ctx), "", loopBody);
-//
-//      }
-//
-//      if (origType->getStructElementType(i)->isVectorTy()
-//          && origType->getStructElementType(i)->getVectorElementType()->isIntegerTy(1)) {
-//        // IRBuilder<> builder(loopBody);
-//        auto trun =
-//            builder.CreateTrunc(load, builder.getIntNTy(origType->getStructElementType(i)->getVectorNumElements()));
-//        load = builder.CreateBitCast(trun, origType->getStructElementType(i));
-//
-//      }
-      loadFrom  = builder.CreateGEP(loadFrom, builder.getInt32(M.getDataLayout().getTypeAllocSize(load->getType())));
-      args.push_back(load);
+      Value* loadval = builder.CreateLoad(vcast);
+      Value* origval = nullptr;
+      if (origType->getStructElementType(i)->isIntegerTy(1)) {
+        origval = new TruncInst(loadval, IntegerType::getInt1Ty(ctx), "", loopBody);
+      }
+
+      if (origType->getStructElementType(i)->isVectorTy()
+          && origType->getStructElementType(i)->getVectorElementType()->isIntegerTy(1)) {
+        // IRBuilder<> builder(loopBody);
+        auto trun =
+            builder.CreateTrunc(loadval, builder.getIntNTy(origType->getStructElementType(i)->getVectorNumElements()));
+        origval = builder.CreateBitCast(trun, origType->getStructElementType(i));
+
+      }
+      if (!origval)
+        origval = loadval;
+      loadFrom  = builder.CreateGEP(loadFrom, builder.getInt32(M.getDataLayout().getTypeAllocSize(loadval->getType())));
+      args.push_back(origval);
     }
   }
     __verbose("Setting ptr to next struct \n");
