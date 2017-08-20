@@ -4,7 +4,6 @@
 #include "pacxx_sm_pass.h"
 
 using namespace llvm;
-using namespace std;
 using namespace pacxx;
 
 namespace llvm {
@@ -29,7 +28,7 @@ bool PACXXNativeSMTransformer::runOnModule(Module &M) {
     auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
     for(auto &kernel : kernels) {
-        __verbose(kernel->getName().str());
+        std::cout << "Craeting shared memory for kernel: " << kernel->getName().str() << std::endl;
         runOnKernel(kernel);
     }
 
@@ -75,7 +74,14 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal) {
     set<GlobalVariable *> sm;
     for (auto &GV : M->globals()) {
-        if (internal ? GV.hasInternalLinkage() : GV.hasExternalLinkage() && GV.getMetadata("pacxx.as.shared")) {
+        std::cout << "Looking at global: " << GV.getName().str() << std::endl;
+        bool consider = false;
+        if(GV.hasMetadata() && GV.getMetadata("pacxx.as.shared")) {
+            Type *sm_type = GV.getType()->getElementType();
+            sm_type->dump();
+            consider = internal ? sm_type->getArrayNumElements() != 0 : sm_type->getArrayNumElements() == 0;
+        }
+        if(consider) {
             for (User *GVUsers : GV.users()) {
                 if (Instruction *Inst = dyn_cast<Instruction>(GVUsers)) {
                     if (Inst->getParent()->getParent() == func) {
