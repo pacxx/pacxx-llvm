@@ -158,7 +158,6 @@ struct NVVMRegPass : public ModulePass {
 
     auto kernels = getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
-
     BaseOpts opt(&M);
     for (auto &F : M.getFunctionList()) {
       opt.initialize(F);

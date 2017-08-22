@@ -390,13 +390,13 @@ std::unique_ptr<PACXXNativeBarrier::BarrierInfo> PACXXNativeBarrier::createBarri
     SmallVector<Type*, 8> params;
     for (unsigned i = 0; i < origLivingValuesType->getStructNumElements(); ++i) {
         Type *type = origLivingValuesType->getStructElementType(i);
-        if(type->isIntegerTy(1))
-            type = IntegerType::getInt8Ty(ctx);
+        if(type->isVectorTy() && type->getVectorElementType()->isIntegerTy(1))
+            type = VectorType::get(IntegerType::getInt32Ty(ctx), type->getVectorNumElements()); //IntegerType::getIntNTy(ctx, type->getVectorNumElements());
         params.push_back(type);
     }
 
     auto livingValuesType = StructType::get(ctx, params, false);
-
+    livingValuesType->dump();
     std::unique_ptr<BarrierInfo> info = std::make_unique<BarrierInfo>(id, barrier, parts[0], parts, livingValues,
                                                                       livingValuesType, origLivingValuesType);
 
@@ -641,11 +641,22 @@ void PACXXNativeBarrier::storeLiveValues(Module &M, const std::unique_ptr<Barrie
         SmallVector<Value*, 8> idx;
         idx.push_back(ConstantInt::getNullValue(Type::getInt32Ty(ctx)));
         idx.push_back(ConstantInt::get(ctx, APInt(32, i++)));
-        GetElementPtrInst *gep = GetElementPtrInst::Create(nullptr, cast, idx, "", barrier);
+        GetElementPtrInst *gep = GetElementPtrInst::Create(nullptr, cast, idx, "storeTo", barrier);
         unsigned align = M.getDataLayout().getPrefTypeAlignment(value->getType());
         Type *type = value->getType();
-        if(type->isIntegerTy(1))
-            value = new ZExtInst(value, Type::getInt8Ty(ctx), "", barrier);
+        if(type->isVectorTy() && type->getVectorElementType()->isIntegerTy(1)) {
+          IRBuilder<> builder(barrier);
+
+          value = builder.CreateSExt(value, VectorType::get(builder.getInt32Ty(), type->getVectorNumElements()));
+
+          //value = builder.CreateBitCast(value, builder.getIntNTy(type->getVectorNumElements()));
+       /*   Value* res = nullptr;
+          for (unsigned i = 0; i < type->getVectorNumElements(); ++i){
+            auto elem = builder.CreateExtractElement(value, i);
+            builder.CreateOr(res, elem);
+          }*/
+         // value = new ZExtInst(value, Type::getInt8Ty(ctx), "", barrier);
+        }
         new StoreInst(value, gep, false, align, barrier);
     }
 
@@ -726,7 +737,7 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
     uint64_t maxStructSize = getMaxStructSize(dl, barrierInfo);
     uint64_t maxStructSizeVec = vectorized ? getMaxStructSize(dl, vecBarrierInfo) : 0;
     AllocaInst *mem = createMemForLivingValues(dl, maxStructSize, numThreads, allocBB);
-    AllocaInst *mem_vec = vectorized ? createMemForLivingValues(dl, maxStructSize, numThreads, allocBB) : nullptr;
+    AllocaInst *mem_vec = vectorized ? createMemForLivingValues(dl, maxStructSizeVec, numThreads, allocBB) : nullptr;
 
     auto livingValuesMem = make_pair(mem, mem_vec);
 
@@ -930,7 +941,7 @@ pair<BasicBlock *, BasicBlock*> PACXXNativeBarrier::createXLoop(Module &M,
         BinaryOperator *add = BinaryOperator::CreateAdd(load, ConstantInt::get(int32_type, _vectorWidth),
                                                         "addSIMD", loopHeader_vecx);
 
-        ICmpInst *cmp = new ICmpInst(*loopHeader_vecx, ICmpInst::ICMP_SLT, add, loadMax, "cmp");
+        ICmpInst *cmp = new ICmpInst(*loopHeader_vecx, ICmpInst::ICMP_SLE, add, loadMax, "cmp");
         BranchInst::Create(body_vecx, loopHeader_x, cmp, loopHeader_vecx);
 
         fillLoopXBody(M,
@@ -1036,11 +1047,13 @@ void PACXXNativeBarrier::fillLoopXBody(Module &M,
 
         unsigned align = M.getDataLayout().getPrefTypeAlignment(struct_gep->getResultElementType());
         LoadInst *load = new LoadInst(struct_gep, "", false, align, loopBody);
-        if(origType->getStructElementType(i)->isIntegerTy(1)) {
-            TruncInst *trunc = new TruncInst(load, IntegerType::getInt1Ty(ctx), "", loopBody);
-            args.push_back(trunc);
-        }
-        else
+         if(origType->getStructElementType(i)->isVectorTy() && origType->getStructElementType(i)->getVectorElementType()->isIntegerTy(1)) {
+             IRBuilder<> builder(loopBody);
+             //auto cast = builder.CreateBitCast(load, origType->getStructElementType(i));
+             auto cast = builder.CreateTrunc(load, origType->getStructElementType(i));
+             args.push_back(cast);
+         }
+         else
             args.push_back(load);
     }
 

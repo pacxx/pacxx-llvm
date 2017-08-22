@@ -76,11 +76,11 @@ set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module 
     for (auto &GV : M->globals()) {
         std::cout << "Looking at global: " << GV.getName().str() << std::endl;
         bool consider = false;
-        if(GV.hasMetadata() && GV.getMetadata("pacxx.as.shared")) {
+       // if(GV.hasMetadata() && GV.getMetadata("pacxx.as.shared")) {
             Type *sm_type = GV.getType()->getElementType();
             sm_type->dump();
             consider = internal ? sm_type->getArrayNumElements() != 0 : sm_type->getArrayNumElements() == 0;
-        }
+        //}
         if(consider) {
             for (User *GVUsers : GV.users()) {
                 if (Instruction *Inst = dyn_cast<Instruction>(GVUsers)) {
@@ -172,14 +172,18 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M,
     for (auto GV : globals) {
 
         Type *sm_type = GV->getType()->getElementType();
-        AllocaInst *sm_alloc = new AllocaInst(sm_type, 0, nullptr,
-                                              0, "internal_sm",
-                                              sharedMemBB);
+      IRBuilder<> builder(sharedMemBB);
 
+        auto sm_alloc = builder.CreateAlloca(sm_type);
+       // AllocaInst *sm_alloc = new AllocaInst(sm_type, 0, nullptr,
+       //                                       0, "internal_sm",
+       //                                       sharedMemBB);
+        sm_alloc->setAlignment(GV->getAlignment());
+        auto cast = builder.CreateBitCast(sm_alloc, sm_type->getPointerTo(0));
         if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
             new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
 
-        replaceAllUsesInKernel(kernel, GV, sm_alloc);
+        replaceAllUsesInKernel(kernel, GV, cast);
     }
 }
 
@@ -194,14 +198,14 @@ void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M,
 
         sm_type = GVType->getArrayElementType();
 
-        Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
-                                           M.getDataLayout().getTypeAllocSize(sm_type));
+        Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()), M.getDataLayout().getTypeAllocSize(sm_type));
 
         //calc number of elements
         BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
-        AllocaInst *sm_alloc = new AllocaInst(GV->getType(), 0, div,
+        //BinaryOperator *mul = BinaryOperator::CreateMul(sm_size, typeSize, "numElem", sharedMemBB);
+        AllocaInst *sm_alloc = new AllocaInst(sm_type, 0, div,
                                               "external_sm", sharedMemBB);
-
+        sm_alloc->setAlignment(GV->getAlignment());
         BitCastInst *cast = new BitCastInst(sm_alloc, GV->getType(), "cast", sharedMemBB);
 
         replaceAllUsesInKernel(kernel, GV, cast);

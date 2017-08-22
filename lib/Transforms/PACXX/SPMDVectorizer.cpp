@@ -322,6 +322,10 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
                             ignore = false;
                     }
                 }
+              if (auto AI = dyn_cast<AllocaInst>(&I)){
+                if (AI->getMetadata("pacxx.as.shared"))
+                  ignore = true;
+              }
 
                 if(!ignore) {
 
@@ -348,6 +352,25 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
     Module *M = kernel->getParent();
 
     auto &DL = M->getDataLayout();
+  // test code for alloca in AS 3
+  struct AllocaRewriter : public InstVisitor<AllocaRewriter>{
+    void visitAllocaInst(AllocaInst& I){
+      if (I.getMetadata("pacxx.as.shared")) {
+        IRBuilder<> builder(&I);
+        //auto alloca = builder.CreateAlloca(I.getAllocatedType(), 3, I.getArraySize(), "sharedMem");
+        //alloca->setAlignment(I.getAlignment());
+//        auto M = I.getParent()->getParent()->getParent();
+//        auto GV = new GlobalVariable(*M, I.getAllocatedType(), false,
+//                                     GlobalValue::ExternalLinkage, nullptr, "sm", nullptr, GlobalValue::NotThreadLocal, 0, false);
+//        GV->setMetadata("pacxx.as.shared", MDNode::get(M->getContext(), nullptr));
+//        GV->setAlignment(I.getAlignment());
+        //auto cast = builder.CreateAddrSpaceCast(GV, I.getAllocatedType()->getPointerTo(0));
+        I.setAlignment(4);
+      }
+    }
+  } allocaRewriter;
+
+  allocaRewriter.visit(kernel);
 
     for(auto &global : M->globals()) {
         for (User *user: global.users()) {
@@ -360,8 +383,19 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
 
+
+
+
+    SmallVector<Instruction*, 8> unsupported_calls;
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
+
+        if (auto AI = dyn_cast<AllocaInst>(inst)) {
+          if (AI->getMetadata("pacxx.as.shared")) {
+            vecInfo.setVectorShape(*AI, rv::VectorShape::uni());
+         //   unsupported_calls.push_back(AI);
+          }
+        }
 
         // mark intrinsics
         if (auto CI = dyn_cast<CallInst>(inst)) {
@@ -388,11 +422,20 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                         vecInfo.setVectorShape(*CI, rv::VectorShape::uni());
                         break;
                     }
+                    case Intrinsic::lifetime_start: // FIXME: tell RV to not vectorize calls to these intrinsics
+                    case Intrinsic::lifetime_end:
+                      unsupported_calls.push_back(CI);
+                        break;
+
                     default: break;
                 }
             }
         }
     }
+
+    for (auto CI : unsupported_calls)
+      CI->eraseFromParent();
+
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
         vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni());
 }
@@ -433,6 +476,9 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
 
     //modify predecessor of oldLoopPreHeader to branch into the newLoopPreHeader
     BasicBlock* predecessor = oldLoopHeader->getUniquePredecessor();
+    if (!predecessor)
+      oldLoopHeader->dump();
+    assert(predecessor && "predecessor == null");
     if(BranchInst* BI = dyn_cast<BranchInst>(predecessor->getTerminator()))
         for(unsigned i = 0; i < BI->getNumSuccessors(); ++i) {
             if(BI->getSuccessor(i) == oldLoopHeader)
@@ -448,7 +494,7 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     LoadInst* loadMaxx = new LoadInst(maxx, "loadmaxx", loopHeader);
     Instruction* inc = BinaryOperator::CreateAdd(headerLoadVar, ConstantInt::get(int32_type, vectorWidth),
                                                  "increment loop var", loopHeader);
-    ICmpInst* varLessThanMaxx = new ICmpInst(*loopHeader, ICmpInst::ICMP_SLT, inc, loadMaxx, "cmp");
+    ICmpInst* varLessThanMaxx = new ICmpInst(*loopHeader, ICmpInst::ICMP_SLE, inc, loadMaxx, "cmp");
     BranchInst::Create(loopBody, oldLoopHeader, varLessThanMaxx, loopHeader);
 
 
