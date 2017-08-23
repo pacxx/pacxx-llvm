@@ -166,13 +166,16 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M,
                                                                 set<GlobalVariable *> &globals,
                                                                 BasicBlock *sharedMemBB) {
 
+    const DataLayout &dl = M.getDataLayout();
+
     for (auto GV : globals) {
 
         Type *sm_type = GV->getType()->getElementType();
+        sm_type->dump();
         IRBuilder<> builder(sharedMemBB);
 
         auto sm_alloc = builder.CreateAlloca(sm_type);
-        sm_alloc->setAlignment(GV->getAlignment());
+        sm_alloc->setAlignment(dl.getPrefTypeAlignment(sm_type));
         auto cast = builder.CreateBitCast(sm_alloc, sm_type->getPointerTo(0));
        // if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
        //     new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
