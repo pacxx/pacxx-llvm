@@ -158,6 +158,39 @@ private:
   public:
     BaseOpts(Module *module) : M(module) {}
 
+
+      //TODO implement general case
+    void visitMemCpyInst(MemCpyInst &MCI) {
+
+      const DataLayout &dl = M->getDataLayout();
+
+      Value *dest = MCI.getRawDest();
+      Value *src = MCI.getRawSource();
+
+      Value *origSrc = MCI.getSource();
+      Value *origDest = MCI.getDest();
+
+      ConstantInt *lenVal = cast<ConstantInt>(MCI.getLength());
+      uint64_t len = lenVal->getSExtValue();
+
+      Type *origSrcType = origSrc->getType()->getPointerElementType();
+      Type *origDestType = origDest->getType()->getPointerElementType();
+
+      if(dl.getTypeAllocSize(origSrcType) == len && dl.getTypeAllocSize(origDestType) == len) {
+
+        unsigned srcAlign = dl.getPrefTypeAlignment(origSrcType);
+        unsigned destAlign = dl.getPrefTypeAlignment(origDestType);
+        LoadInst *load = new LoadInst(origSrc, "memcpy.load", false, srcAlign, &MCI);
+        new StoreInst(load, origDest, false, destAlign, &MCI);
+
+        if(isa<BitCastInst>(src))
+          dead.push_back(cast<BitCastInst>(src));
+        if(isa<BitCastInst>(dest))
+          dead.push_back(cast<BitCastInst>(dest));
+        dead.push_back(&MCI);
+      }
+    }
+
     void visitCallInst(CallInst &CI) {
 
       if (!CI.getCalledFunction())
