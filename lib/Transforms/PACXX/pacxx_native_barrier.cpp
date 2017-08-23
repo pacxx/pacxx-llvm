@@ -752,9 +752,9 @@ void PACXXNativeBarrier::createSpecialFooWrapper(Module &M, Function *pacxx_bloc
 
     // create memory for the living values
     StructType *maxStructType = getMaxStructType(dl, barrierInfo);
-    StructType *maxStructTypeVec = vectorized ? getMaxStructType(dl, vecBarrierInfo) : 0;
+    StructType *maxStructTypeVec = vectorized ? getMaxStructType(dl, vecBarrierInfo) : nullptr;
     uint64_t maxStructSize = dl.getTypeAllocSize(maxStructType);
-    uint64_t maxStructSizeVec = dl.getTypeAllocSize(maxStructTypeVec);
+    uint64_t maxStructSizeVec = vectorized ? dl.getTypeAllocSize(maxStructTypeVec) : 0;
     AllocaInst *mem = createMemForLivingValues(dl, maxStructType, numThreads, allocBB);
     AllocaInst *mem_vec = vectorized ? createMemForLivingValues(dl, maxStructTypeVec, numThreads, allocBB)
                                       : nullptr;
