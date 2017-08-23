@@ -54,7 +54,9 @@ private:
 
   bool isCorrectId(Instruction *inst, IdType id);
 
-  void markWrapperAsKernel(Module &M, Function *wrapper);
+  void markWrapperAsKernel(Module &M, Function *wrapper, bool vectorized);
+
+  unsigned _vectorWidth;
 
 };
 
@@ -95,11 +97,13 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
     __verbose("Cleaning up");
     if (vectorized) {
       Function *vec_F = M.getFunction("__vectorized__" + F->getName().str());
+      _vectorWidth= stoi(vec_F->getFnAttribute("simd-size").getValueAsString().str());
       vec_F->eraseFromParent();
       // if the kernel has been vectorized and has a barrier, we neeed to remove the vectorized wrapper because we
       // will use the barrier version of the wrapper
       if (barrier) {
         Function *vecFoo = M.getFunction("__vectorized__pacxx_block__" + F->getName().str());
+        _vectorWidth= stoi(vec_F->getFnAttribute("simd-size").getValueAsString().str());
         vecFoo->eraseFromParent();
       }
     }
@@ -107,7 +111,7 @@ bool PACXXNativeLinker::runOnModule(Module &M) {
     pacxx_block->eraseFromParent();
 
     // finally mark the created wrapper as a kernel
-    markWrapperAsKernel(M, wrapper);
+    markWrapperAsKernel(M, wrapper, vectorized);
   }
 
   Function *origFoo = M.getFunction("__pacxx_block");
@@ -479,13 +483,16 @@ bool PACXXNativeLinker::isCorrectId(Instruction *inst, IdType id) {
   }
 }
 
-void PACXXNativeLinker::markWrapperAsKernel(Module &M, Function *wrapper) {
+void PACXXNativeLinker::markWrapperAsKernel(Module &M, Function *wrapper, bool vectorized) {
   LLVMContext &ctx = M.getContext();
   NamedMDNode *MD = M.getOrInsertNamedMetadata("nvvm.annotations");
   SmallVector < Metadata * , 3 > MDVals;
   MDVals.push_back(ConstantAsMetadata::get(wrapper));
   MDVals.push_back(MDString::get(ctx, "kernel"));
   MDVals.push_back(ConstantAsMetadata::get(ConstantInt::get(Type::getInt32Ty(ctx), 1)));
+
+  if(vectorized)
+    wrapper->addFnAttr("simd-size", to_string(_vectorWidth));
 
   MD->addOperand(MDNode::get(ctx, MDVals));
 }
