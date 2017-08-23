@@ -74,10 +74,10 @@ set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module 
     set<GlobalVariable *> sm;
     for (auto &GV : M->globals()) {
         bool consider = false;
-        if(GV.hasMetadata() && GV.getMetadata("pacxx.as.shared")) {
+       // if(GV.hasMetadata() && GV.getMetadata("pacxx.as.shared")) {
             Type *sm_type = GV.getType()->getElementType();
             consider = internal ? sm_type->getArrayNumElements() != 0 : sm_type->getArrayNumElements() == 0;
-        }
+      //  }
         if(consider) {
             for (User *GVUsers : GV.users()) {
                 if (Instruction *Inst = dyn_cast<Instruction>(GVUsers)) {
@@ -174,8 +174,8 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M,
         auto sm_alloc = builder.CreateAlloca(sm_type);
         sm_alloc->setAlignment(GV->getAlignment());
         auto cast = builder.CreateBitCast(sm_alloc, sm_type->getPointerTo(0));
-        if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
-            new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
+       // if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
+       //     new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
 
         replaceAllUsesInKernel(kernel, GV, cast);
     }
