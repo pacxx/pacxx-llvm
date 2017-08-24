@@ -335,7 +335,7 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
                     if (T->isPointerTy())
                         T = T->getPointerElementType();
 
-                    if (T->isSized())
+                    if (T->isSized() && !T->isStructTy())
                         MaxWidth = std::max(MaxWidth, (unsigned) DL.getTypeSizeInBits(T->getScalarType()));
                 }
             }
@@ -343,7 +343,6 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
     }
 
     unsigned vectorWidth = TTI->getRegisterBitWidth(true) / MaxWidth;
-
     return vectorWidth == 0 ? 1 : vectorWidth;
 }
 
