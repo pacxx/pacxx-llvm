@@ -3,10 +3,13 @@
 
 #include <unordered_map>
 #include <functional>
+#include <queue>
 
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+
+#include "rv/config.h"
 
 namespace rv {
 
@@ -19,6 +22,7 @@ namespace rv {
 class IRPolisher {
   llvm::Function &F;
   llvm::Type* boolVector;
+  rv::Config config;
 
   struct ExtInst {
     llvm::Instruction* inst;
@@ -42,12 +46,19 @@ class IRPolisher {
     };
   };
 
-  std::unordered_map<ExtInst, llvm::Value*, ExtInst::Hash, ExtInst::Cmp> masks;
+  std::unordered_map<ExtInst, llvm::Value*, ExtInst::Hash, ExtInst::Cmp> visitedInsts;
+  std::queue<ExtInst> queue;
+
+  void enqueueInst(llvm::Instruction*, unsigned);
 
   bool isBooleanVector(const llvm::Type*);
-  bool canReplaceInst(const llvm::Instruction*, unsigned&);
+  bool canReplaceInst(llvm::Instruction*, unsigned&);
 
-  llvm::Value *replaceCmpInst(llvm::IRBuilder<>&, llvm::CmpInst*, llvm::Value*, llvm::Value*);
+  llvm::Value *mapIntrinsicCall(llvm::IRBuilder<>&, llvm::CallInst*, unsigned);
+  llvm::Value *lowerIntrinsicCall(llvm::CallInst*);
+
+  llvm::Value *replaceCmpInst(llvm::IRBuilder<>&, llvm::CmpInst*, unsigned);
+  llvm::Value *replaceSelectInst(llvm::IRBuilder<>&, llvm::SelectInst*, unsigned);
 
   llvm::Value *getMaskForInst(llvm::Instruction*, unsigned);
   llvm::Value *getMaskForValue(llvm::IRBuilder<>&, llvm::Value*, unsigned);
@@ -55,9 +66,9 @@ class IRPolisher {
   llvm::Value *getConditionFromMask(llvm::IRBuilder<>&, llvm::Value*);
 
 public:
-  IRPolisher(llvm::Function &f) : F(f) {}
+  IRPolisher(llvm::Function &f, Config _config) : F(f), config(_config) {}
 
-  void polish();
+  bool polish();
 };
 
 }

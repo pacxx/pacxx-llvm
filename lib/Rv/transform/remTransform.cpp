@@ -17,6 +17,7 @@
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/Instructions.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
@@ -48,27 +49,39 @@ struct IterValue {
   {}
 };
 
+static Value*
+UnwindCasts(Value* val) {
+  auto * castInst = dyn_cast<CastInst>(val);
+
+  while (castInst) {
+     val = castInst->getOperand(0);
+     castInst = dyn_cast<CastInst>(val);
+  }
+
+  return val;
+}
+
 class
 BranchCondition {
   CmpInst & cmp;
   int cmpReductIdx;
-  Reduction & red;
+  StridePattern & sp;
   VectorShape redShape;
 
 public:
 
-  BranchCondition(llvm::CmpInst & _cmp, int _cmpReductIdx, Reduction & _red, int vectorWidth)
+  BranchCondition(llvm::CmpInst & _cmp, int _cmpReductIdx, StridePattern & _sp, int vectorWidth)
   : cmp(_cmp)
   , cmpReductIdx(_cmpReductIdx)
-  , red(_red)
-  , redShape(_red.getShape(vectorWidth))
+  , sp(_sp)
+  , redShape(sp.getShape(vectorWidth))
   {}
 
   // return a branch condition object if this condition can be transformed
   static BranchCondition *
   analyze(llvm::CmpInst & cmp, int vectorWidth, ReductionAnalysis & reda, Loop & loop) {
     int reductIdx = -1;
-    Reduction * red = nullptr;
+    StridePattern * red = nullptr;
 
     for (size_t i = 0; i < cmp.getNumOperands(); ++i) {
       auto * opVal = cmp.getOperand(i);
@@ -76,16 +89,23 @@ public:
 
       if (!inst) continue;
 
+      // step through sext and the like
+      auto * baseVal = UnwindCasts(inst);
+      inst = dyn_cast<Instruction>(baseVal);
+      if (!inst) continue;
+
       // loop invariant operand
       if (!loop.contains(inst->getParent())) continue;
 
-      auto * valRed = reda.getReductionInfo(*inst);
+      auto * valRed = reda.getStrideInfo(*inst);
       if (!valRed) {
+        Report() << "reda: is not an inductive stride " << *inst << "\n";
         // loop carried operand is not part of a recognized reduction -> abort
         return nullptr;
       }
 
       if (reductIdx > -1) {
+        Report() << "reda: both cmp operands are loop carried " << *inst << "\n";
         return nullptr; // multiple loop carried values enter this cmp -> abort
       }
 
@@ -93,7 +113,10 @@ public:
       red = valRed;
     }
 
-    if (!red) return nullptr;
+    if (!red) {
+      Report() << "reda: branch condition does not operate on inductive strides " << cmp << "\n";
+      return nullptr;
+    }
 
     return new BranchCondition(cmp, reductIdx, *red, vectorWidth);
   }
@@ -102,7 +125,7 @@ public:
   // call embedFunc for all loop carred instructions
   // the test will be true if it applies for all iterations from [phi to phi + iterOffset]
   Value&
-  synthesize(int iterOffset, std::string suffix, IRBuilder<> & builder, std::set<Value*> * valueSet, std::function<IterValue (Instruction&)> embedFunc) {
+  synthesize(bool exitOnTrue, int iterOffset, std::string suffix, IRBuilder<> & builder, std::set<Value*> * valueSet, std::function<IterValue (Instruction&)> embedFunc) {
     auto * origReduct = cast<Instruction>(cmp.getOperand(cmpReductIdx));
 
     // the returned value evaluates to the mapped requested value at iteration offset @embReduct.timeOffset
@@ -121,17 +144,22 @@ public:
     }
 
   // iteration interval test
+    bool nswFlag = sp.reductor->hasNoSignedWrap();
+    bool nuwFlag = sp.reductor->hasNoUnsignedWrap();
+
     // lift the predicate form NE/EQ to LT/GT
+    // the exit is taken on (%v == %n) send to exit if %V >= %n (if posStride)
     auto cmpPred = clonedCmp->getPredicate();
     if ((cmpPred == CmpInst::ICMP_EQ) || (cmpPred == CmpInst::ICMP_NE)) {
       bool posStride = redShape.getStride() > 0;
 
       CmpInst::Predicate adjustedPred;
-      if (red.getReductor().hasNoSignedWrap()) {
-        adjustedPred  = posStride ? CmpInst::ICMP_SLT : CmpInst::ICMP_SGT;
+      if (nswFlag) {
+        adjustedPred  = (exitOnTrue ^ posStride) ? CmpInst::ICMP_SGE : CmpInst::ICMP_SLT;
       } else {
-        assert(red.getReductor().hasNoUnsignedWrap());
-        adjustedPred  = posStride ? CmpInst::ICMP_ULT : CmpInst::ICMP_UGT;
+        assert(nuwFlag && "can not extrapolate wrapping exit conditions");
+        assert(sp.reductor->hasNoUnsignedWrap());
+        adjustedPred  = (exitOnTrue ^ posStride) ? CmpInst::ICMP_UGE : CmpInst::ICMP_ULT;
       }
 
       clonedCmp->setPredicate(adjustedPred);
@@ -139,7 +167,7 @@ public:
 
     // adjust iteration value for the tested iteration
     auto & val = embReduct.val;
-    auto * adjusted = builder.CreateAdd(&val, ConstantInt::get(val.getType(), redShape.getStride() * effectiveOffset));
+    auto * adjusted = builder.CreateAdd(&val, ConstantInt::get(val.getType(), redShape.getStride() * effectiveOffset), "", nswFlag, nuwFlag);
     if (isa<Instruction>(adjusted)) if (valueSet) valueSet->insert(adjusted);
     clonedCmp->setOperand(cmpReductIdx, adjusted);
 
@@ -161,12 +189,14 @@ struct LoopCloner {
   DominatorTree & DT;
   PostDominatorTree & PDT;
   LoopInfo & LI;
+  BranchProbabilityInfo * PB;
 
-  LoopCloner(Function & _F, DominatorTree & _DT, PostDominatorTree & _PDT, LoopInfo & _LI)
+  LoopCloner(Function & _F, DominatorTree & _DT, PostDominatorTree & _PDT, LoopInfo & _LI, BranchProbabilityInfo * _PB)
   : F(_F)
   , DT(_DT)
   , PDT(_PDT)
   , LI(_LI)
+  , PB(_PB)
   {}
 
   // TODO pretend that the new loop is inserted
@@ -216,11 +246,29 @@ struct LoopCloner {
     PDT.recalculate(F);
     auto * clonedExitingPostDom = PDT.getNode(&clonedExiting);
 
+    // transfer branch probabilities, if any
+    if (PB) {
+      CloneBranchProbabilities(L, valueMap);
+    }
+
     // drop the fake branch again (we created it to fake a sound CFG during analyses repair)
     splitBranch->eraseFromParent();
     assert(loopPreHead->getTerminator() == preTerm);
 
     return LoopCloneInfo{*clonedLoop, *clonedDomNode, *clonedExitingPostDom};
+  }
+
+  // transfer all branch probabilities from the src loop to the dest loop
+  void
+  CloneBranchProbabilities(Loop & srcLoop, ValueToValueMapTy & valueMap) {
+    for (auto * block : srcLoop.blocks()) {
+      const auto & term = *block->getTerminator();
+      for (size_t i = 0; i < term.getNumSuccessors(); ++i) {
+        auto p = PB->getEdgeProbability(block, i);
+        auto * cloned = &LookUp(valueMap, *block);
+        PB->setEdgeProbability(cloned, i, p);
+      }
+    }
   }
 
   // clone and remap all loop blocks internally
@@ -492,75 +540,6 @@ struct LoopTransformer {
     // TODO update PDT
   }
 
-  // reduce a vector loop liveout to a scalar value
-  Value&
-  ReduceValueToScalar(Value & val, BasicBlock & where, VectorShape valShape) {
-    if (valShape.isUniform()) {
-      return val;
-
-    } else if (valShape.hasStridedShape()) {
-      int64_t reducedStride = valShape.getStride() * vectorWidth;
-      IRBuilder<> builder(&where, where.getTerminator()->getIterator());
-      return *builder.CreateAdd(&val, ConstantInt::get(val.getType(), reducedStride));
-
-    } else {
-      errs() << "general on-the-fly reduction not yet implemented!\n";
-      abort();
-    }
-  }
-
-#if 0
-  // reduce all vector values to scalar values
-  // vecLoopHis will contain the reduced loop header phis (to be used as initial values in the scalar loop)
-  // vecLiveOuts will contain all reduced liveouts of the scalar loop
-  // header phis may be contained in both sets
-  void
-  reduceVectorLiveOuts(ValueToValueMapTy & vecLoopPhis, ValueToValueMapTy & vecLiveOuts) {
-    auto * scalHeader = ScalarL.getHeader();
-
-  // reduce all loop header phis
-    for (auto & scalInst : *scalHeader) {
-      if (!isa<PHINode>(scalInst)) break;
-      auto & scalarPhi = cast<PHINode>(scalInst);
-      assert(vecValMap.count(&scalarPhi));
-      auto & vecPhi = LookUp(vecValMap, scalarPhi);
-
-      // int loopIdx = GetLoopIncomingIndex(ScalarL, scalarPhi);
-      // auto & vecLoopLive = *vecPhi.getIncomingValue(loopIdx);
-
-      auto & red = *reda.getReductionInfo(scalarPhi);
-      auto valShape = red.getShape(vectorWidth);
-      auto & reducedLoopVal = ReduceValueToScalar(vecPhi, *vecToScalarExit, valShape);
-
-      vecLoopPhis[&scalarPhi] = &reducedLoopVal;
-    }
-
-  // TODO we do not support non-reduction live outs yet
-#if 0
-  // reduce all remaining live outs
-    for (auto * BB : ScalarL.blocks()) {
-      for (auto & Inst : *BB) {
-        for (auto & use : Inst.uses()) {
-          auto * userInst = cast<Instruction>(use.getUser());
-          if (ScalarL.contains(userInst)) continue;
-
-          // we already reduced this loop header phi
-          if (vecLoopPhis.count(&Inst)) {
-            vecLiveOuts[&Inst] = vecLoopPhis[&Inst];
-            continue;
-          }
-
-          // otw, reduce it now
-          auto & reducedLiveOut = ReduceValueToScalar(Inst, *vecToScalarExit);
-          vecLiveOuts[&Inst] = &reducedLiveOut;
-        }
-      }
-    }
-#endif
-    // TODO not supported yet
-  }
-#endif
-
   void
   updateScalarLoopStartValues(ValueToValueMapTy & vecLoopPhis) {
     auto * scalHeader = ScalarL.getHeader();
@@ -581,7 +560,8 @@ struct LoopTransformer {
       // when coming from the vectorGuard -> use the old initial values
       // when coming from the vecToScalarExit -> use the reduced scalar values from the vector loop
       auto & vecPhi = LookUp(vecValMap, scalarPhi);
-      auto & vectorLiveOut = reda.getReductionInfo(vecPhi)->getReductor();
+      auto * latchVal = vecPhi.getIncomingValue(1 - preHeaderIdx);
+      auto & vectorLiveOut = cast<Instruction>(*latchVal);
 
       auto &scaGuardPhi = *scaGuardBuilder.CreatePHI(scalarPhi.getType(), 2, phiName + ".scaGuard");
       scaGuardPhi.addIncoming(&vectorLiveOut, vecToScalarExit);
@@ -660,10 +640,13 @@ struct LoopTransformer {
     for (auto & Inst : *ScalarL.getHeader()) {
       auto * phi = dyn_cast<PHINode>(&Inst);
       if (!phi) break;
-      auto * red = reda.getReductionInfo(*phi);
       auto & vecPhi = LookUp(vecValMap, *phi);
       headerPhis[phi] = &vecPhi;
-      reductors[&red->getReductor()] = &vecPhi;
+
+      auto * sp = reda.getStrideInfo(*phi);
+      if (sp) {
+        reductors[sp->reductor] = &vecPhi;
+      }
     }
 
     // replicate the vector loop exit condition
@@ -675,8 +658,10 @@ struct LoopTransformer {
     // replicate the vector loop exit condition
     IRBuilder<> builder(&vecHead, vecHead.getTerminator()->getIterator());
 
+    bool exitOnTrue = ClonedL.contains(vecExitingBr.getSuccessor(0)); // false; // FIXME infer from program
+
     auto & exitVal =
-      exitConditionBuilder.synthesize(2 * vectorWidth, ".vecExit", builder, &uniOverrides,
+      exitConditionBuilder.synthesize(exitOnTrue, 2 * vectorWidth, ".vecExit", builder, &uniOverrides,
          [&](Instruction & inst) -> IterValue {
            assert (!isa<CallInst>(inst));
 
@@ -722,11 +707,13 @@ struct LoopTransformer {
     for (auto & Inst : *ScalarL.getHeader()) {
       auto * phi = dyn_cast<PHINode>(&Inst);
       if (!phi) break;
-      auto * red = reda.getReductionInfo(*phi);
-      auto & reductor = red->getReductor();
-      auto redShape = red->getShape(vectorWidth);
-      valShapes[phi] = redShape;
-      reductors[&reductor] = phi;
+      auto * pat = reda.getStrideInfo(*phi);
+      if (pat) {
+        auto & reductor = *pat->reductor;
+        auto redShape = pat->getShape(vectorWidth);
+        valShapes[phi] = redShape;
+        reductors[&reductor] = phi;
+      }
     }
 
     // replicate the scalar loop exit condition
@@ -735,9 +722,11 @@ struct LoopTransformer {
     // replicate the vector loop exit condition
     IRBuilder<> builder(vecGuardBlock, vecGuardBr.getIterator());
 
+    bool exitOnTrue = true; // FIXME
+
     // synthesize(int iterOffset, std::string suffix, IRBuilder<> & builder, std::function<Instruction& (Instruction&)> embedFunc) {
     auto & exitVal =
-      exitConditionBuilder.synthesize(vectorWidth, ".vecGuard", builder, nullptr,
+      exitConditionBuilder.synthesize(exitOnTrue, vectorWidth, ".vecGuard", builder, nullptr,
          [&](Instruction & inst) -> IterValue {
            assert (!isa<CallInst>(inst));
 
@@ -793,16 +782,6 @@ struct LoopTransformer {
 
     IRBuilder<> builder(vecToScalarExit, vecToScalarExit->getTerminator()->getIterator());
 
-    // maps scalar reductors to their phi nodes
-    std::set<Value*> reductors;
-    for (auto & inst : *ScalarL.getHeader()) {
-      auto * scaPhi = dyn_cast<PHINode>(&inst);
-      if (!scaPhi) break;
-
-      auto & reductor = reda.getReductionInfo(*scaPhi)->getReductor();
-      reductors.insert(&reductor);
-    }
-
     auto & vecExitBr = *cast<BranchInst>(vecToScalarExit->getTerminator());
 
     if (tripAlign % vectorWidth != 0) {
@@ -816,7 +795,7 @@ struct LoopTransformer {
              if (!ScalarL.contains(inst.getParent())) return &inst;
 
              // if we hit a reduction/induction value replace it with its vector version
-             if (isa<PHINode>(inst) || reductors.count(&inst)) {
+             if (isa<PHINode>(inst) || reda.getStrideInfo(inst) || reda.getReductionInfo(inst)) {
                auto * loopVal = &LookUp(vecValMap, inst);
                auto * lcssaPhi = PHINode::Create(loopVal->getType(), 1, inst.getName().str() + ".lscca", &*vecToScalarExit->begin());
                lcssaPhi->addIncoming(loopVal, &vecExiting);
@@ -937,10 +916,16 @@ RemainderTransform::analyzeExitCondition(llvm::Loop & L, int vectorWidth) {
 
   // loop exit conditions constraints
   auto * exitingBr = dyn_cast<BranchInst>(loopExiting->getTerminator());
-  if (!exitingBr) return nullptr;
+  if (!exitingBr) {
+    Report() << "remTrans: exiting terminator is not a branch: " << *loopExiting->getTerminator() << "\n";
+    return nullptr;
+  }
 
   auto * exitingCmp = dyn_cast<CmpInst>(exitingBr->getCondition());
-  if (!exitingCmp) return nullptr;
+  if (!exitingCmp) {
+    Report() << "remTrans: loop exit condition is not a compare: " << *exitingBr->getCondition() << "\n";
+    return nullptr;
+  }
 
   return BranchCondition::analyze(*exitingCmp, vectorWidth, reda, L);
 }
@@ -969,8 +954,8 @@ RemainderTransform::canTransformLoop(llvm::Loop & L) {
     auto * phi = dyn_cast<PHINode>(&Inst);
     if (!phi) break;
 
-    if (!reda.getReductionInfo(*phi)) {
-      Report() << "loopVecPass remTrans: unsupported header PHI " << *phi << "\n";
+    if (!(reda.getReductionInfo(*phi) || reda.getStrideInfo(*phi))) {
+      Report() << "remTrans: unsupported header PHI " << *phi << "\n";
       return false;
     }
 
@@ -989,19 +974,30 @@ RemainderTransform::createVectorizableLoop(Loop & L, ValueSet & uniOverrides, in
   auto * branchCond = analyzeExitCondition(L, vectorWidth);
   if (!branchCond) {
     Report() << "remTrans: can not handle loop exit condition\n";
+    L.print(outs());
+#if 0
+    for (auto * BB : L.blocks()) {
+        outs() << "\n";
+        outs() << *BB;
+      }
+#endif
+
     return nullptr;
   }
 
 // otw, clone the scalar loop
-  LoopCloner loopCloner(F, DT, PDT, LI);
+  LoopCloner loopCloner(F, DT, PDT, LI, PB);
   ValueToValueMapTy cloneMap;
   LoopCloner::LoopCloneInfo cloneInfo = loopCloner.CloneLoop(L, cloneMap);
   auto & clonedLoop = cloneInfo.clonedLoop;
 
-  reda.updateForClones(LI, cloneMap);
+  // reda.updateForClones(LI, cloneMap);
 
 // embed the cloned loop
   LoopTransformer loopTrans(F, DT, PDT, LI, reda, uniOverrides, *branchCond, L, clonedLoop, cloneMap, vectorWidth, tripAlign);
+
+  // rebuild reduction information for cloned loop
+  reda.analyze(clonedLoop);
 
   IF_DEBUG F.dump();
 

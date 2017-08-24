@@ -12,12 +12,31 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/MemoryDependenceAnalysis.h>
 
+#include "rvConfig.h"
+
+#define IF_DEBUG_MG if (true)
+
+const int64_t groupLimit = 64;
+
 using namespace llvm;
-using namespace native;
+using namespace rv;
 
 // MemoryGroup_BEGIN
 
 typedef const SCEV *Element;
+
+void MemoryGroup::dump() const { print(errs()); }
+
+void
+MemoryGroup::print(raw_ostream & out) const {
+  out << "MemGroup {\n";
+  for (size_t i = 0; i < elements.size(); ++i) {
+    if (!elements[i])
+      continue;
+    out << i << " : " << *elements[i] << "\n";
+  }
+  out << "}\n";
+}
 
 MemoryGroup::MemoryGroup(const SCEV *scev) :
   topIdx(1),
@@ -62,12 +81,8 @@ void MemoryGroup::insert(const SCEV *scev, int offset) {
 
 MemoryAccessGrouper::MemoryAccessGrouper(ScalarEvolution &SE, unsigned laneByteSize) :
   SE(SE),
-  laneByteSize(laneByteSize),
-  laneFloatTy(laneByteSize == 4 ? Type::getFloatTy(SE.getContext())
-                                : Type::getDoubleTy(SE.getContext())),
-  laneIntTy(Type::getIntNTy(SE.getContext(), laneByteSize * 8)) {
-  assert((laneByteSize == 4 || laneByteSize == 8) && "unsupported lane size");
-}
+  laneByteSize(laneByteSize)
+{}
 
 const SCEV *MemoryAccessGrouper::add(Value *addrVal) {
   const SCEV *addrSCEV = SE.getSCEV(addrVal);
@@ -75,9 +90,18 @@ const SCEV *MemoryAccessGrouper::add(Value *addrVal) {
 
   // try to find existing group with constant offset to addrSCEV
   for (MemoryGroup &group : memoryGroups) {
-    int offset = 0;
-    if (!getConstantOffset(addrSCEV, group[0], offset))
+    int64_t offset = 0;
+    IF_DEBUG_MG errs() << "DIFFING " << *addrSCEV << " and " << *group[0] <<"\n";
+    if (!getConstantDiff(addrSCEV, group[0], offset)) {
+      IF_DEBUG_MG errs() << "\tnon const!\n";
       continue;
+    }
+
+    IF_DEBUG_MG errs() << "\tresult: " << offset << "\n";
+
+    if (abs(offset) >= groupLimit) continue;
+
+    IF_DEBUG_MG errs() << "== " << offset << "\n";
 
     group.insert(addrSCEV, offset);
     return addrSCEV;
@@ -89,57 +113,158 @@ const SCEV *MemoryAccessGrouper::add(Value *addrVal) {
   return addrSCEV;
 }
 
-bool MemoryAccessGrouper::getConstantOffset(const SCEV *a, const SCEV *b, int &offset) {
-  Type *floatTy = Type::getFloatTy(SE.getContext());
-  Type *i32Ty = Type::getInt32Ty(SE.getContext());
-
-  const SCEV *diffSCEV = SE.getMinusSCEV(a, b);
-
-  const SCEVUnknown *unknownSCEV = dyn_cast<SCEVUnknown>(diffSCEV);
-  if (unknownSCEV && (unknownSCEV->isSizeOf(floatTy) || unknownSCEV->isSizeOf(i32Ty))) {
-    offset = 1;
-    return true;
-  }
-
-  auto *constantSCEV = dyn_cast<SCEVConstant>(diffSCEV);
-  if (constantSCEV) {
-    int byteOffset = (int) constantSCEV->getValue()->getLimitedValue();
-    if (byteOffset % laneByteSize != 0)
-      return false;
-    offset = byteOffset / laneByteSize;
-
-    return true;
-  }
-
-  const SCEVMulExpr *mulSCEV = dyn_cast<SCEVMulExpr>(diffSCEV);
-  if (!mulSCEV)
-    return false;
-
-  const SCEV *leftOp = mulSCEV->getOperand(0);
-  const SCEV *rightOp = mulSCEV->getOperand(1);
-  const auto *leftConst = dyn_cast<SCEVConstant>(leftOp);
-  if (!leftConst)
-    return false;
-
-  const SCEVUnknown *rightUnknown = dyn_cast<SCEVUnknown>(rightOp);
-  if (!rightUnknown)
-    return false;
-
-  bool hasComponentStride = rightUnknown->isSizeOf(laneFloatTy) || rightUnknown->isSizeOf(laneIntTy);
-  if (!hasComponentStride)
-    return false;
-
-  offset = (int) leftConst->getValue()->getLimitedValue();
-  return true;
+static int64_t
+GetConstValue(const SCEV & cScev) {
+  return cast<const SCEVConstant>(cScev).getAPInt().getSExtValue();
 }
 
-MemoryGroup MemoryAccessGrouper::getMemoryGroup(const SCEV *scev) {
+bool
+MemoryAccessGrouper::equals(const llvm::SCEV * A, const llvm::SCEV * B) {
+  int64_t delta;
+  return (getConstantDiff(A, B, delta) && delta == 0);
+}
+
+bool
+MemoryAccessGrouper::getConstantDiff(const llvm::SCEV * A, const llvm::SCEV * B, int64_t & oDelta) {
+  IF_DEBUG_MG errs() << "MATCH: " << *A << " and " << *B << "\n";
+
+  if (A == B) {
+    oDelta = 0;
+    return true;
+  }
+  auto aScTy = A->getSCEVType();
+  auto bScTy = B->getSCEVType();
+
+  // match "(C + x_0+..+x_n)" with "(x_0+..+x_n)"
+  if (aScTy == scAddExpr) {
+    const auto * lhsAdd = cast<const SCEVAddExpr>(A);
+    const auto * lhsLhsConst = dyn_cast<SCEVConstant>(lhsAdd->getOperand(0));
+
+    if (bScTy == scAddExpr) {
+      const auto * rhsAdd = cast<const SCEVAddExpr>(B);
+      // lhs and rhs are both adds
+      if (lhsLhsConst) {
+        // ops(lhs) + 1 > ops(rhs) -> fip
+        if (lhsAdd->getNumOperands() + 1 == rhsAdd->getNumOperands()) {
+          int64_t flippedDiff;
+          bool ok = getConstantDiff(B, A, flippedDiff);
+          oDelta = -flippedDiff;
+          return ok;
+
+        // ops(rhs) + 1 == ops(lhs)
+        } else if (lhsAdd->getNumOperands() == rhsAdd->getNumOperands() + 1) {
+          // lhs: C + x_1+..+x_n   , rhs: x'_1+..+x'_n
+          // check  that x_i == x'_i
+          IF_DEBUG_MG errs() << "multi ADD: " << *lhsAdd << "  " << *lhsAdd->getOperand(0) << "   " << *lhsAdd->getOperand(1) << "\n";
+          for (size_t i = 1; i < lhsAdd->getNumOperands(); ++i) {
+            if (!equals(lhsAdd->getOperand(i), rhsAdd->getOperand(i-1))) {
+              IF_DEBUG_MG errs() << "\tmismatch @ " << i << *lhsAdd->getOperand(i) << " VS " << *rhsAdd->getOperand(i-1) << "\n";
+              return false;
+            }
+          }
+
+          oDelta = GetConstValue(*lhsLhsConst);
+          return true;
+        }
+      }
+    }
+
+    // lhs: "C + X" and rhs is "X"
+    if (lhsLhsConst && lhsAdd->getNumOperands() == 2) {
+      IF_DEBUG_MG errs() << "Const ADD: " << *lhsAdd << "  " << *lhsAdd->getOperand(0) << "   " << *lhsAdd->getOperand(1) << "\n";
+      if (equals(lhsAdd->getOperand(1), B)) {
+        oDelta = GetConstValue(*lhsLhsConst);
+        return true;
+      }
+    }
+  }
+
+  // identical operation
+  if (aScTy != bScTy) {
+    return false;
+  }
+
+  // structurally different but same root scev type
+  switch (aScTy) {
+    case scConstant: {
+      oDelta = GetConstValue(*A) - GetConstValue(*B);
+      return true;
+    }
+
+  // look through casts
+    case scTruncate:
+    case scZeroExtend:
+    case scSignExtend: {
+      auto * aCast = cast<SCEVCastExpr>(A);
+      auto * bCast = cast<SCEVCastExpr>(B);
+      return getConstantDiff(aCast->getOperand(), bCast->getOperand(), oDelta);
+    }
+
+  // transparently pass delta through adds
+    case scAddExpr: {
+      auto * aAdd = cast<SCEVAddExpr>(A);
+      auto * bAdd = cast<SCEVAddExpr>(B);
+
+      if (aAdd->getNumOperands() != bAdd->getNumOperands()) return false;
+
+      // sum up constant differences of operands
+      int64_t sum = 0;
+      for (size_t i = 0; i < aAdd->getNumOperands(); ++i) {
+        int64_t opDiff;
+        if (!getConstantDiff(aAdd->getOperand(i), bAdd->getOperand(i), opDiff)) {
+            return false;
+        }
+        sum += opDiff;
+      }
+      oDelta = sum;
+      return true;
+    }
+
+  // match multiply by constants
+    case scMulExpr: {
+      auto * aMul = cast<SCEVMulExpr>(A);
+      auto * bMul = cast<SCEVMulExpr>(B);
+      auto *aConst = dyn_cast<SCEVConstant>(aMul->getOperand(0));
+      auto *bConst = dyn_cast<SCEVConstant>(bMul->getOperand(0));
+      if (!aConst || !bConst) return false;
+      if (aConst != bConst) return false;
+
+      int64_t mulDiff;
+      if (!getConstantDiff(aMul->getOperand(1), bMul->getOperand(1), mulDiff)) {
+        IF_DEBUG_MG errs() << "mul, rhs not const!\n";
+        return false;
+      }
+
+      oDelta = GetConstValue(*aConst) * mulDiff;
+      return true;
+    }
+
+    case scUDivExpr:
+    case scAddRecExpr:
+    case scUMaxExpr:
+    case scSMaxExpr:
+    case scUnknown:
+    case scCouldNotCompute:
+      return false;
+
+    default:
+      abort(); // unrecognized SCEVType
+  }
+
+  // Otw, start decomposing the SCEVs
+  // return zeroScev; // identical
+  return false; // could not diff SCEVs
+}
+
+const MemoryGroup & MemoryAccessGrouper::getMemoryGroup(const SCEV *scev) {
+  static MemoryGroup emptyGroup;
+
   for (MemoryGroup &group : memoryGroups) {
     auto findIt = std::find(group.begin(), group.end(), scev);
     if (findIt != group.end())
       return group;
   }
-  return MemoryGroup();
+  return emptyGroup;
 }
 
 // MemoryAccessGrouper_END
@@ -200,6 +325,9 @@ void InstructionGrouper::add(Instruction *instr, MemoryDependenceResults &MDR) {
       return;
   }
 
+  if (isa<CallInst>(instr))
+    return;
+
   // new group
   InstructionGroup freshGroup(instr);
   instructionGroups.push_back(freshGroup);
@@ -213,13 +341,15 @@ bool InstructionGrouper::empty() {
   return instructionGroups.empty();
 }
 
-InstructionGroup InstructionGrouper::getInstructionGroup(llvm::Instruction *instr) {
+const InstructionGroup & InstructionGrouper::getInstructionGroup(llvm::Instruction *instr) {
+  static InstructionGroup emptyGroup;
+
   for (InstructionGroup &group: instructionGroups) {
     auto findIt = std::find(group.begin(), group.end(), instr);
     if (findIt != group.end())
       return group;
   }
-  return InstructionGroup();
+  return emptyGroup;
 }
 
 // InstructionGrouper_END

@@ -20,13 +20,14 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Scalar.h"
 
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/FileSystem.h"
 
 #include "rv/rv.h"
-#include "rv/analysis/maskAnalysis.h"
+#include "rv/passes.h"
 #include "rv/transform/loopExitCanonicalizer.h"
 
 using namespace llvm;
@@ -56,6 +57,8 @@ namespace {
         Function *createScalarCopy(Module *M, Function *kernel);
 
         Function *createVectorizedKernelHeader(Module *M, Function *kernel);
+
+        void normalizeFunction(Function *F);
 
         unsigned determineVectorWidth(Function *F, rv::VectorizationInfo &vecInfo, TargetTransformInfo *TTI);
 
@@ -103,45 +106,74 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         Function *scalarCopy = createScalarCopy(&M, kernel);
 
-        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-        TargetTransformInfo *TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*scalarCopy);
-        ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>(*scalarCopy).getSE();
-        MemoryDependenceResults *MDR = &getAnalysis<MemoryDependenceWrapperPass>(*scalarCopy).getMemDep();
+        normalizeFunction(scalarCopy);
+        FunctionAnalysisManager fam;
+        ModuleAnalysisManager mam;
 
-        Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
+        PassBuilder PB;
+        PB.registerFunctionAnalyses(fam);
+        PB.registerModuleAnalyses(mam);
+
+        //platform API
+        TargetTransformInfo *TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(*scalarCopy);
+        TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 
         rv::PlatformInfo platformInfo(M, TTI, TLI);
 
-        rv::VectorizerInterface vectorizer(platformInfo);
+        Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
+
+        auto featureString = kernel->getFnAttribute("target-features").getValueAsString().str();
+
+        // configure RV
+        rv::Config config;
+        config.useAVX = featureString.find("+avx") != std::string::npos;
+        config.useAVX2 = featureString.find("+avx2") != std::string::npos;
+        config.useNEON = featureString.find("+neon") != std::string::npos;
+        config.useSLEEF = false;
+        config.enableIRPolish = false;
+
+        config.print(outs());
+
+        rv::VectorizerInterface vectorizer(platformInfo, config);
 
         // build Analysis that is independent of vecInfo
         DominatorTree domTree(*scalarCopy);
-        PostDominatorTree postDomTree;
-        postDomTree.recalculate(*scalarCopy);
+
+        //normalize loop exits
+        {
+          LoopInfo loopInfo(domTree);
+          LoopExitCanonicalizer canonicalizer(loopInfo);
+          canonicalizer.canonicalize(*scalarCopy);
+          domTree.recalculate(*scalarCopy);
+        }
+
         LoopInfo loopInfo(domTree);
 
+        ScalarEvolution *SE = &getAnalysis<ScalarEvolutionWrapperPass>(*scalarCopy).getSE();
+        MemoryDependenceResults *MDR = &getAnalysis<MemoryDependenceWrapperPass>(*scalarCopy).getMemDep();
 
         // Dominance Frontier Graph
         DFG dfg(domTree);
         dfg.create(*scalarCopy);
 
+        // post dom
+        PostDominatorTree postDomTree;
+        postDomTree.recalculate(*scalarCopy);
+
         // Control Dependence Graph
         CDG cdg(postDomTree);
         cdg.create(*scalarCopy);
 
-        // normalize loop exits
-        LoopExitCanonicalizer canonicalizer(loopInfo);
-        canonicalizer.canonicalize(*scalarCopy);
 
         //return and arguments are uniform
-        rv::VectorShape resShape = rv::VectorShape::uni(1u);
+        rv::VectorShape resShape = rv::VectorShape::uni();
         rv::VectorShapeVec argShapes;
 
         for (auto& it : scalarCopy->args()) {
             if(it.getType()->isPointerTy())
-                argShapes.push_back(rv::VectorShape::uni(it.getPointerAlignment(DL)));
+                argShapes.push_back(rv::VectorShape::uni());
             else
-                argShapes.push_back(rv::VectorShape::uni(DL.getPrefTypeAlignment(it.getType())));
+                argShapes.push_back(rv::VectorShape::uni());
         }
 
         // tmp mapping to determine possible vector width
@@ -149,12 +181,23 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         rv::VectorizationInfo tmpInfo(tmpMapping);
 
+        // early math func lowering
+        vectorizer.lowerRuntimeCalls(tmpInfo, loopInfo);
+        domTree.recalculate(*scalarCopy);
+        postDomTree.recalculate(*scalarCopy);
+        cdg.create(*scalarCopy);
+        dfg.create(*scalarCopy);
+
+        loopInfo.verify(domTree);
+
         prepareForVectorization(scalarCopy, tmpInfo);
 
         // vectorizationAnalysis
-        vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo, postDomTree, domTree);
+        vectorizer.analyze(tmpInfo, cdg, dfg, loopInfo);
 
         unsigned vectorWidth = determineVectorWidth(scalarCopy, tmpInfo, TTI);
+
+        __verbose("width: ", vectorWidth);
 
         rv::VectorMapping targetMapping(scalarCopy, vectorizedKernel, vectorWidth, -1, resShape, argShapes);
 
@@ -162,47 +205,51 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         prepareForVectorization(scalarCopy, vecInfo);
 
-        vectorizer.analyze(vecInfo, cdg, dfg, loopInfo, postDomTree, domTree);
+        //early math function lowering
+        vectorizer.lowerRuntimeCalls(vecInfo, loopInfo);
+        domTree.recalculate(*scalarCopy);
+        postDomTree.recalculate(*scalarCopy);
+        cdg.create(*scalarCopy);
+        dfg.create(*scalarCopy);
 
-        // mask analysis
-        auto maskAnalysis = vectorizer.analyzeMasks(vecInfo, loopInfo);
-        assert(maskAnalysis);
+        loopInfo.verify(domTree);
+
+        vectorizer.analyze(vecInfo, cdg, dfg, loopInfo);
 
         // mask generator
-        bool genMaskOk = vectorizer.generateMasks(vecInfo, *maskAnalysis, loopInfo);
-        if (!genMaskOk)
-            errs() << "mask generation failed.";
+        vectorizer.linearize(vecInfo, cdg, dfg, loopInfo, postDomTree, domTree);
 
+#if 0
         // control conversion
         bool linearizeOk = vectorizer.linearizeCFG(vecInfo, *maskAnalysis, loopInfo, domTree);
         if (!linearizeOk)
             errs() << "linearization failed";
+#endif
 
         // Control conversion does not preserve the domTree so we have to rebuild it for now
-        const DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
+        DominatorTree domTreeNew(*vecInfo.getMapping().scalarFn);
         bool vectorizeOk = vectorizer.vectorize(vecInfo, domTreeNew, loopInfo, *SE, *MDR, nullptr);
         if (!vectorizeOk)
             errs() << "vector code generation failed";
-
-        std::error_code EC;
-        raw_fd_ostream OS("vectorized.kernel.ll", EC, sys::fs::F_None);
-        vectorizedKernel->print(OS, nullptr);
 
         // cleanup
         vectorizer.finalize();
 
         scalarCopy->eraseFromParent();
 
-        if(genMaskOk && linearizeOk && vectorizeOk)
+        if(vectorizeOk)
             vectorized = modifyWrapperLoop(dummyFunction, kernel, vectorizedKernel, vectorWidth, M);
 
         __verbose("vectorized: ", vectorized);
-        __verbose("width: ", vectorWidth);
 
         if (vectorized) {
             vectorizedKernel->setName("__vectorized__" + kernel->getName());
             vectorizedKernel->addFnAttr("simd-size", to_string(vectorWidth));
             kernel->addFnAttr("vectorized");
+
+            std::error_code EC;
+            raw_fd_ostream OS("vectorized.kernel.ll", EC, sys::fs::F_None);
+            vectorizedKernel->print(OS, nullptr);
         } else
             vectorizedKernel->eraseFromParent();
 
@@ -240,6 +287,15 @@ Function *SPMDVectorizer::createVectorizedKernelHeader(Module *M, Function *kern
     return vectorizedKernel;
 }
 
+void SPMDVectorizer::normalizeFunction(Function *F) {
+  legacy::FunctionPassManager FPM(F->getParent());
+  FPM.add(rv::createCNSPass());
+  FPM.add(createPromoteMemoryToRegisterPass());
+  FPM.add(createLoopSimplifyPass());
+  FPM.add(createLCSSAPass());
+  FPM.run(*F);
+}
+
 unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo &vecInfo, TargetTransformInfo *TTI) {
 
     unsigned MaxWidth = 8;
@@ -266,6 +322,10 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
                             ignore = false;
                     }
                 }
+              if (auto AI = dyn_cast<AllocaInst>(&I)){
+                if (AI->getMetadata("pacxx.as.shared"))
+                  ignore = true;
+              }
 
                 if(!ignore) {
 
@@ -275,14 +335,15 @@ unsigned SPMDVectorizer::determineVectorWidth(Function *F, rv::VectorizationInfo
                     if (T->isPointerTy())
                         T = T->getPointerElementType();
 
-                    if (T->isSized())
+                    if (T->isSized() && !T->isStructTy())
                         MaxWidth = std::max(MaxWidth, (unsigned) DL.getTypeSizeInBits(T->getScalarType()));
                 }
             }
         }
     }
 
-    return TTI->getRegisterBitWidth(true) / MaxWidth;
+    unsigned vectorWidth = TTI->getRegisterBitWidth(true) / MaxWidth;
+    return vectorWidth == 0 ? 1 : vectorWidth;
 }
 
 void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::VectorizationInfo &vecInfo) {
@@ -290,6 +351,25 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
     Module *M = kernel->getParent();
 
     auto &DL = M->getDataLayout();
+  // test code for alloca in AS 3
+  struct AllocaRewriter : public InstVisitor<AllocaRewriter>{
+    void visitAllocaInst(AllocaInst& I){
+      if (I.getMetadata("pacxx.as.shared")) {
+        IRBuilder<> builder(&I);
+        //auto alloca = builder.CreateAlloca(I.getAllocatedType(), 3, I.getArraySize(), "sharedMem");
+        //alloca->setAlignment(I.getAlignment());
+//        auto M = I.getParent()->getParent()->getParent();
+//        auto GV = new GlobalVariable(*M, I.getAllocatedType(), false,
+//                                     GlobalValue::ExternalLinkage, nullptr, "sm", nullptr, GlobalValue::NotThreadLocal, 0, false);
+//        GV->setMetadata("pacxx.as.shared", MDNode::get(M->getContext(), nullptr));
+//        GV->setAlignment(I.getAlignment());
+        //auto cast = builder.CreateAddrSpaceCast(GV, I.getAllocatedType()->getPointerTo(0));
+        I.setAlignment(4);
+      }
+    }
+  } allocaRewriter;
+
+  allocaRewriter.visit(kernel);
 
     for(auto &global : M->globals()) {
         for (User *user: global.users()) {
@@ -302,8 +382,19 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
 
+
+
+
+    SmallVector<Instruction*, 8> unsupported_calls;
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
+
+        if (auto AI = dyn_cast<AllocaInst>(inst)) {
+          if (AI->getMetadata("pacxx.as.shared")) {
+            vecInfo.setVectorShape(*AI, rv::VectorShape::uni());
+         //   unsupported_calls.push_back(AI);
+          }
+        }
 
         // mark intrinsics
         if (auto CI = dyn_cast<CallInst>(inst)) {
@@ -313,7 +404,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont(DL.getPrefTypeAlignment(CI->getType())));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont());
                         break;
                     }
                     case Intrinsic::pacxx_read_tid_y:
@@ -327,16 +418,25 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni(DL.getPrefTypeAlignment(CI->getType())));
+                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni());
                         break;
                     }
+                    case Intrinsic::lifetime_start: // FIXME: tell RV to not vectorize calls to these intrinsics
+                    case Intrinsic::lifetime_end:
+                      unsupported_calls.push_back(CI);
+                        break;
+
                     default: break;
                 }
             }
         }
     }
+
+    for (auto CI : unsupported_calls)
+      CI->eraseFromParent();
+
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni(DL.getPrefTypeAlignment(barrierFunc->getType())));
+        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni());
 }
 
 
@@ -375,6 +475,9 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
 
     //modify predecessor of oldLoopPreHeader to branch into the newLoopPreHeader
     BasicBlock* predecessor = oldLoopHeader->getUniquePredecessor();
+    if (!predecessor)
+      oldLoopHeader->dump();
+    assert(predecessor && "predecessor == null");
     if(BranchInst* BI = dyn_cast<BranchInst>(predecessor->getTerminator()))
         for(unsigned i = 0; i < BI->getNumSuccessors(); ++i) {
             if(BI->getSuccessor(i) == oldLoopHeader)
@@ -390,7 +493,7 @@ bool SPMDVectorizer::modifyWrapperLoop(Function *dummyFunction, Function *kernel
     LoadInst* loadMaxx = new LoadInst(maxx, "loadmaxx", loopHeader);
     Instruction* inc = BinaryOperator::CreateAdd(headerLoadVar, ConstantInt::get(int32_type, vectorWidth),
                                                  "increment loop var", loopHeader);
-    ICmpInst* varLessThanMaxx = new ICmpInst(*loopHeader, ICmpInst::ICMP_SLT, inc, loadMaxx, "cmp");
+    ICmpInst* varLessThanMaxx = new ICmpInst(*loopHeader, ICmpInst::ICMP_SLE, inc, loadMaxx, "cmp");
     BranchInst::Create(loopBody, oldLoopHeader, varLessThanMaxx, loopHeader);
 
 

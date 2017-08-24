@@ -8,6 +8,11 @@ using namespace llvm;
 template<> char DFGBaseWrapper<true>::ID = 0;
 template<> char DFGBaseWrapper<false>::ID = 0;
 
+template<bool forward>
+DFGBase<forward>::~DFGBase() {
+  for (auto it : nodes_)
+    delete it.second;
+}
 
 template<bool forward>
 void DFGBase<forward>::create(Function& F) {

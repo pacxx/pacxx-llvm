@@ -11,6 +11,8 @@
 
 #include "rv/PlatformInfo.h"
 #include "rv/analysis/DFG.h"
+#include "rv/transform/maskExpander.h"
+#include "rv/config.h"
 
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
@@ -20,12 +22,12 @@ namespace llvm {
   class DominatorTree;
   class ScalarEvolution;
   class MemoryDependenceResults;
+  class BranchProbabilityInfo;
 }
 
 namespace rv {
 
 class VectorizationInfo;
-class MaskAnalysis;
 
 /*
  * The new vectorizer interface.
@@ -42,58 +44,55 @@ class MaskAnalysis;
  */
 class VectorizerInterface {
 public:
-    VectorizerInterface(PlatformInfo & _platform);
-    //~VectorizerInterface();
+    VectorizerInterface(PlatformInfo & _platform, Config config = Config());
 
-    /*
-     * Analyze properties of the scalar function that are needed later in transformations
-     * towards its SIMD equivalent.
-     *
-     * This expects initial information about arguments to be set in the VectorizationInfo object
-     * (see VectorizationInfo).
-     */
-    void analyze(VectorizationInfo& vectorizationInfo,
+    // try to inline common math functions (compiler-rt) before the analysis
+    void lowerRuntimeCalls(VectorizationInfo & vecInfo, llvm::LoopInfo & loopInfo);
+
+    //
+    // Analyze properties of the scalar function that are needed later in transformations
+    // towards its SIMD equivalent.
+    //
+    // This expects initial information about arguments to be set in the VectorizationInfo object
+    // (see VectorizationInfo).
+    //
+    void analyze(VectorizationInfo& vecInfo,
                  const llvm::CDG& cdg,
                  const llvm::DFG& dfg,
-                 const llvm::LoopInfo& loopInfo,
-                 const llvm::PostDominatorTree& postDomTree,
-                 const llvm::DominatorTree& domTree);
+                 const llvm::LoopInfo& loopInfo);
 
-    /*
-     * Analyze mask values needed to mask certain values and preserve semantics of the function
-     * after its control flow is linearized where needed.
-     */
-    std::unique_ptr<MaskAnalysis> analyzeMasks(VectorizationInfo& vectorizationInfo, const llvm::LoopInfo& loopinfo);
-
-    /*
-     * Materialize the mask information.
-     */
-    bool generateMasks(VectorizationInfo& vectorizationInfo,
-                       MaskAnalysis& maskAnalysis,
-                       const llvm::LoopInfo& loopInfo);
-
-    /*
-     * Linearize divergent regions of the scalar function to preserve semantics for the
-     * vectorized function
-     */
-    bool linearizeCFG(VectorizationInfo& vectorizationInfo,
-                      MaskAnalysis& maskAnalysis,
-                      llvm::LoopInfo& loopInfo,
-                      llvm::DominatorTree& domTree);
-
-    /*
-     * Produce vectorized instructions
-     */
+    //
+    // Linearize divergent regions of the scalar function to preserve semantics for the
+    // vectorized function
+    //
     bool
-    vectorize(VectorizationInfo &vecInfo, const llvm::DominatorTree &domTree, const llvm::LoopInfo & loopInfo, llvm::ScalarEvolution & SE, llvm::MemoryDependenceResults & MDR, llvm::ValueToValueMapTy * vecInstMap);
+    linearize(VectorizationInfo& vecInfo,
+              llvm::CDG& cdg,
+              llvm::DFG& dfg,
+              llvm::LoopInfo& loopInfo,
+              llvm::PostDominatorTree& postDomTree,
+              llvm::DominatorTree& domTree,
+              llvm::BranchProbabilityInfo * pbInfo = nullptr);
 
-    /*
-     * Ends the vectorization process on this function, removes metadata and
-     * writes the function to a file
-     */
+    //
+    // Produce vectorized instructions
+    //
+    bool
+    vectorize(VectorizationInfo &vecInfo,
+              llvm::DominatorTree &domTree,
+              llvm::LoopInfo & loopInfo,
+              llvm::ScalarEvolution & SE,
+              llvm::MemoryDependenceResults & MDR,
+              llvm::ValueToValueMapTy * vecInstMap);
+
+    //
+    // Ends the vectorization process on this function, removes metadata and
+    // writes the function to a file
+    //
     void finalize();
 
 private:
+    Config config;
     PlatformInfo & platInfo;
 
     void addIntrinsics();

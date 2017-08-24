@@ -5,68 +5,81 @@
 #ifndef RV_PLATFORMINFO_H
 #define RV_PLATFORMINFO_H
 
-#include <rv/vectorMapping.h>
-#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-
-using namespace llvm;
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include <rv/vectorMapping.h>
 
 namespace rv {
 
-  struct VecDesc {
-    const char *scalarFnName;
-    const char *vectorFnName;
-    unsigned vectorWidth;
-  };
+struct VecDesc {
+  const char *scalarFnName;
+  const char *vectorFnName;
+  unsigned vectorWidth;
+};
 
-  typedef std::map<const Function *, const VectorMapping *> VectorFuncMap;
+using VectorFuncMap = std::map<const llvm::Function *, const VectorMapping *>;
+using VecDescVector = std::vector<VecDesc>;
 
-  class PlatformInfo {
-  public:
-    PlatformInfo(Module & mod, TargetTransformInfo *TTI, TargetLibraryInfo *TLI);
-    ~PlatformInfo();
+class PlatformInfo {
+public:
+  PlatformInfo(llvm::Module &mod, llvm::TargetTransformInfo *TTI,
+               llvm::TargetLibraryInfo *TLI);
+  ~PlatformInfo();
 
-    void addMapping(const Function *function, const VectorMapping *mapping);
+  void addMapping(const llvm::Function *function, const VectorMapping *mapping);
 
-    void removeMappingIfPresent(const Function *function);
-    const VectorMapping *getMappingByFunction(const Function *function) const;
+  void removeMappingIfPresent(const llvm::Function *function);
+  const VectorMapping *
+  getMappingByFunction(const llvm::Function *function) const;
 
-    void setTTI(TargetTransformInfo *TTI);
-    void setTLI(TargetLibraryInfo *TLI);
+  void setTTI(llvm::TargetTransformInfo *TTI);
+  void setTLI(llvm::TargetLibraryInfo *TLI);
 
-    TargetTransformInfo *getTTI();
-    TargetLibraryInfo *getTLI();
+  llvm::TargetTransformInfo *getTTI();
+  llvm::TargetLibraryInfo *getTLI();
 
-    void addVectorizableFunctions(ArrayRef<VecDesc> funcs);
-    bool isFunctionVectorizable(StringRef funcName, unsigned vectorWidth);
-    StringRef getVectorizedFunction(StringRef func, unsigned vectorWidth, bool *isInTLI = nullptr);
-    Function *requestVectorizedFunction(StringRef funcName, unsigned vectorWidth, Module *insertInto,
+  // add a batch of SIMD function mappings to this platform
+  // these will be used during code generation
+  // if @givePrecedence is true prefer these new mappings over existing ones (the opposite if !givePrecedence)
+  void addVectorizableFunctions(llvm::ArrayRef<VecDesc> funcs, bool givePrecedence);
+  bool isFunctionVectorizable(llvm::StringRef funcName, unsigned vectorWidth);
+
+  llvm::StringRef getVectorizedFunction(llvm::StringRef func,
+                                        unsigned vectorWidth,
+                                        bool *isInTLI = nullptr);
+
+  llvm::Function *requestVectorizedFunction(llvm::StringRef funcName,
+                                            unsigned vectorWidth,
+                                            llvm::Module *insertInto,
                                             bool doublePrecision);
 
-    VectorFuncMap & getFunctionMappings() { return funcMappings; }
+  VectorFuncMap &getFunctionMappings() { return funcMappings; }
 
-    Module & getModule() const { return mod; }
-    LLVMContext & getContext() const { return mod.getContext(); }
+  llvm::Module &getModule() const { return mod; }
+  llvm::LLVMContext &getContext() const { return mod.getContext(); }
 
-    // add a new SIMD function mapping
-    bool addSIMDMapping(rv::VectorMapping & mapping);
+  // add a new SIMD function mapping
+  bool addSIMDMapping(rv::VectorMapping &mapping);
 
-    bool addSIMDMapping(const Function& scalarFunction,
-                        const Function& simdFunction,
-                        const int       maskPosition,
-                        const bool      mayHaveSideEffects);
+  bool addSIMDMapping(const llvm::Function &scalarFunction,
+                      const llvm::Function &simdFunction,
+                      const int maskPosition, const bool mayHaveSideEffects);
 
-    const DataLayout & getDataLayout() const { return mod.getDataLayout(); }
-  private:
-    VectorMapping * inferMapping(llvm::Function & scalarFnc, llvm::Function & simdFnc, int maskPos);
+  const llvm::DataLayout &getDataLayout() const { return mod.getDataLayout(); }
 
-    Module & mod;
-    TargetTransformInfo *mTTI;
-    TargetLibraryInfo *mTLI;
-    VectorFuncMap funcMappings;
-    std::vector<VecDesc> commonVectorMappings;
-  };
+  llvm::Function *requestMaskReductionFunc(const std::string &name);
+  llvm::Function *requestVectorMaskReductionFunc(const std::string &name, size_t width);
 
+private:
+  VectorMapping *inferMapping(llvm::Function &scalarFnc,
+                              llvm::Function &simdFnc, int maskPos);
+
+  llvm::Module &mod;
+  llvm::TargetTransformInfo *mTTI;
+  llvm::TargetLibraryInfo *mTLI;
+  VectorFuncMap funcMappings;
+  VecDescVector commonVectorMappings;
+};
 }
 
 #endif // RV_PLATFORMINFO_H

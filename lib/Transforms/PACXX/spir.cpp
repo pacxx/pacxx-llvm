@@ -88,30 +88,7 @@ struct SPIRPass : public ModulePass {
 
     unsigned ptrSize = M.getDataLayout().getPointerSizeInBits();
 
-    if (ptrSize == 64) {
-      M.setTargetTriple("spir64-unknown-unknown");
-
-      M.setDataLayout("e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-                      "64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-"
-                      "v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:"
-                      "256-v256:256:256-v512:512:512-v1024:1024:1024");
-    } else {
-      M.setTargetTriple("spir-unknown-unknown");
-
-      M.setDataLayout("e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-                      "64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-"
-                      "v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:"
-                      "256-v256:256:256-v512:512:512-v1024:1024:1024");
-    }
-
     kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
-    auto barrier = M.getFunction("_Z7barrierj");
-    if (barrier) {
-      auto tb =
-          M.getOrInsertFunction("tmp_barrier", barrier->getFunctionType());
-
-      barrier->replaceAllUsesWith(tb);
-    }
 
     auto visitor = make_CallVisitor([&](CallInst *I) {
       if (!I)
@@ -207,7 +184,7 @@ struct SPIRPass : public ModulePass {
 
           auto newGV = new GlobalVariable(
                   M, elemType, false,
-                 GV.getLinkage(), // llvm::GlobalValue::LinkageTypes::InternalLinkage,
+                  llvm::GlobalValue::LinkageTypes::ExternalLinkage,
                  nullptr, // ConstantAggregateZero::get(elemType),
                   newName, &GV, GV.getThreadLocalMode(), 3, false);
 
@@ -223,15 +200,28 @@ struct SPIRPass : public ModulePass {
       }
     }
 
+    // test code for alloca in AS 3
+    struct AllocaRewriter : public InstVisitor<AllocaRewriter>{
+      void visitAllocaInst(AllocaInst& I){
+        if (I.getMetadata("pacxx.as.shared")) {
+          IRBuilder<> builder(&I);
+          //auto alloca = builder.CreateAlloca(I.getAllocatedType(), 3, I.getArraySize(), "sharedMem");
+          //alloca->setAlignment(I.getAlignment());
+          auto M = I.getParent()->getParent()->getParent();
+          auto GV = new GlobalVariable(*M, I.getAllocatedType(), false,
+                                       GlobalValue::ExternalLinkage, nullptr, "sm", nullptr, GlobalValue::NotThreadLocal, 3, false);
+          auto cast = builder.CreateAddrSpaceCast(GV, I.getAllocatedType()->getPointerTo(0));
+          I.replaceAllUsesWith(cast);
+        }
+      }
+    } allocaRewriter;
+
+    for (auto F : kernels)
+      allocaRewriter.visit(F);
+
     for (const auto &p : repGV) {
       p.first->replaceAllUsesWith(p.second);
       p.first->dropAllReferences();
-    }
-
-    auto called = visitor.get();
-
-    if (auto TB = M.getFunction("tmp_barrier")) {
-      TB->replaceAllUsesWith(barrier);
     }
 
     // delete old kernel functions

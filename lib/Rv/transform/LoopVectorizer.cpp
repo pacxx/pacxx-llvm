@@ -15,7 +15,6 @@
 
 #include "rv/rv.h"
 #include "rv/vectorMapping.h"
-#include "rv/analysis/maskAnalysis.h"
 #include "rv/region/LoopRegion.h"
 #include "rv/region/Region.h"
 #include "rv/sleefLibrary.h"
@@ -28,23 +27,19 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
 
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include "report.h"
 #include <map>
-
-#ifdef IF_DEBUG
-#undef IF_DEBUG
-#endif
-
-#define IF_DEBUG if (true)
 
 using namespace rv;
 using namespace llvm;
@@ -147,7 +142,7 @@ LoopVectorizer::transformToVectorizableLoop(Loop &L, int VectorWidth, int tripAl
   IF_DEBUG { errs() << "\tCreating scalar remainder Loop for " << L.getName() << "\n"; }
 
   // try to applu the remainder transformation
-  RemainderTransform remTrans(*F, *DT, *PDT, *LI, *reda);
+  RemainderTransform remTrans(*F, *DT, *PDT, *LI, *reda, PB);
   auto * preparedLoop = remTrans.createVectorizableLoop(L, uniformOverrides, VectorWidth, tripAlign);
 
   return preparedLoop;
@@ -158,7 +153,8 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
 // check the dependence distance of this loop
   int depDist = getDependenceDistance(L);
   if (depDist <= 1) {
-    Report() << "loopVecPass skip: won't vectorize " << L.getName() << " . Min dependence distance was " << depDist << "\n";
+    // too verbose
+    if (enableDiagOutput) Report() << "loopVecPass skip: won't vectorize " << L.getName() << " . Min dependence distance was " << depDist << "\n";
     return false;
   }
 
@@ -167,7 +163,7 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
 
   int VectorWidth = getVectorWidth(L);
   if (VectorWidth < 0) {
-    Report() << "loopVecPass skip: won't vectorize " << L.getName() << " . Vector width was " << VectorWidth << "\n";
+    if (enableDiagOutput) Report() << "loopVecPass skip: won't vectorize " << L.getName() << " . Vector width was " << VectorWidth << "\n";
     return false;
   }
 
@@ -181,6 +177,12 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
   Report() << "loopVecPass: Vectorize " << L.getName() << " with VW: " << VectorWidth << " , Dependence Distance: " << depDist
          << " and TripAlignment: " << tripAlign << "\n";
 
+
+// analyze the recurrsnce patterns of this loop
+  reda.reset(new ReductionAnalysis(*F, *LI));
+  reda->analyze(L);
+
+// match vector loop structure
   ValueSet uniOverrides;
   auto * PreparedLoop = transformToVectorizableLoop(L, VectorWidth, tripAlign, uniOverrides);
   if (!PreparedLoop) {
@@ -188,7 +190,11 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
     return false;
   }
 
-  Module &M = *F->getParent();
+  // print configuration banner once
+  if (!introduced) {
+    config.print(Report());
+    introduced = true;
+  }
 
 // start vectorizing the prepared loop
   IF_DEBUG { errs() << "rv: Vectorizing loop " << L.getName() << "\n"; }
@@ -206,20 +212,27 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
     auto * phi = dyn_cast<PHINode>(&inst);
     if (!phi) continue;
 
-    rv::Reduction * redInfo = reda->getReductionInfo(*phi);
-    IF_DEBUG { errs() << "loopVecPass: header phi  " << *phi << " : "; }
+    rv::StridePattern * pat = reda->getStrideInfo(*phi);
+    VectorShape phiShape;
+    if (pat) {
+      IF_DEBUG { pat->dump(); }
+      phiShape = pat->getShape(VectorWidth);
+    } else {
+      rv::Reduction * redInfo = reda->getReductionInfo(*phi);
+      IF_DEBUG { errs() << "loopVecPass: header phi  " << *phi << " : "; }
 
-    if (!redInfo) {
-      errs() << "\n\tskip: non-reduction phi in vector loop header " << L.getName() << "\n";
-      return false;
+      if (!redInfo) {
+        errs() << "\n\tskip: unrecognized phi use in vector loop " << L.getName() << "\n";
+        return false;
+      } else {
+        IF_DEBUG { redInfo->dump(); }
+        phiShape = redInfo->getShape(VectorWidth);
+      }
     }
 
-    rv::VectorShape phiShape = redInfo->getShape(VectorWidth);
-
-    IF_DEBUG{ redInfo->dump(); }
     IF_DEBUG { errs() << "header phi " << phi->getName() << " has shape " << phiShape.str() << "\n"; }
 
-    vecInfo.setVectorShape(*phi, phiShape);
+    if (phiShape.isDefined()) vecInfo.setVectorShape(*phi, phiShape);
   }
 
   // set uniform overrides
@@ -248,36 +261,47 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
   CDG cdg(*PDT);
   cdg.create(*F);
 
+// early math func lowering
+  vectorizer->lowerRuntimeCalls(vecInfo, *LI);
+  DT->recalculate(*F);
+  PDT->recalculate(*F);
+  cdg.create(*F);
+  dfg.create(*F);
+
 // Vectorize
   // vectorizationAnalysis
-  vectorizer->analyze(vecInfo, cdg, dfg, *LI, *PDT, *DT);
+  vectorizer->analyze(vecInfo, cdg, dfg, *LI);
+
+  if (enableDiagOutput) {
+    errs() << "-- VA result --\n";
+    vecInfo.dump();
+    errs() << "-- EOF --\n";
+  }
 
   IF_DEBUG F->dump();
   assert(L.getLoopPreheader());
 
-  // mask analysis
-  auto maskAnalysis = vectorizer->analyzeMasks(vecInfo, *LI);
-  assert(maskAnalysis);
-  IF_DEBUG { maskAnalysis->print(errs(), &M); }
-
-  // mask generator
-  bool genMaskOk = vectorizer->generateMasks(vecInfo, *maskAnalysis, *LI);
-  if (!genMaskOk)
-    llvm_unreachable("mask generation failed.");
-
   // control conversion
-  bool linearizeOk =
-      vectorizer->linearizeCFG(vecInfo, *maskAnalysis, *LI, *DT);
-  if (!linearizeOk)
-    llvm_unreachable("linearization failed.");
+  vectorizer->linearize(vecInfo, cdg, dfg, *LI, *PDT, *DT, PB);
 
-  const DominatorTree domTreeNew(
+
+  DominatorTree domTreeNew(
       *vecInfo.getMapping().scalarFn); // Control conversion does not preserve
                                        // the domTree so we have to rebuild it
                                        // for now
 
   // vectorize the prepared loop embedding it in its context
-  bool vectorizeOk = vectorizer->vectorize(vecInfo, domTreeNew, *LI, *SE, *MDR, nullptr);
+  ValueToValueMapTy vecMap;
+
+  // FIXME SE is invalid at this point..
+  PassBuilder pb;
+  FunctionAnalysisManager fam;
+  pb.registerFunctionAnalyses(fam);
+  ScalarEvolutionAnalysis adhocAnalysis;
+  adhocAnalysis.run(*F, fam);
+
+  auto & localSE = fam.getResult<ScalarEvolutionAnalysis>(*F);
+  bool vectorizeOk = vectorizer->vectorize(vecInfo, domTreeNew, *LI, localSE, *MDR, &vecMap);
   if (!vectorizeOk)
     llvm_unreachable("vector code generation failed");
 
@@ -285,6 +309,14 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
   DT->recalculate(*F);
   PDT->recalculate(*F);
 
+  if (enableDiagOutput) {
+    errs() << "-- Vectorized --\n";
+    for (const BasicBlock * BB : PreparedLoop->blocks()) {
+      const BasicBlock * vecB = cast<const BasicBlock>(vecMap[BB]);
+      vecB->dump();
+    }
+    errs() << "-- EOF --\n";
+  }
   return true;
 }
 
@@ -293,18 +325,26 @@ bool LoopVectorizer::vectorizeLoopOrSubLoops(Loop &L) {
     return true;
 
   bool Changed = false;
-  for (Loop* SubL : L)
+
+  std::vector<Loop*> loops;
+  for (Loop *SubL : L) loops.push_back(SubL);
+  for (Loop* SubL : loops)
     Changed |= vectorizeLoopOrSubLoops(*SubL);
 
   return Changed;
 }
 
 bool LoopVectorizer::runOnFunction(Function &F) {
+  // have we introduced or self? (reporting output)
+  enableDiagOutput = CheckFlag("LV_DIAG");
+  introduced = false;
+
+
   if (getenv("RV_DISABLE")) return false;
 
   IF_DEBUG { errs() << " -- module before RV --\n"; F.getParent()->dump(); }
 
-  Report() << "loopVecPass: run on " << F.getName() << "\n";
+  if (enableDiagOutput) Report() << "loopVecPass: run on " << F.getName() << "\n";
   bool Changed = false;
 
 // stash function analyses
@@ -314,6 +354,7 @@ bool LoopVectorizer::runOnFunction(Function &F) {
   this->LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   this->SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   this->MDR = &getAnalysis<MemoryDependenceWrapperPass>().getMemDep();
+  this->PB = &getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI();
 
 // setup PlatformInfo
   TargetTransformInfo & tti = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
@@ -321,16 +362,17 @@ bool LoopVectorizer::runOnFunction(Function &F) {
   PlatformInfo platInfo(*F.getParent(), &tti, &tli);
 
   // TODO query target capabilities
-  bool useSSE = false, useAVX = true, useAVX2 = true, useImpreciseFunctions = true;
-  addSleefMappings(useSSE, useAVX, useAVX2, platInfo, useImpreciseFunctions);
-  vectorizer.reset(new VectorizerInterface(platInfo));
+  config.useAVX2 = true;
+  config.useSLEEF = true;
 
-  reda.reset(new ReductionAnalysis(F, *LI));
-  reda->analyze();
+  bool useImpreciseFunctions = true;
+  addSleefMappings(config, platInfo, useImpreciseFunctions);
+  vectorizer.reset(new VectorizerInterface(platInfo, config));
 
 
-  for (Loop *L : *LI)
-    Changed |= vectorizeLoopOrSubLoops(*L);
+  std::vector<Loop*> loops;
+  for (Loop *L : *LI) loops.push_back(L);
+  for (auto * L : loops) Changed |= vectorizeLoopOrSubLoops(*L);
 
 
   IF_DEBUG { errs() << " -- module after RV --\n"; F.getParent()->dump(); }
@@ -344,6 +386,7 @@ bool LoopVectorizer::runOnFunction(Function &F) {
   this->LI = nullptr;
   this->SE = nullptr;
   this->MDR = nullptr;
+  this->PB = nullptr;
   return Changed;
 }
 
@@ -353,6 +396,7 @@ void LoopVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<MemoryDependenceWrapperPass>();
   AU.addRequired<PostDominatorTreeWrapperPass>();
   AU.addRequired<ScalarEvolutionWrapperPass>();
+  AU.addRequired<BranchProbabilityInfoWrapperPass>();
 
   // PlatformInfo
   AU.addRequired<TargetTransformInfoWrapperPass>();
@@ -361,7 +405,7 @@ void LoopVectorizer::getAnalysisUsage(AnalysisUsage &AU) const {
 
 char LoopVectorizer::ID = 0;
 
-Pass *rv::createLoopVectorizerPass() { return new LoopVectorizer(); }
+FunctionPass *rv::createLoopVectorizerPass() { return new LoopVectorizer(); }
 
 INITIALIZE_PASS_BEGIN(LoopVectorizer, "rv-loop-vectorize",
                       "RV - Vectorize loops", false, false)
@@ -369,6 +413,7 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(PostDominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(BranchProbabilityInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 // PlatformInfo
 INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)

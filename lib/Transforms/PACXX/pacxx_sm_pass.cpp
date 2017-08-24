@@ -4,7 +4,6 @@
 #include "pacxx_sm_pass.h"
 
 using namespace llvm;
-using namespace std;
 using namespace pacxx;
 
 namespace llvm {
@@ -29,7 +28,6 @@ bool PACXXNativeSMTransformer::runOnModule(Module &M) {
     auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
 
     for(auto &kernel : kernels) {
-        __verbose(kernel->getName().str());
         runOnKernel(kernel);
     }
 
@@ -75,7 +73,12 @@ void PACXXNativeSMTransformer::createSharedMemoryBuffer(Function *func, Value *s
 set<GlobalVariable *> PACXXNativeSMTransformer::getSMGlobalsUsedByKernel(Module *M, Function *func, bool internal) {
     set<GlobalVariable *> sm;
     for (auto &GV : M->globals()) {
-        if (internal ? GV.hasInternalLinkage() : GV.hasExternalLinkage() && GV.getMetadata("pacxx.as.shared")) {
+        bool consider = false;
+        if(GV.hasMetadata() && GV.getMetadata("pacxx.as.shared")) {
+            Type *sm_type = GV.getType()->getElementType();
+            consider = internal ? sm_type->getArrayNumElements() != 0 : sm_type->getArrayNumElements() == 0;
+        }
+        if(consider) {
             for (User *GVUsers : GV.users()) {
                 if (Instruction *Inst = dyn_cast<Instruction>(GVUsers)) {
                     if (Inst->getParent()->getParent() == func) {
@@ -163,17 +166,21 @@ void PACXXNativeSMTransformer::createInternalSharedMemoryBuffer(Module &M,
                                                                 set<GlobalVariable *> &globals,
                                                                 BasicBlock *sharedMemBB) {
 
+    const DataLayout &dl = M.getDataLayout();
+
     for (auto GV : globals) {
 
         Type *sm_type = GV->getType()->getElementType();
-        AllocaInst *sm_alloc = new AllocaInst(sm_type, 0, nullptr,
-                                              0, "internal_sm",
-                                              sharedMemBB);
+        sm_type->dump();
+        IRBuilder<> builder(sharedMemBB);
 
+        auto sm_alloc = builder.CreateAlloca(sm_type);
+        sm_alloc->setAlignment(dl.getPrefTypeAlignment(sm_type));
+        auto cast = builder.CreateBitCast(sm_alloc, sm_type->getPointerTo(0));
         if (GV->hasInitializer() && !isa<UndefValue>(GV->getInitializer()))
             new StoreInst(GV->getInitializer(), sm_alloc, sharedMemBB);
 
-        replaceAllUsesInKernel(kernel, GV, sm_alloc);
+        replaceAllUsesInKernel(kernel, GV, cast);
     }
 }
 
@@ -186,16 +193,18 @@ void PACXXNativeSMTransformer::createExternalSharedMemoryBuffer(Module &M,
         Type *GVType = GV->getType()->getElementType();
         Type *sm_type = nullptr;
 
-        sm_type = GVType->getArrayElementType();
+        unsigned  vectorWidth = kernel->hasFnAttribute("simd-size") ?
+                                stoi(kernel->getFnAttribute("simd-size").getValueAsString().str()) : 1;
 
-        Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()),
-                                           M.getDataLayout().getTypeAllocSize(sm_type));
+        sm_type = VectorType::get(GVType->getArrayElementType(), vectorWidth);
+
+        Value *typeSize = ConstantInt::get(Type::getInt32Ty(M.getContext()), M.getDataLayout().getTypeAllocSize(sm_type));
 
         //calc number of elements
         BinaryOperator *div = BinaryOperator::CreateUDiv(sm_size, typeSize, "numElem", sharedMemBB);
-        AllocaInst *sm_alloc = new AllocaInst(GV->getType(), 0, div,
+        AllocaInst *sm_alloc = new AllocaInst(sm_type, 0, div,
                                               "external_sm", sharedMemBB);
-
+        sm_alloc->setAlignment(M.getDataLayout().getPrefTypeAlignment(sm_type));
         BitCastInst *cast = new BitCastInst(sm_alloc, GV->getType(), "cast", sharedMemBB);
 
         replaceAllUsesInKernel(kernel, GV, cast);

@@ -14,8 +14,9 @@
 
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "rv/transform/remTransform.h"
-
+#include "rv/config.h"
 #include "rv/analysis/reductionAnalysis.h"
+
 #include <limits>
 
 namespace llvm {
@@ -26,6 +27,7 @@ namespace llvm {
   class ScalarEvolution;
   struct PostDominatorTree;
   class MemoryDependenceResults;
+  class BranchProbabilityInfo;
 }
 
 
@@ -39,11 +41,15 @@ public:
   static char ID;
   LoopVectorizer()
   : llvm::FunctionPass(ID)
+  , config()
+  , enableDiagOutput(false)
+  , introduced(false)
   , DT(nullptr)
   , PDT(nullptr)
   , LI(nullptr)
   , SE(nullptr)
   , MDR(nullptr)
+  , PB(nullptr)
   , reda()
   , vectorizer()
   {}
@@ -54,12 +60,18 @@ public:
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
 
 private:
+  Config config;
+
+  bool enableDiagOutput;
+  bool introduced;
+
   llvm::Function * F;
   llvm::DominatorTree * DT;
   llvm::PostDominatorTree * PDT;
   llvm::LoopInfo * LI;
   llvm::ScalarEvolution * SE;
   llvm::MemoryDependenceResults * MDR;
+  llvm::BranchProbabilityInfo * PB;
   std::unique_ptr<ReductionAnalysis> reda;
   std::unique_ptr<VectorizerInterface> vectorizer;
 

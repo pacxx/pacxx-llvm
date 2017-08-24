@@ -35,8 +35,7 @@
 
 
 namespace llvm {
-template <bool forward>
-class DFGBase;
+template<bool forward> class DFGBase;
 
 template<bool forward>
 class DFGBaseWrapper : public FunctionPass {
@@ -56,7 +55,7 @@ public:
         Info.setPreservesAll();
     }
 
-    template <typename DomTree, typename std::enable_if<std::is_same<DomTree, DominatorTree>::value>::type* = nullptr>
+      template <typename DomTree, typename std::enable_if<std::is_same<DomTree, DominatorTree>::value>::type* = nullptr>
     void initialize(Function& F)
     {
       auto& DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
@@ -78,8 +77,8 @@ public:
       return false;
     }
 
-
-    DFGBase<forward>* getDFG() {
+    DFGBase<forward>* getDFG()
+    {
         return mDFGBase;
     }
 };
@@ -91,7 +90,6 @@ public:
     using DomTreeRef = typename std::conditional<forward,
                                                   const llvm::DominatorTree&,
                                                   const llvm::PostDominatorTree&>::type;
-
     class Node;
 
     using nodes_t = ArrayRef<const Node*>;
@@ -102,7 +100,7 @@ public:
         explicit Node(BasicBlock* const BB) : BB(BB) { }
 
     public:
-        const BasicBlock* getBB() const { return BB; }
+       BasicBlock* getBB() const { return BB; }
 
         nodes_t preds() const { return preds_; }
         nodes_t succs() const { return succs_; }
@@ -125,15 +123,12 @@ public:
 
     void create(Function& F);
 
-    ~DFGBase() {
-      for (auto it : nodes_)
-        delete it.second;
-    }
+    ~DFGBase();
 
     Node* operator[](const BasicBlock* const BB) const { return get(BB); }
 
 private:
-    DomTreeRef& DT;
+    DomTreeRef DT;
 
     Node* get(const BasicBlock* const BB) const
     {

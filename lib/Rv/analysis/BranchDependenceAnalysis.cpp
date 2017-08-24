@@ -15,7 +15,7 @@
 #include <llvm/IR/CFG.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/BasicBlock.h>
-#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/PostDominators.h>
 
 #include "rvConfig.h"
 
@@ -96,10 +96,14 @@ GetDomRegion(DomTreeNodeBase<BasicBlock> & domNode, ConstBlockSet & domRegion) {
   }
 }
 
-BranchDependenceAnalysis::BranchDependenceAnalysis(llvm::Function & F, const CDG & _cdg, const DFG & _dfg, const LoopInfo & _loopInfo)
+BranchDependenceAnalysis::BranchDependenceAnalysis(Function & F,
+                                                   const CDG & _cdg,
+                                                   const DFG & _dfg,
+                                                   const LoopInfo & _loopInfo)
 : pdClosureMap()
 , domClosureMap()
-, effectedBlocks()
+, effectedBlocks_old()
+, effectedBlocks_new()
 , cdg(_cdg)
 , dfg(_dfg)
 , loopInfo(_loopInfo)
@@ -232,30 +236,6 @@ BranchDependenceAnalysis::BranchDependenceAnalysis(llvm::Function & F, const CDG
     }
   }
 
-// taint LCSSA phis on loop exit divergence
-  std::vector<Loop*> loopStack;
-  for (auto * loop : loopInfo) loopStack.push_back(loop);
-
-  while (!loopStack.empty()) {
-    auto * loop = loopStack.back();
-    loopStack.pop_back();
-
-    for (auto * childLoop : *loop) {
-      loopStack.push_back(childLoop);
-    }
-
-    // tain all exit blocks if any exit is divergent
-    SmallVector<Edge, 4> exitEdges;
-    loop->getExitEdges(exitEdges);
-
-    // the loop header encodes the loop divergence
-    // make the loop header dependent on loop exit conditions
-    auto * loopHeader = loop->getHeader();
-    for (auto ee : exitEdges) {
-      inverseMap[loopHeader].insert(ee.first);
-    }
-  }
-
 // invert result for look up table
   for (auto it : inverseMap) {
     const auto * phiBlock = it.first;
@@ -266,14 +246,14 @@ BranchDependenceAnalysis::BranchDependenceAnalysis(llvm::Function & F, const CDG
       if (!branch && !isa<SwitchInst>(term)) continue; // otw, must be a switch
 
       IF_DEBUG_BDA { errs() << branchBlock->getName() << " inf -> " << phiBlock->getName() << "\n"; }
-      effectedBlocks[term].insert(phiBlock);
+      effectedBlocks_old[term].insert(phiBlock);
     }
   }
 
 // final result dump
   IF_DEBUG_BDA {
     errs() << "-- Mapping of br blocks to phi blocks --\n";
-    for (auto it : effectedBlocks) {
+    for (auto it : effectedBlocks_old) {
       auto * brBlock = it.first->getParent();
       auto phiBlocks = it.second;
       errs() << brBlock->getName() << " : "; DumpSet(phiBlocks); errs() <<"\n";
@@ -339,6 +319,38 @@ BranchDependenceAnalysis::computeDomClosure(const BasicBlock & b, ConstBlockSet 
       computeDomClosure(*dfBlock, closure);
     }
   }
+}
+
+const ConstBlockSet&
+BranchDependenceAnalysis::getEffectedBlocks(const llvm::TerminatorInst& term) const {
+  auto it = effectedBlocks_new.find(&term);
+  if (it != effectedBlocks_new.end()) return it->second;
+
+  const BasicBlock* parent = term.getParent();
+
+  // Find divergent blocks by node-disjoint paths
+  // Refine the old analysis
+  for (const BasicBlock* BB : getEffectedBlocks_old(term)) {
+    if (DPD.divergentPaths(parent, BB)) {
+      effectedBlocks_new[&term].insert(BB);
+    }
+  }
+
+  // Find divergent loop exits
+  if (const Loop* l = loopInfo.getLoopFor(parent)) {
+    llvm::SmallVector<BasicBlock*, 4> exits;
+    l->getExitBlocks(exits);
+
+    for (const BasicBlock* exit : exits) {
+      if (DPD.inducesDivergentExit(parent, exit, l)) {
+        effectedBlocks_new[&term].insert(exit);
+      }
+    }
+  }
+
+  it = effectedBlocks_new.find(&term);
+  if (it == effectedBlocks_new.end()) return emptySet;
+  return it->second;
 }
 
 

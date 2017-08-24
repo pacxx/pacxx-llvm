@@ -47,13 +47,8 @@ public:
 
   void finalize() {
     for (auto I : intrinsicClones) {
-      CallInst *clone = nullptr;
-
-      SmallVector<Value *, 1> args;
-      args.push_back(I.second->getOperand(0));
-      clone = CallInst::Create(I.second->getCalledFunction(), args, "", I.first);
-      clone->setTailCall(I.second->isTailCall());
-
+      auto *clone = I.second->clone();
+      clone->insertBefore(I.first);
       for (unsigned i = 0; i != I.first->getNumOperands(); ++i) {
         auto op = I.first->getOperand(i);
         if (op == I.second) {
@@ -64,43 +59,43 @@ public:
   }
 
   void visitCallInst(CallInst &CI) {
-    if (CI.isInlineAsm())
-      return;
-    if (!isa<Function>(CI.getCalledValue())) {
-      return;
-    }
-    if (isaSregIntrinsic(CI.getCalledFunction())) {
-      for (auto u : CI.users()) {
-        if (Instruction *I = dyn_cast<Instruction>(u)) {
-          // clone them if they are not in the same basic block
-          if (!isa<PHINode>(I) && I->getParent() != CI.getParent()) {
-            intrinsicClones.push_back(make_pair(I, &CI));
+    if (auto II = dyn_cast<IntrinsicInst>(&CI)) {
+      if (isPACXXIntrinsic(II->getIntrinsicID())) {
+        for (auto u : CI.users()) {
+          if (Instruction *I = dyn_cast<Instruction>(u)) {
+            // clone them if they are not in the same basic block
+            if (!isa<PHINode>(I) && I->getParent() != CI.getParent()) {
+              intrinsicClones.push_back(make_pair(I, &CI));
+            }
           }
         }
       }
     }
   }
 
-  bool isaSregIntrinsic(Function *F) {
-    if (!F)
-      return false;
-    bool found = false;
-    auto name = F->getName();
-    if (name.find("get_local_id") != StringRef::npos)
-      found = true;
-    if (name.find("get_global_id") != StringRef::npos)
-      found = true;
-    if (name.find("get_local_size") != StringRef::npos)
-      found = true;
-    if (name.find("get_group_id") != StringRef::npos)
-      found = true;
-    if (name.find("get_group_size") != StringRef::npos)
-      found = true;
-
-    if (found) {
-      F->addFnAttr(Attribute::NoUnwind);
-      F->addFnAttr(Attribute::ReadNone);
+  static bool isPACXXIntrinsic(Intrinsic::ID id){
+    switch(id)
+    {
+    case Intrinsic::pacxx_barrier0:
+    case Intrinsic::pacxx_read_ntid_x:
+    case Intrinsic::pacxx_read_ntid_y:
+    case Intrinsic::pacxx_read_ntid_z:
+    case Intrinsic::pacxx_read_ntid_w:
+    case Intrinsic::pacxx_read_tid_x:
+    case Intrinsic::pacxx_read_tid_y:
+    case Intrinsic::pacxx_read_tid_z:
+    case Intrinsic::pacxx_read_tid_w:
+    case Intrinsic::pacxx_read_ctaid_x:
+    case Intrinsic::pacxx_read_ctaid_y:
+    case Intrinsic::pacxx_read_ctaid_z:
+    case Intrinsic::pacxx_read_ctaid_w:
+    case Intrinsic::pacxx_read_nctaid_x:
+    case Intrinsic::pacxx_read_nctaid_y:
+    case Intrinsic::pacxx_read_nctaid_z:
+    case Intrinsic::pacxx_read_nctaid_w:
       return true;
+    default:
+      break;
     }
     return false;
   }

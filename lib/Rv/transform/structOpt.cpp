@@ -42,6 +42,77 @@ StructOpt::StructOpt(VectorizationInfo & _vecInfo, const DataLayout & _layout)
 , numPromoted(0)
 {}
 
+Value *
+StructOpt::transformLoadStore(IRBuilder<> & builder,
+                              bool replaceInst,
+                              Instruction * inst,
+                              Type * scalarTy,
+                              Value * vecPtrVal,
+                              Value * storeVal) {
+  auto * load = dyn_cast<LoadInst>(inst);
+  auto * store = dyn_cast<StoreInst>(inst);
+
+  if (scalarTy->isStructTy()) {
+    // emit multiple loads/stores
+    // loads must re-insert the smaller vector loads in the structure
+    Value * structVal = nullptr;
+    if (load) {
+      structVal = UndefValue::get(scalarTy);
+      vecInfo.setVectorShape(*structVal, vecInfo.getVectorShape(*load));
+    }
+
+    for (size_t i = 0; i < scalarTy->getStructNumElements(); ++i) {
+      auto * vecGEP = builder.CreateGEP(vecPtrVal, { builder.getInt32(0), builder.getInt32(i) });
+      auto * structElem = storeVal ? builder.CreateExtractValue(storeVal, i) : nullptr;
+      auto * elemTy = scalarTy->getStructElementType(i);
+
+      if (storeVal) vecInfo.setVectorShape(*structElem, vecInfo.getVectorShape(*storeVal));
+      vecInfo.setVectorShape(*vecGEP, vecInfo.getVectorShape(*vecPtrVal));
+
+      auto * vecElem = transformLoadStore(builder, false, inst, elemTy, vecGEP, structElem);
+      if (structVal) {
+        structVal = builder.CreateInsertValue(structVal, vecElem, i);
+        vecInfo.setVectorShape(*structVal, vecInfo.getVectorShape(*load));
+      }
+    }
+
+    if (replaceInst) {
+      if (load) load->replaceAllUsesWith(structVal);
+      else      vecInfo.dropVectorShape(*store);
+    }
+    return structVal;
+  }
+
+  // cast *<8 x float> to * float
+  auto * vecElemTy = cast<VectorType>(vecPtrVal->getType()->getPointerElementType());
+  auto * plainElemTy = vecElemTy->getElementType();
+
+  auto * castElemTy = builder.CreatePointerCast(vecPtrVal, PointerType::getUnqual(plainElemTy));
+
+  const uint alignment = layout.getTypeStoreSize(plainElemTy) * vecInfo.getVectorWidth();
+  vecInfo.setVectorShape(*castElemTy, VectorShape::cont(alignment));
+
+  if (load)  {
+    auto * vecLoad = builder.CreateLoad(castElemTy, load->getName());
+    vecInfo.setVectorShape(*vecLoad, vecInfo.getVectorShape(*load));
+    vecLoad->setAlignment(alignment);
+
+    if (replaceInst) load->replaceAllUsesWith(vecLoad);
+
+    IF_DEBUG_SO { errs() << "\t\t result: " << *vecLoad << "\n"; }
+    return vecLoad;
+  } else {
+    auto * vecStore = builder.CreateStore(storeVal, castElemTy, store->isVolatile());
+    vecStore->setAlignment(alignment);
+    vecInfo.setVectorShape(*vecStore, vecInfo.getVectorShape(*store));
+
+    if (replaceInst) vecInfo.dropVectorShape(*store);
+
+    IF_DEBUG_SO { errs() << "\t\t result: " << *vecStore << "\n"; }
+    return nullptr;
+  }
+}
+
 void
 StructOpt::transformLayout(llvm::AllocaInst & allocaInst, ValueToValueMapTy & transformMap) {
   SmallSet<Value*, 16> seen;
@@ -69,37 +140,12 @@ StructOpt::transformLayout(llvm::AllocaInst & allocaInst, ValueToValueMapTy & tr
       IRBuilder<> builder(inst->getParent(), inst->getIterator());
 
       auto * ptrVal = load ? load->getPointerOperand() : store->getPointerOperand();
+      auto * storeVal = store ? store->getValueOperand() : nullptr;
 
       assert (transformMap.count(ptrVal));
       Value * vecPtrVal = transformMap[ptrVal];
 
-      // cast *<8 x float> to * float
-      auto * vecElemTy = cast<VectorType>(vecPtrVal->getType()->getPointerElementType());
-      auto * plainElemTy = vecElemTy->getElementType();
-
-      auto * castElemTy = builder.CreatePointerCast(vecPtrVal, PointerType::getUnqual(plainElemTy));
-
-      const uint alignment = layout.getTypeStoreSize(plainElemTy) * vecInfo.getVectorWidth();
-      vecInfo.setVectorShape(*castElemTy, VectorShape::cont(alignment));
-
-
-      if (load)  {
-        auto * vecLoad = builder.CreateLoad(castElemTy, load->getName());
-        vecInfo.setVectorShape(*vecLoad, vecInfo.getVectorShape(*load));
-        vecLoad->setAlignment(alignment);
-
-        load->replaceAllUsesWith(vecLoad);
-
-        IF_DEBUG_SO { errs() << "\t\t result: " << *vecLoad << "\n"; }
-
-      } else {
-        auto * vecStore = builder.CreateStore(store->getValueOperand(), castElemTy, store->isVolatile());
-        vecStore->setAlignment(alignment);
-        vecInfo.setVectorShape(*vecStore, vecInfo.getVectorShape(*store));
-        vecInfo.dropVectorShape(*store);
-
-        IF_DEBUG_SO { errs() << "\t\t result: " << *vecStore << "\n"; }
-      }
+      transformLoadStore(builder, true, inst, ptrVal->getType()->getPointerElementType(), vecPtrVal, storeVal);
 
       continue; // don't step across load/store
 
@@ -122,7 +168,8 @@ StructOpt::transformLayout(llvm::AllocaInst & allocaInst, ValueToValueMapTy & tr
     } else if (phi) {
       IF_DEBUG_SO { errs() << "\t- transform phi " << *phi << "\n"; }
       postProcessPhis.insert(phi);
-      auto * vecPhiTy = cast<PHINode>(transformMap[phi])->getIncomingValue(0)->getType();
+      auto * orgPhiTy = phi->getIncomingValue(0)->getType();
+      auto * vecPhiTy = PointerType::get(vectorizeType(*orgPhiTy->getPointerElementType()), orgPhiTy->getPointerAddressSpace());
       auto * vecPhi = PHINode::Create(vecPhiTy, phi->getNumIncomingValues(), phi->getName(), phi);
       IF_DEBUG_SO { errs() << "\t\t result: " << *vecPhi << "\n"; }
 
@@ -168,6 +215,12 @@ StructOpt::transformLayout(llvm::AllocaInst & allocaInst, ValueToValueMapTy & tr
 }
 
 static bool VectorizableType(Type & type) {
+  if (type.isStructTy()) {
+    for (size_t i = 0; i < type.getStructNumElements(); ++i) {
+      if (!VectorizableType(*type.getStructElementType(i))) return false;
+    }
+    return true;
+  }
   return type.isIntegerTy() || type.isFloatingPointTy();
 }
 
@@ -186,8 +239,8 @@ StructOpt::allUniformGeps(llvm::AllocaInst & allocaInst) {
   // have seen this user
     if (!seen.insert(inst).second) continue;
 
-  // dont touch this alloca if its used on the outside
-    if (!vecInfo.inRegion(*inst)) {
+  // dont touch this alloca if its used on the outside (unless its the alloca itself)
+    if (&allocaInst != inst && !vecInfo.inRegion(*inst)) {
       IF_DEBUG_SO { errs() << "skip: has user outside of region: " << *inst << "\n";  }
       return false;
     }
@@ -397,20 +450,19 @@ StructOpt::run() {
 
   numTransformed = 0;
   numPromoted = 0;
-  bool change = false;
-  SmallVector<AllocaInst*, 8> allocas;
 
+  std::vector<AllocaInst*> queue;
   for (auto & bb : vecInfo.getScalarFunction()) {
     auto itBegin = bb.begin(), itEnd = bb.end();
-    for (auto it = itBegin; it != itEnd;) {
-      auto *allocaInst = dyn_cast<AllocaInst>(it++);
-      if (allocaInst) allocas.push_back(allocaInst);
+    for (auto it = itBegin; it != itEnd; ) {
+      auto * allocaInst = dyn_cast<AllocaInst>(it++);
+      if (allocaInst) queue.push_back(allocaInst);
     }
   }
 
-  for(auto alloca : allocas) {
-    bool changedAlloca = optimizeAlloca(*alloca);
-    change |= changedAlloca;
+  bool change = false;
+  for (auto allocaInst : queue) {
+    change |= optimizeAlloca(*allocaInst);
   }
 
   if (numTransformed > 0) {
@@ -424,5 +476,6 @@ StructOpt::run() {
 
   return change;
 }
+
 
 } // namespace rv
