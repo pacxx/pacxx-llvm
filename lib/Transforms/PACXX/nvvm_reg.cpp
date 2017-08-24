@@ -159,7 +159,6 @@ private:
     BaseOpts(Module *module) : M(module) {}
 
 
-      //TODO implement general case
     void visitMemCpyInst(MemCpyInst &MCI) {
 
       const DataLayout &dl = M->getDataLayout();
@@ -167,28 +166,22 @@ private:
       Value *dest = MCI.getRawDest();
       Value *src = MCI.getRawSource();
 
-      Value *origSrc = MCI.getSource();
-      Value *origDest = MCI.getDest();
-
       ConstantInt *lenVal = cast<ConstantInt>(MCI.getLength());
       uint64_t len = lenVal->getSExtValue();
 
-      Type *origSrcType = origSrc->getType()->getPointerElementType();
-      Type *origDestType = origDest->getType()->getPointerElementType();
+      Type *srcType = src->getType()->getPointerElementType();
+      Type *destType = dest->getType()->getPointerElementType();
 
-      if(dl.getTypeAllocSize(origSrcType) == len && dl.getTypeAllocSize(origDestType) == len) {
+      BitCastInst *srcCast = new BitCastInst(src, PointerType::get(VectorType::get(srcType, len), 0), "", &MCI);
+      BitCastInst *destCast = new BitCastInst(dest, PointerType::get(VectorType::get(destType, len), 0), "", &MCI);
 
-        unsigned srcAlign = dl.getPrefTypeAlignment(origSrcType);
-        unsigned destAlign = dl.getPrefTypeAlignment(origDestType);
-        LoadInst *load = new LoadInst(origSrc, "memcpy.load", false, srcAlign, &MCI);
-        new StoreInst(load, origDest, false, destAlign, &MCI);
+      unsigned srcAlign = dl.getPrefTypeAlignment(srcCast->getType()->getPointerElementType());
+      unsigned destAlign = dl.getPrefTypeAlignment(destCast->getType()->getPointerElementType());
 
-        if(isa<BitCastInst>(src))
-          dead.push_back(cast<BitCastInst>(src));
-        if(isa<BitCastInst>(dest))
-          dead.push_back(cast<BitCastInst>(dest));
-        dead.push_back(&MCI);
-      }
+      LoadInst *load = new LoadInst(srcCast, "memcpy.load", false, srcAlign, &MCI);
+      new StoreInst(load, destCast, false, destAlign, &MCI);
+
+      dead.push_back(&MCI);
     }
 
     void visitCallInst(CallInst &CI) {
