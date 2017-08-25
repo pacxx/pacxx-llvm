@@ -16,7 +16,7 @@ struct PACXXInliner : public ModulePass {
   virtual bool runOnModule(Module &M) {
     auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
     for (auto &F : kernels) {
-      KernelInliner ki(InliningStrategy::Aggressive);
+      KernelInliner ki(M, InliningStrategy::Aggressive);
       ki.runOn(*F);
     }
     return true;
@@ -30,7 +30,7 @@ private:
 
   class KernelInliner : public InstVisitor<KernelInliner> {
   public:
-    KernelInliner(InliningStrategy S) : S(S) {}
+    KernelInliner(Module& M, InliningStrategy S) : S(S), reflects(pacxx::getTagedFunctions(&M, "pacxx.reflection", "")) {}
 
     void runOn(Function &F) {
       if (S == InliningStrategy::Aggressive) {
@@ -70,8 +70,11 @@ private:
       if (F->isDeclaration() || F->isIntrinsic())
         return false;
 
-    //  if (F->hasFnAttribute(llvm::Attribute::NoInline))
-    //    return false;
+      if (find(reflects.begin(), reflects.end(), F) != reflects.end())
+        return false; // never inline reflections
+
+      //if (F->hasFnAttribute(llvm::Attribute::NoInline)) // we cannot honor noinline becasue -O0 sets noinline everywhere
+      //  return false;
 
       return true;
     }
@@ -91,6 +94,7 @@ private:
   private:
     map<Function *, vector<CallInst *>> calls;
     InliningStrategy S;
+    set<Function *> reflects;
   };
 };
 
