@@ -596,7 +596,6 @@ void NatBuilder::fallbackVectorize(Instruction *const inst) {
   // repeat from line 3 for all lanes
   Type *type = inst->getType();
   bool isAlloca = isa<AllocaInst>(inst);
-  bool isPACXXSharedMem = inst->getMetadata("pacxx.as.shared") != nullptr;
   bool notVectorTy = type->isVoidTy() || !(type->isIntegerTy() || type->isFloatingPointTy() || type->isPointerTy());
   bool scalarize = keepScalar.count(inst) > 0;
   Value *resVec = notVectorTy || scalarize ? nullptr : UndefValue::get(getVectorType(inst->getType(), vectorWidth()));
@@ -628,7 +627,7 @@ void NatBuilder::fallbackVectorize(Instruction *const inst) {
   } else {
     Instruction *cpInst = nullptr;
     for (unsigned lane = 0; lane < vectorWidth(); ++lane) {
-      if (!isPACXXSharedMem || cpInst == nullptr) {
+      if (cpInst == nullptr) {
         cpInst = inst->clone();
         mapOperandsInto(inst, cpInst, false, lane);
         builder.Insert(cpInst, inst->getName());
