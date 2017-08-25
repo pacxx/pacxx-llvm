@@ -73,10 +73,45 @@ void mergeStores(T &vec) {
   });
 }
 
+template<typename T>
+void mergeLoads(T &vec) {
+
+  // sort on last index of gep
+  std::sort(vec.begin(), vec.end(), [](auto a, auto b) {
+    GetElementPtrInst *first = a.first;
+    GetElementPtrInst *second = b.first;
+    int64_t idx1 = cast<ConstantInt>((first->idx_end() - 1)->get())->getValue().getSExtValue();
+    int64_t idx2 = cast<ConstantInt>((second->idx_end() - 1)->get())->getValue().getSExtValue();
+    return idx1 < idx2;
+  });
+
+  IRBuilder<> builder(vec[0].second);
+  Type *elementTy = vec[0].second->getType();
+  Type *vecTy = VectorType::get(elementTy, vec.size());
+
+  auto cast = builder.CreateBitCast(vec[0].first, vecTy->getPointerTo());
+  Value *vector = builder.CreateLoad(cast, "mergedLoad");
+
+  std::for_each(vec.begin(), vec.end(), [&, i = 0](auto &p) mutable {
+    auto value = builder.CreateExtractElement(vector, i++);
+    p.second->dump();
+    p.second->replaceAllUsesWith(value);
+    value->dump();
+  });
+
+  std::for_each(vec.begin(), vec.end(), [](auto &p) {
+    p.second->eraseFromParent();
+  });
+}
+
+
 // checks if two GEPs have the same set of indices except for the last
 static bool checkGEPIndices(GetElementPtrInst *first, GetElementPtrInst *second) {
   if (first == second)
     return true;
+
+  if (first->getType() != second->getType())
+    return false;
 
   if (first->getNumIndices() != second->getNumIndices())
     return false;
@@ -96,7 +131,7 @@ static bool checkGEPLastIndices(GetElementPtrInst *first) {
 }
 
 template<typename T>
-bool checkForMergeableStores(T &vec) {
+bool checkForMergeableMemOp(T &vec) {
 
   bool indexMatch = true;
   GetElementPtrInst *first = vec[0].first;
@@ -109,6 +144,8 @@ bool checkForMergeableStores(T &vec) {
 
   if (!indexMatch)
     return false;
+
+  llvm::errs() << "index match";
 
   // collect last indices
   vector<int64_t> idx(vec.size()), diff(vec.size());
@@ -131,6 +168,7 @@ bool checkForMergeableStores(T &vec) {
 
   return true;
 }
+
 
 struct NVVMRegPass : public ModulePass {
   static char ID;
@@ -207,7 +245,18 @@ private:
       }
     }
 
+    void visitLoadInst(LoadInst &LI) {
+      auto addr = LI.getPointerOperand();
+      if (auto GEP = dyn_cast<GetElementPtrInst>(addr)) {
+        if (GEP->getPointerOperandType()->getPointerElementType()->isAggregateType()) {
+          loads[GEP->getPointerOperand()].push_back(make_pair(GEP, &LI));
+        }
+      }
+    }
+
+
     void initialize(Function &F) {
+      loads.clear();
       stores.clear();
       dead.clear();
     }
@@ -218,8 +267,17 @@ private:
         auto &vec = match.second;
         auto count = vec.size();
         if (count > 1 && !(count & (count - 1))) { // check if we have a power of 2
-          if (checkForMergeableStores(vec))
+          if (checkForMergeableMemOp(vec))
             mergeStores(vec);
+        }
+      });
+
+      std::for_each(loads.begin(), loads.end(), [](auto &match) {
+        auto &vec = match.second;
+        auto count = vec.size();
+        if (count > 1 && !(count & (count - 1))) { // check if we have a power of 2
+          if (checkForMergeableMemOp(vec))
+            mergeLoads(vec);
         }
       });
 
@@ -232,8 +290,9 @@ private:
   private:
     Module *M;
 
-    map<Value *, vector<pair<GetElementPtrInst *, StoreInst *>>>
-        stores;
+    map<Value *, vector<pair<GetElementPtrInst *, StoreInst *>>> stores;
+    map<Value *, vector<pair<GetElementPtrInst *, LoadInst *>>> loads;
+
 
     vector<Instruction *> dead;
   };
