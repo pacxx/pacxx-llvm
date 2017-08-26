@@ -165,12 +165,8 @@ VectorMapping *PlatformInfo::inferMapping(llvm::Function &scalarFnc,
   // argument shapes
   rv::VectorShapeVec argShapes;
 
-  //auto &scalarArgList = scalarFnc.getArgumentList();
-  //auto itScalarArg = scalarArgList.begin();
   auto itScalarArg = scalarFnc.arg_begin();
 
-  //auto &simdArgList = simdFnc.getArgumentList();
-  //auto itSimdArg = simdArgList.begin();
   auto itSimdArg = simdFnc.arg_begin();
 
   for (uint i = 0; i < simdFnc.arg_size(); ++i) {
@@ -182,7 +178,7 @@ VectorMapping *PlatformInfo::inferMapping(llvm::Function &scalarFnc,
     }
 
     // trailing additional argument case
-    if (itScalarArg == simdFnc.arg_end()) {
+    if (itScalarArg == scalarFnc.arg_end()) {
       IF_DEBUG errs() << "Unexpected additional argument (pos " << i
                       << ") in simd function " << simdFnc << "\n";
       argShapes.push_back(VectorShape::varying());

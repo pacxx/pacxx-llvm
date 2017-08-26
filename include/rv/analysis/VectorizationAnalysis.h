@@ -42,6 +42,7 @@ namespace llvm {
 }
 
 namespace rv {
+using InstVec = const std::vector<const llvm::Instruction*>;
 
 class VAWrapperPass : public llvm::FunctionPass {
   static char ID;
@@ -65,8 +66,6 @@ class VectorizationAnalysis {
 
   /// Next instructions to handle
   std::queue<const llvm::Instruction*> mWorklist;
-  /// Values that are marked final and may not be recomputed
-  std::map<const llvm::Value*, VectorShape> overrides;
 
   const llvm::DataLayout& layout;
   const llvm::LoopInfo& mLoopInfo; // Preserves LoopInfo
@@ -88,7 +87,10 @@ public:
   VectorizationAnalysis(const VectorizationAnalysis&) = delete;
   VectorizationAnalysis& operator=(VectorizationAnalysis) = delete;
 
-  void analyze(const llvm::Function& F);
+  void analyze();
+  void updateAnalysis(InstVec & updateList);
+
+  void addInitial(const llvm::Instruction* inst, VectorShape shape);
 
 private:
   /// Get the shape for a value
@@ -98,8 +100,6 @@ private:
   // Initialize all statically known shapes (constants, arguments via argument mapping,
   // shapes set by the user)
   void init(const llvm::Function& F);
-
-  void collectOverrides(const llvm::Function& F);
 
   // adjust missing shapes to undef, optimize pointer shape alignments
   void adjustValueShapes(const llvm::Function& F);

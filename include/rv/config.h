@@ -42,7 +42,9 @@ struct Config {
   bool useSSE;
   bool useAVX;
   bool useAVX2;
+  bool useAVX512;
   bool useNEON;
+  bool useADVSIMD;
   bool useSLEEF;
 
   // initialize defaults
