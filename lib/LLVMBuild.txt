@@ -43,7 +43,6 @@ subdirectories =
  ToolDrivers
  Transforms
  WindowsManifest
- Rv
 
 [component_0]
 type = Group

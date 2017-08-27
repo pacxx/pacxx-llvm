@@ -20,4 +20,4 @@ type = Library
 name = PACXX
 parent = Transforms
 library_name = PACXXTransforms
-required_libraries = Analysis Core MC InstCombine Support Target TransformUtils Rv Passes
+required_libraries = Analysis Core MC InstCombine Support Target TransformUtils Passes
