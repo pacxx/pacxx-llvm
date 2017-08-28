@@ -382,6 +382,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
 
+    SmallVector<Instruction*, 8> unsupported_calls;
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
 
@@ -418,7 +419,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     }
                     case Intrinsic::lifetime_start: // FIXME: tell RV to not vectorize calls to these intrinsics
                     case Intrinsic::lifetime_end:
-                      vecInfo.setPinnedShape(*CI, rv::VectorShape::uni());
+                      unsupported_calls.push_back(CI);
                       break;
 
                     default: break;
@@ -426,6 +427,9 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
             }
         }
     }
+
+    for (auto CI : unsupported_calls)
+      CI->eraseFromParent();
 
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
         vecInfo.setPinnedShape(*barrierFunc, rv::VectorShape::uni());
