@@ -412,7 +412,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
         if (auto AI = dyn_cast<AllocaInst>(inst)) {
           if (AI->getMetadata("pacxx.as.shared")) {
-            vecInfo.setVectorShape(*AI, rv::VectorShape::uni());
+            vecInfo.setPinnedShape(*AI, rv::VectorShape::uni());
           }
         }
 
@@ -441,10 +441,6 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                         vecInfo.setPinnedShape(*CI, rv::VectorShape::uni());
                         break;
                     }
-                    case Intrinsic::lifetime_start: // FIXME: tell RV to not vectorize calls to these intrinsics
-                    case Intrinsic::lifetime_end:
-                      break;
-
                     default: break;
                 }
             }
