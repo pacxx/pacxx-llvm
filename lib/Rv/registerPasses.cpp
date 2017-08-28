@@ -46,7 +46,6 @@ static cl::opt<bool>
 static cl::opt<bool>
     rvOnlyCNS("rv-cns", cl::desc("Only run RV's Irreducible Loop Normalizer"),
                  cl::init(false), cl::ZeroOrMore, cl::cat(rvCategory));
-
 static void
 registerRVPasses(const llvm::PassManagerBuilder &Builder,
                                        llvm::legacy::PassManagerBase &PM) {
@@ -55,10 +54,12 @@ registerRVPasses(const llvm::PassManagerBuilder &Builder,
     return;
   }
 
+  /*
   if (rvOnlyCNS) {
     PM.add(rv::createCNSPass());
     return;
   }
+  */
 
   if (rvLoopVecEnabled) {
     // PM.add(rv::createCNSPass());
