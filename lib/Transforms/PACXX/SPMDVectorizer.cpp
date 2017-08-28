@@ -397,9 +397,9 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
   allocaRewriter.visit(kernel);
 
     for(auto &global : M->globals()) {
-        if(global.hasMetadata() && global.getMetadata("pacxx.as.shared")) {
+      //  if(global.hasMetadata() && global.getMetadata("pacxx.as.shared")) {
             vecInfo.setPinnedShape(global, rv::VectorShape::uni());
-        }
+      //  }
     }
 
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
