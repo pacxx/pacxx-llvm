@@ -184,4 +184,3 @@ namespace native {
 }
 
 #endif //NATIVE_NATBUILDER_H
-

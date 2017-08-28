@@ -120,6 +120,7 @@ VectorizationInfo::VectorizationInfo(llvm::Function& parentFn, uint vectorWidth,
     mapping.resultShape = VectorShape::uni();
     for (auto& arg : parentFn.args()) {
       mapping.argShapes.push_back(VectorShape::uni());
+      setVectorShape(arg, VectorShape::uni());
     }
 }
 
@@ -131,9 +132,7 @@ VectorizationInfo::VectorizationInfo(VectorMapping _mapping)
   auto it = mapping.scalarFn->arg_begin();
   for (auto argShape : mapping.argShapes)
   {
-    auto & arg = *it;
-    setPinned(arg);
-    setVectorShape(arg, argShape);
+    setVectorShape(*it, argShape);
     ++it;
   }
 }
@@ -249,14 +248,6 @@ VectorizationInfo::isDivergentLoopTopLevel(const llvm::Loop* loop) const
 bool
 VectorizationInfo::isKillExit(const BasicBlock& BB) const {
     return NonKillExits.count(&BB) == 0;
-}
-
-bool VectorizationInfo::isPinned(const Value& V) const {
-  return pinned.count(&V) != 0;
-}
-
-void VectorizationInfo::setPinned(const Value& V) {
-  pinned.insert(&V);
 }
 
 void

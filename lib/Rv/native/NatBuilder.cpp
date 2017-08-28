@@ -1401,8 +1401,12 @@ Value *NatBuilder::createVaryingMemory(Type *vecType, unsigned int alignment, Va
     args.push_back(mask);
     if (!scatter) args.push_back(UndefValue::get(vecType));
     Module *mod = vecInfo.getMapping().vectorFn->getParent();
-    Function *intr = scatter ? Intrinsic::getDeclaration(mod, Intrinsic::masked_scatter, vecType)
-                             : Intrinsic::getDeclaration(mod, Intrinsic::masked_gather, vecType);
+
+    auto vecPtrType = cast<VectorType>(addr->getType());
+    Type *OverloadedTypes[] = {vecType, vecPtrType};
+
+    Function *intr = scatter ? Intrinsic::getDeclaration(mod, Intrinsic::masked_scatter, OverloadedTypes)
+                             : Intrinsic::getDeclaration(mod, Intrinsic::masked_gather, OverloadedTypes);
     assert(intr && "scatter/gather not found!");
     return builder.CreateCall(intr, args);
 
