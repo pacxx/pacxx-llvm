@@ -35,23 +35,13 @@ VectorizationInfo::inRegion(const Instruction & inst) const {
 void
 VectorizationInfo::remapPredicate(Value& dest, Value& old)
 {
-    for (auto& it : predicates)
+    for (auto it : predicates)
     {
         if (it.second == &old)
         {
-            it.second = &dest;
+            predicates[it.first] = &dest;
         }
     }
-}
-
-const llvm::BasicBlock* VectorizationInfo::getBlockForPredicate(llvm::Value &pred) {
-  for (auto& it : predicates)
-  {
-    if (it.second == &pred)
-    {
-      return it.first;
-    }
-  }
 }
 
 void
@@ -128,9 +118,8 @@ VectorizationInfo::VectorizationInfo(llvm::Function& parentFn, uint vectorWidth,
 : mapping(&parentFn, &parentFn, vectorWidth), region(&_region)
 {
     mapping.resultShape = VectorShape::uni();
-    for( auto I = parentFn.arg_begin(), IE = parentFn.arg_end(); I != IE; ++I) {
+    for (auto& arg : parentFn.args()) {
       mapping.argShapes.push_back(VectorShape::uni());
-      setVectorShape(*I, VectorShape::uni());
     }
 }
 
@@ -139,10 +128,12 @@ VectorizationInfo::VectorizationInfo(VectorMapping _mapping)
 : mapping(_mapping), region(nullptr)
 {
   assert(mapping.argShapes.size() == mapping.scalarFn->arg_size());
-  auto it = mapping.scalarFn->arg_begin(); 
+  auto it = mapping.scalarFn->arg_begin();
   for (auto argShape : mapping.argShapes)
   {
-    setVectorShape(*it, argShape);
+    auto & arg = *it;
+    setPinned(arg);
+    setVectorShape(arg, argShape);
     ++it;
   }
 }
@@ -199,7 +190,6 @@ VectorizationInfo::dropVectorShape(const Value& val)
 void
 VectorizationInfo::dropPredicate(const BasicBlock& block)
 {
-    llvm::errs() << "droped predicate " << block.getName().str() << "\n";
     auto it = predicates.find(&block);
     if (it == predicates.end()) return;
     predicates.erase(it);
@@ -217,11 +207,11 @@ VectorizationInfo::getPredicate(const llvm::BasicBlock& block) const
     auto it = predicates.find(&block);
     if (it == predicates.end())
     {
-      return nullptr;
+        return nullptr;
     }
     else
     {
-      return it->second;
+        return it->second;
     }
 }
 
@@ -259,6 +249,14 @@ VectorizationInfo::isDivergentLoopTopLevel(const llvm::Loop* loop) const
 bool
 VectorizationInfo::isKillExit(const BasicBlock& BB) const {
     return NonKillExits.count(&BB) == 0;
+}
+
+bool VectorizationInfo::isPinned(const Value& V) const {
+  return pinned.count(&V) != 0;
+}
+
+void VectorizationInfo::setPinned(const Value& V) {
+  pinned.insert(&V);
 }
 
 void

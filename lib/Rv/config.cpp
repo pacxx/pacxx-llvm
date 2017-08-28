@@ -8,7 +8,7 @@ Config::Config()
 
   // should all (non-loop exiting) branches be folded regardless of VA result?
   // set to false for partial linearization
-, foldAllBranches(false)
+, foldAllBranches(CheckFlag("RV_FOLD_BRANCHES"))
 
 // backend defaults
 , scalarizeIndexComputation(true)
@@ -29,9 +29,29 @@ Config::Config()
 , useSSE(false)
 , useAVX(false)
 , useAVX2(false)
+, useAVX512(false)
 , useNEON(false)
+, useADVSIMD(false)
 , useSLEEF(false)
-{}
+{
+  char * rawArch = getenv("RV_ARCH");
+  if (!rawArch) return;
+
+  std::string arch = rawArch;
+  if (arch == "avx2") {
+    Report() << "RV_ARCH: configured for avx2!\n";
+    useAVX2 = true;
+    useSSE = true;
+  } else if (arch == "avx512") {
+    Report() << "RV_ARCH: configured for avx512!\n";
+    useAVX512 = true;
+    useAVX2 = true;
+    useSSE = true;
+  } else if (arch == "advsimd") {
+    Report() << "RV_ARCH: configured for arm advsimd!\n";
+    useADVSIMD = true;
+  }
+}
 
 std::string
 rv::to_string(Config::VAMethod vam) {
@@ -69,7 +89,7 @@ printOptFlags(const Config & config, llvm::raw_ostream & out) {
 
 static void
 printFeatureFlags(const Config & config, llvm::raw_ostream & out) {
-  out << "arch: useSSE = " << config.useSSE << ", useAVX = " << config.useAVX << ", useAVX2 = " << config.useAVX2 << ", useNEON = " << config.useNEON << "\n";
+  out << "arch: useSSE = " << config.useSSE << ", useAVX = " << config.useAVX << ", useAVX2 = " << config.useAVX2 << ", useAVX512 = " << config.useAVX512 << ", useNEON = " << config.useNEON << ", useADVSIMD = " << config.useADVSIMD << "\n";
 }
 
 

@@ -16,7 +16,6 @@
 #include <llvm/IR/Metadata.h>
 #include <report.h>
 #include <fstream>
-#include <llvm/Support/FileSystem.h>
 
 #include "NatBuilder.h"
 #include "Utils.h"
@@ -479,7 +478,7 @@ void NatBuilder::mapOperandsInto(Instruction *const scalInst, Instruction *inst,
   // check for division. opcodes for divisions are (in order) UDiv, SDiv, FDiv. only care if non-trivial mask
   auto opCode = scalInst->getOpcode();
   auto * pred = vecInfo.getPredicate(*scalInst->getParent());
-  bool isPredicatedDiv = (opCode >= BinaryOperator::UDiv) && (opCode <= BinaryOperator::FRem) && (pred && !isa<Constant>(pred));
+  bool isPredicatedDiv = (opCode >= BinaryOperator::UDiv) && (opCode <= BinaryOperator::FDiv) && (pred && !isa<Constant>(pred));
 
   unsigned e = isa<CallInst>(scalInst) ? inst->getNumOperands() - 1 : inst->getNumOperands();
   for (unsigned i = 0; i < e; ++i) {
@@ -596,7 +595,6 @@ void NatBuilder::fallbackVectorize(Instruction *const inst) {
   // repeat from line 3 for all lanes
   Type *type = inst->getType();
   bool isAlloca = isa<AllocaInst>(inst);
-  bool isPACXXSharedMem = inst->getMetadata("pacxx.as.shared") != nullptr;
   bool notVectorTy = type->isVoidTy() || !(type->isIntegerTy() || type->isFloatingPointTy() || type->isPointerTy());
   bool scalarize = keepScalar.count(inst) > 0;
   Value *resVec = notVectorTy || scalarize ? nullptr : UndefValue::get(getVectorType(inst->getType(), vectorWidth()));
@@ -626,13 +624,10 @@ void NatBuilder::fallbackVectorize(Instruction *const inst) {
 
   // mask is trivial -> scalarize
   } else {
-    Instruction *cpInst = nullptr;
     for (unsigned lane = 0; lane < vectorWidth(); ++lane) {
-      if (!isPACXXSharedMem || cpInst == nullptr) {
-        cpInst = inst->clone();
-        mapOperandsInto(inst, cpInst, false, lane);
-        builder.Insert(cpInst, inst->getName());
-      }
+      Instruction *cpInst = inst->clone();
+      mapOperandsInto(inst, cpInst, false, lane);
+      builder.Insert(cpInst, inst->getName());
       if (scalarize || notVectorTy || isAlloca) mapScalarValue(inst, cpInst, lane);
       if (resVec) resVec = builder.CreateInsertElement(resVec, cpInst, lane, "fallBackInsert");
     }
@@ -1068,15 +1063,8 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
 
   Value *mask = nullptr;
   Value *predicate = vecInfo.getPredicate(*inst->getParent());
-  if (!predicate) {
-    inst->dump();
-    std::error_code EC;
-    raw_fd_ostream OS("failed.kernel.ll", EC, sys::fs::F_None);
-    inst->getParent()->getParent()->print(OS, nullptr);
-  }
-
   assert(predicate && predicate->getType()->isIntegerTy(1) && "predicate must have i1 type!");
-  bool needsMask = !isa<Constant>(predicate);
+  bool needsMask = predicate && !vecInfo.getVectorShape(*predicate).isUniform();
 
   if (needsMask)
     mask = requestVectorValue(predicate);
@@ -1158,7 +1146,6 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
   if (load) {
     if (needsMask && addrShape.isUniform()) {
       assert(addr.size() == 1 && "multiple addresses for single access!");
-      mask = createPTest(mask, false);
       vecMem = createUniformMaskedMemory(load, accessedType, alignment, addr[0], mask, nullptr);
 
     } else if (((addrShape.isUniform() || addrShape.isContiguous() || addrShape.isStrided(byteSize))) && !(needsMask && !config.enableMaskedMove)) {
@@ -1182,16 +1169,23 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
 
 
   } else {
-    Value *mappedStoredVal = addrShape.isUniform() ? requestScalarValue(storedValue)
-                                                             : requestVectorValue(storedValue);
-
     if (needsMask && addrShape.isUniform()) {
       assert(addr.size() == 1 && "multiple addresses for single access!");
-      mask = createPTest(mask, false);
-      vecMem = createUniformMaskedMemory(store, accessedType, alignment, addr[0], mask, mappedStoredVal);
+      auto valShape = vecInfo.getVectorShape(*store->getValueOperand());
+      if (!valShape.isUniform()) {
+        Value *mappedStoredVal = requestVectorValue(storedValue);
+        vecMem = createVaryingToUniformStore(store, accessedType, alignment, addr[0], needsMask ? mask : nullptr, mappedStoredVal);
+      } else {
+        Value *mappedStoredVal = addrShape.isUniform() ? requestScalarValue(storedValue)
+                                                       : requestVectorValue(storedValue);
+
+        vecMem = createUniformMaskedMemory(store, accessedType, alignment, addr[0], mask, mappedStoredVal);
+      }
 
     } else if (((addrShape.isUniform() || addrShape.isContiguous() || addrShape.isStrided(byteSize))) && !(needsMask && !config.enableMaskedMove)) {
       assert(addr.size() == 1 && "multiple addresses for single access!");
+      Value *mappedStoredVal = addrShape.isUniform() ? requestScalarValue(storedValue)
+                                                       : requestVectorValue(storedValue);
       vecMem = createContiguousStore(mappedStoredVal, addr[0], alignment, needsMask ? mask : nullptr);
 
       addrShape.isUniform() ? ++numUniStores : needsMask ? ++numContMaskedStores : ++numContStores;
@@ -1209,6 +1203,8 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
 
     } else if (pseudoInter && !(needsMask && !config.enableMaskedMove)) {
       assert(addr.size() > 1 && "only one address for multiple accesses!");
+      Value *mappedStoredVal = addrShape.isUniform() ? requestScalarValue(storedValue)
+                                                       : requestVectorValue(storedValue);
       std::vector<Value *> vals;
       vals.reserve(addr.size());
       vals.push_back(mappedStoredVal);
@@ -1216,6 +1212,8 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
 
     } else {
       assert(addr.size() == 1 && "multiple addresses for single access!");
+      Value *mappedStoredVal = addrShape.isUniform() ? requestScalarValue(storedValue)
+                                                       : requestVectorValue(storedValue);
       vecMem = createVaryingMemory(vecType, alignment, addr[0], mask, mappedStoredVal);
     }
   }
@@ -1232,9 +1230,123 @@ void NatBuilder::vectorizeMemoryInstruction(Instruction *const inst) {
   return;
 }
 
+
+Value *
+NatBuilder::createVaryingToUniformStore(Instruction *inst, Type *accessedType, unsigned int alignment, Value *addr, Value *mask, Value *values) {
+  Value * indexVal = nullptr;
+  auto & ctx = builder.getContext();
+
+  BasicBlock * continueBlock = nullptr;
+  if (!mask) {
+    // under uniform contexts store the value of the last lane
+    indexVal = ConstantInt::get(Type::getInt32Ty(ctx), vectorWidth() - 1);
+  } else {
+  // guard against empty mask
+    // create a mask ptest
+
+    auto * nativeIntTy = Type::getInt32Ty(ctx);
+
+  // use the potentially slower but generic max lane code
+#define NAT_GENERIC_MAXLANE
+
+#ifndef NAT_GENERIC_MAXLANE
+  // create guard cde
+  // extract the mask as an integer
+    //
+    // FIXME (llvm): the code below really should work but it does not:
+    // auto * bitIntTy = IntegerType::getIntNTy(ctx, vectorWidth());
+    // auto * bitIntVecTy = VectorType::get(bitIntTy, 1);
+
+    // auto * maskIntVec = builder.CreateBitCast(mask, bitIntVecTy); // FIXME this extracts the first byte of the vector register that holds %mask (inspect the assembly)
+    // auto * maskInt = builder.CreateExtractElement(maskIntVec, ConstantInt::get(nativeIntTy, 0));
+    // auto * regMaskInt = builder.CreateZExt(maskInt, nativeIntTy);
+
+    Module *mod = vecInfo.getMapping().vectorFn->getParent();
+
+    // AVX specific code
+    Intrinsic::ID movMaskID;
+    Type * laneTy = nullptr;
+    switch(vectorWidth()) {
+      case 8: { movMaskID = Intrinsic::x86_avx_movmsk_ps_256; laneTy = nativeIntTy; break; }
+      case 4: { movMaskID =  Intrinsic::x86_sse_movmsk_ps; laneTy = nativeIntTy; break; }
+    }
+    auto * movMaskFunc = Intrinsic::getDeclaration(mod, movMaskID);
+    auto * movMaskTy = movMaskFunc->getFunctionType()->getParamType(0);
+
+    // cast to argument type
+    auto * vecLaneTy = VectorType::get(laneTy, vectorWidth());
+    auto * sxMask = builder.CreateSExt(mask, vecLaneTy);
+    auto * castMask = builder.CreateBitCast(sxMask, movMaskTy);
+    auto * regMaskInt = builder.CreateCall(movMaskFunc, castMask);
+#endif
+
+    // create two new basic blocks
+    BasicBlock *memBlock = BasicBlock::Create(vecInfo.getVectorFunction().getContext(), "mem_block",
+                                              &vecInfo.getVectorFunction());
+    continueBlock = BasicBlock::Create(vecInfo.getVectorFunction().getContext(), "cont_block",
+                                                   &vecInfo.getVectorFunction());
+
+
+  // branch to mem_block if any lane stores
+#ifndef NAT_GENERIC_MAXLANE
+    Value * branchMask = builder.CreateICmpNE(regMaskInt, ConstantInt::getNullValue(nativeIntTy)); // createPTest(mask, false); //
+#else
+    // rather use a ptest to allow folding with outer stores
+    Value * branchMask = createPTest(mask, false);
+#endif
+
+    builder.CreateCondBr(branchMask, memBlock, continueBlock);
+
+  // insert store in guarded block
+    builder.SetInsertPoint(memBlock);
+    auto * origBlock = inst->getParent();
+    mapVectorValue(origBlock, continueBlock);
+
+#ifdef NAT_GENERIC_MAXLANE
+    // generic but slow implementation
+    // SExt to full width int
+    auto * vecLaneTy = VectorType::get(nativeIntTy, vectorWidth());
+    auto * sxMask = builder.CreateSExt(mask, vecLaneTy);
+
+    // AND with lane index vector
+    auto * laneIdxConst = createContiguousVector(vectorWidth(), nativeIntTy, 0, 1);
+    auto * activeLaneVec = builder.CreateAnd(sxMask, laneIdxConst);
+
+    // horizontal MAX reduction
+    indexVal = &CreateVectorReduce(builder, RedKind::Max, *activeLaneVec);
+#else
+  // compute MSB from leading zeros
+    // determine the MS (using the ctlz intrinsic)
+    // llvm.ctlz.i32 (i32  <src>, i1 <is_zero_undef == false>)
+    auto * ctlzFunc = Intrinsic::getDeclaration(mod, Intrinsic::ctlz, nativeIntTy);
+    auto * leadingZerosVal = builder.CreateCall(ctlzFunc, {regMaskInt, ConstantInt::getTrue(ctx) });
+
+    auto * constFullVal = ConstantInt::getSigned(nativeIntTy, 31);
+    indexVal = builder.CreateSub(constFullVal, leadingZerosVal);
+#endif
+
+  }
+
+  // extract and materialize store
+  auto * lastLaneVal = builder.CreateExtractElement(values, indexVal, "xt.lastlane");
+  auto * vecMem = builder.CreateStore(lastLaneVal, addr);
+  cast<StoreInst>(vecMem)->setAlignment(alignment);
+
+  // proceed in continue block (if any)
+  if (continueBlock) {
+    builder.CreateBr(continueBlock);
+    builder.SetInsertPoint(continueBlock);
+  }
+
+  return vecMem;
+}
+
 Value *NatBuilder::createUniformMaskedMemory(Instruction *inst, Type *accessedType, unsigned int alignment,
                                              Value *addr, Value *mask, Value *values) {
   values ? ++numUniMaskedStores : ++numUniMaskedLoads;
+
+  // create a mask ptest
+  mask = createPTest(mask, false);
 
   assert((values && isa<StoreInst>(inst)) || (!values && isa<LoadInst>(inst)));
 
@@ -1289,12 +1401,8 @@ Value *NatBuilder::createVaryingMemory(Type *vecType, unsigned int alignment, Va
     args.push_back(mask);
     if (!scatter) args.push_back(UndefValue::get(vecType));
     Module *mod = vecInfo.getMapping().vectorFn->getParent();
-
-    auto vecPtrType = cast<VectorType>(addr->getType());
-    Type *OverloadedTypes[] = {vecType, vecPtrType};
-
-    Function *intr = scatter ? Intrinsic::getDeclaration(mod, Intrinsic::masked_scatter, OverloadedTypes)
-                             : Intrinsic::getDeclaration(mod, Intrinsic::masked_gather, OverloadedTypes);
+    Function *intr = scatter ? Intrinsic::getDeclaration(mod, Intrinsic::masked_scatter, vecType)
+                             : Intrinsic::getDeclaration(mod, Intrinsic::masked_gather, vecType);
     assert(intr && "scatter/gather not found!");
     return builder.CreateCall(intr, args);
 
@@ -1432,7 +1540,7 @@ void NatBuilder::addLazyInstruction(Instruction *const instr) {
 void NatBuilder::requestLazyInstructions(Instruction *const upToInstruction) {
   assert(!lazyInstructions.empty() && "no lazy instructions to generate!");
 
-  errs() << " --- reqLazy: " << upToInstruction->getName() << " --\n";
+  IF_DEBUG_NAT errs() << " --- reqLazy: " << upToInstruction->getName() << " --\n";
 
   Instruction *lazyInstr = lazyInstructions.front();
   lazyInstructions.pop_front();
@@ -1467,7 +1575,7 @@ void NatBuilder::requestLazyInstructions(Instruction *const upToInstruction) {
     lazyInstructions.pop_front();
   }
 
-  errs() << " --- DONE reqLazy: " << upToInstruction->getName() << " --\n";
+  IF_DEBUG_NAT errs() << " --- DONE reqLazy: " << upToInstruction->getName() << " --\n";
 
   // if we reach this point this should be guaranteed:
   assert(lazyInstr == upToInstruction && "something went wrong during lazy generation!");
@@ -1882,7 +1990,6 @@ Value *NatBuilder::requestCascadeLoad(Value *vecPtr, unsigned alignment, Value *
   // cast call argument to correct type if needed
   Argument *ptrArg = &*func->arg_begin();
   Value *callPtr = vecPtr;
-
   if (ptrArg->getType() != vecPtr->getType()) {
     callPtr = builder.CreateBitCast(callPtr, ptrArg->getType(), "bc");
   }
