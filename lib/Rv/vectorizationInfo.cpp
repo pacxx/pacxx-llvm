@@ -120,7 +120,6 @@ VectorizationInfo::VectorizationInfo(llvm::Function& parentFn, uint vectorWidth,
     mapping.resultShape = VectorShape::uni();
     for (auto& arg : parentFn.args()) {
       mapping.argShapes.push_back(VectorShape::uni());
-      setVectorShape(arg, VectorShape::uni());
     }
 }
 
@@ -132,7 +131,9 @@ VectorizationInfo::VectorizationInfo(VectorMapping _mapping)
   auto it = mapping.scalarFn->arg_begin();
   for (auto argShape : mapping.argShapes)
   {
-    setVectorShape(*it, argShape);
+    auto & arg = *it;
+    setPinned(arg);
+    setVectorShape(arg, argShape);
     ++it;
   }
 }
@@ -154,18 +155,19 @@ VectorizationInfo::hasKnownShape(const llvm::Value& val) const {
 VectorShape
 VectorizationInfo::getVectorShape(const llvm::Value& val) const
 {
+    auto it = shapes.find(&val);
+
+  // give precedence to user shapes
+    if (it != shapes.end()) {
+      return it->second;
+    }
+
  // return default shape for constants
     auto * constVal = dyn_cast<Constant>(&val);
     if (constVal) {
       return VectorShape::fromConstant(constVal);
     }
 
-    auto it = shapes.find(&val);
-
-  // for all other objects return a explicit shape first
-    if (it != shapes.end()) {
-      return it->second;
-    }
 
   // out-of-region values default to uniform
     auto * inst = dyn_cast<Instruction>(&val);
@@ -173,9 +175,8 @@ VectorizationInfo::getVectorShape(const llvm::Value& val) const
       return VectorShape::uni(); // TODO getAlignment(*inst));
     }
 
-    // return VectorShape::undef();
-    assert (it != shapes.end());
-    return it->second;
+  // otw, the shape is undefined
+    return VectorShape::undef();
 }
 
 void
@@ -248,6 +249,14 @@ VectorizationInfo::isDivergentLoopTopLevel(const llvm::Loop* loop) const
 bool
 VectorizationInfo::isKillExit(const BasicBlock& BB) const {
     return NonKillExits.count(&BB) == 0;
+}
+
+bool VectorizationInfo::isPinned(const Value& V) const {
+  return pinned.count(&V) != 0;
+}
+
+void VectorizationInfo::setPinned(const Value& V) {
+  pinned.insert(&V);
 }
 
 void
