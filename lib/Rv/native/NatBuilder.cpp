@@ -1401,6 +1401,7 @@ Value *NatBuilder::createVaryingMemory(Type *vecType, unsigned int alignment, Va
     args.push_back(mask);
     if (!scatter) args.push_back(UndefValue::get(vecType));
     Module *mod = vecInfo.getMapping().vectorFn->getParent();
+
     auto vecPtrType = cast<VectorType>(addr->getType());
     Type *OverloadedTypes[] = {vecType, vecPtrType};
 

@@ -375,24 +375,19 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         for (User *user: global.users()) {
             if (Instruction *Inst = dyn_cast<Instruction>(user)) {
                 if (Inst->getParent()->getParent() == kernel) {
-                    vecInfo.setVectorShape(global, rv::VectorShape::uni());
+                    vecInfo.setPinnedShape(global, rv::VectorShape::uni());
                     break;
                 }
             }
         }
     }
 
-
-
-
-    SmallVector<Instruction*, 8> unsupported_calls;
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
 
         if (auto AI = dyn_cast<AllocaInst>(inst)) {
           if (AI->getMetadata("pacxx.as.shared")) {
             vecInfo.setVectorShape(*AI, rv::VectorShape::uni());
-         //   unsupported_calls.push_back(AI);
           }
         }
 
@@ -404,7 +399,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::cont());
+                        vecInfo.setPinnedShape(*CI, rv::VectorShape::cont());
                         break;
                     }
                     case Intrinsic::pacxx_read_tid_y:
@@ -418,13 +413,13 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
-                        vecInfo.setVectorShape(*CI, rv::VectorShape::uni());
+                        vecInfo.setPinnedShape(*CI, rv::VectorShape::uni());
                         break;
                     }
                     case Intrinsic::lifetime_start: // FIXME: tell RV to not vectorize calls to these intrinsics
                     case Intrinsic::lifetime_end:
-                      unsupported_calls.push_back(CI);
-                        break;
+                      vecInfo.setPinnedShape(*CI, rv::VectorShape::uni());
+                      break;
 
                     default: break;
                 }
@@ -432,11 +427,8 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
 
-    for (auto CI : unsupported_calls)
-      CI->eraseFromParent();
-
     if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        vecInfo.setVectorShape(*barrierFunc, rv::VectorShape::uni());
+        vecInfo.setPinnedShape(*barrierFunc, rv::VectorShape::uni());
 }
 
 
