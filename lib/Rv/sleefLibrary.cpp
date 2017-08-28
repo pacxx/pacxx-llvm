@@ -16,10 +16,37 @@
 #include <llvm/IR/Module.h>
 
 #include "utils/rvTools.h"
+#include "rvConfig.h"
+
+#include <llvm/IR/Verifier.h>
 
 using namespace llvm;
 
-#ifdef RV_ENABLE_BUILTINS
+#ifdef RV_ENABLE_ADVSIMD
+extern const unsigned char * advsimd_sp_Buffer;
+extern const size_t advsimd_sp_BufferLen;
+
+extern const unsigned char * advsimd_dp_Buffer;
+extern const size_t advsimd_dp_BufferLen;
+
+extern const unsigned char * advsimd_extras_Buffer;
+extern const size_t advsimd_extras_BufferLen;
+
+#else
+const unsigned char * advsimd_sp_Buffer = nullptr;
+const size_t advsimd_sp_BufferLen = 0;
+
+const unsigned char * advsimd_dp_Buffer = nullptr;
+const size_t advsimd_dp_BufferLen = 0;
+
+const unsigned char * advsimd_extras_Buffer = nullptr;
+const size_t advsimd_extras_BufferLen = 0;
+#endif
+
+#ifdef RV_ENABLE_X86
+extern const unsigned char * avx512_sp_Buffer;
+extern const size_t avx512_sp_BufferLen;
+
 extern const unsigned char * avx2_sp_Buffer;
 extern const size_t avx2_sp_BufferLen;
 
@@ -28,6 +55,9 @@ extern const size_t avx_sp_BufferLen;
 
 extern const unsigned char * sse_sp_Buffer;
 extern const size_t sse_sp_BufferLen;
+
+extern const unsigned char * avx512_dp_Buffer;
+extern const size_t avx512_dp_BufferLen;
 
 extern const unsigned char * avx2_dp_Buffer;
 extern const size_t avx2_dp_BufferLen;
@@ -38,13 +68,42 @@ extern const size_t avx_dp_BufferLen;
 extern const unsigned char * sse_dp_Buffer;
 extern const size_t sse_dp_BufferLen;
 
-extern const unsigned char * avx_extras_Buffer;
-extern const size_t avx_extras_BufferLen;
+extern const unsigned char * avx2_extras_Buffer;
+extern const size_t avx2_extras_BufferLen;
+
+extern const unsigned char * avx512_extras_Buffer;
+extern const size_t avx512_extras_BufferLen;
+
 #else
+const unsigned char * avx512_sp_Buffer = nullptr;
+const size_t avx512_sp_BufferLen = 0;
 
-static const unsigned char * avx_extras_Buffer = nullptr;
-static const size_t avx_extras_BufferLen = 0L;
+const unsigned char * avx2_sp_Buffer = nullptr;
+const size_t avx2_sp_BufferLen = 0;
 
+const unsigned char * avx_sp_Buffer = nullptr;
+const size_t avx_sp_BufferLen = 0;
+
+const unsigned char * sse_sp_Buffer = nullptr;
+const size_t sse_sp_BufferLen = 0;
+
+const unsigned char * avx512_dp_Buffer nullptr;
+const size_t avx512_dp_BufferLen = 0;
+
+const unsigned char * avx2_dp_Buffer = nullptr;
+const size_t avx2_dp_BufferLen = 0;
+
+const unsigned char * avx_dp_Buffer = nullptr;
+const size_t avx_dp_BufferLen = 0;
+
+const unsigned char * sse_dp_Buffer = nullptr;
+const size_t sse_dp_BufferLen = 0;
+
+const unsigned char * avx2_extras_Buffer = nullptr;
+const size_t avx2_extras_BufferLen = 0;
+
+const unsigned char * avx512_extras_Buffer = nullptr;
+const size_t avx512_extras_BufferLen = 0;
 #endif
 
 #ifdef RV_ENABLE_CRT
@@ -55,50 +114,61 @@ extern const size_t crt_BufferLen;
 
 namespace rv {
   enum SleefISA {
-    SLEEF_AVX2 = 0,
+    SLEEF_SSE  = 0,
     SLEEF_AVX  = 1,
-    SLEEF_SSE  = 2
+    SLEEF_AVX2 = 2,
+    SLEEF_AVX512 = 3,
+    SLEEF_ADVSIMD = 4
   };
 
   inline int sleefModuleIndex(SleefISA isa, bool doublePrecision) {
-    return int(isa) + (doublePrecision ? 3 : 0);
+    return int(isa) + (doublePrecision ? 5 : 0);
   }
 
-#ifdef RV_ENABLE_BUILTINS
-  static const size_t sleefModuleBufferLens[] = {
-      avx2_sp_BufferLen,
-      avx_sp_BufferLen,
-      sse_sp_BufferLen,
 
-      avx2_dp_BufferLen,
-      avx_dp_BufferLen,
+  static const size_t sleefModuleBufferLens[] = {
+      sse_sp_BufferLen,
+      avx_sp_BufferLen,
+      avx2_sp_BufferLen,
+      avx512_sp_BufferLen,
+      advsimd_sp_BufferLen,
+
       sse_dp_BufferLen,
+      avx_dp_BufferLen,
+      avx2_dp_BufferLen,
+      avx512_dp_BufferLen,
+      advsimd_dp_BufferLen,
   };
 
   static const unsigned char** sleefModuleBuffers[] = {
-      &avx2_sp_Buffer,
-      &avx_sp_Buffer,
       &sse_sp_Buffer,
-      &avx2_dp_Buffer,
-      &avx_dp_Buffer,
+      &avx_sp_Buffer,
+      &avx2_sp_Buffer,
+      &avx512_sp_Buffer,
+      &advsimd_sp_Buffer,
+
       &sse_dp_Buffer,
+      &avx_dp_Buffer,
+      &avx2_dp_Buffer,
+      &avx512_dp_Buffer,
+      &advsimd_dp_Buffer,
   };
 
-#else // ! RV_ENABLE_SLEEF
-  static const size_t sleefModuleBufferLens[] = {
-    0,0,0,0,0,0
+  static const size_t extraModuleBufferLens[] = {
+      0, // SSE
+      0, // AVX
+      avx2_extras_BufferLen,
+      avx512_extras_BufferLen,
+      advsimd_extras_BufferLen,
   };
 
-  static const char** sleefModuleBuffers[] = {
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr
+  static const unsigned char** extraModuleBuffers[] = {
+      nullptr, // SSE
+      nullptr, // AVX
+      &avx2_extras_Buffer,
+      &avx512_extras_Buffer,
+      &advsimd_extras_Buffer,
   };
-#endif
-
 static
 void
 AddMappings_SSE(PlatformInfo & platInfo, bool allowImprecise) {
@@ -420,7 +490,8 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
           {"llvm.maxnum.f64", "xfmax_avx2", 4},
 
         // extras
-          {"drand48", "avx_vrand_d4_extra", 4}
+          {"drand48", "vrand_extra_avx2", 4},
+          {"frand48", "vrandf_extra_avx2", 8}
       };
       platInfo.addVectorizableFunctions(VecFuncs, true);
 
@@ -510,9 +581,295 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
       }
 }
 
-  static Module const *sleefModules[3 * 2];
+static
+void
+AddMappings_AVX512(PlatformInfo & platInfo, bool allowImprecise) {
+      const VecDesc VecFuncs[] = {
+//        {"ldexpf", "xldexpf_avx512", 16},
+          {"ilogbf", "xilogbf_avx512", 16},
+          {"fmaf", "xfmaf_avx512", 16},
+          {"fabsf", "xfabsf_avx512", 16},
+          {"copysignf", "xcopysignf_avx512", 16},
+          {"fmaxf", "xfmaxf_avx512", 16},
+          {"fminf", "xfminf_avx512", 16},
+          {"fdimf", "xfdimf_avx512", 16},
+          {"truncf", "xtruncf_avx512", 16},
+          {"floorf", "xfloorf_avx512", 16},
+          {"ceilf", "xceilf_avx512", 16},
+          {"roundf", "xroundf_avx512", 16},
+          {"rintf", "xrintf_avx512", 16},
+          {"nextafterf", "xnextafterf_avx512", 16},
+          {"frfrexpf", "xfrfrexpf_avx512", 16},
+          {"expfrexpf", "xexpfrexpf_avx512", 16},
+          {"fmodf", "xfmodf_avx512", 16},
+          {"modff", "xmodff_avx512", 16},
+
+//        {"ldexp", "xldexp_avx512", 8},
+          {"ilogb", "xilogb_avx512", 8},
+          {"fma", "xfma_avx512", 8},
+          {"fabs", "xfabs_avx512", 8},
+          {"copysign", "xcopysign_avx512", 8},
+          {"fmax", "xfmax_avx512", 8},
+          {"fmin", "xfmin_avx512", 8},
+          {"fdim", "xfdim_avx512", 8},
+          {"trunc", "xtrunc_avx512", 8},
+          {"floor", "xfloor_avx512", 8},
+          {"ceil", "xceil_avx512", 8},
+          {"round", "xround_avx512", 8},
+          {"rint", "xrint_avx512", 8},
+          {"nextafter", "xnextafter_avx512", 8},
+          {"frfrexp", "xfrfrexp_avx512", 8},
+          {"expfrexp", "xexpfrexp_avx512", 8},
+          {"fmod", "xfmod_avx512", 8},
+          {"modf", "xmodf_avx512", 8},
+
+          {"llvm.fabs.f32", "xfabsf_avx512", 16},
+          {"llvm.copysign.f32", "xcopysignf_avx512", 16},
+          {"llvm.minnum.f32", "xfminf_avx512", 16},
+          {"llvm.maxnum.f32", "xfmaxf_avx512", 16},
+          {"llvm.fabs.f64", "xfabs_avx512", 8},
+          {"llvm.copysign.f64", "xcopysign_avx512", 8},
+          {"llvm.minnum.f64", "xfmin_avx512", 8},
+          {"llvm.maxnum.f64", "xfmax_avx512", 8},
+
+        // extras
+          {"drand48", "vrand_extra_avx512", 8},
+          {"frand48", "vrandf_extra_avx512", 16}
+      };
+      platInfo.addVectorizableFunctions(VecFuncs, true);
+
+
+
+
+
+
+      if (allowImprecise) {
+        const VecDesc ImprecVecFuncs[] = {
+//          {"sinf", "xsinf_avx512", 16},
+//          {"cosf", "xcosf_avx512", 16},
+            {"tanf", "xtanf_avx512", 16},
+            {"asinf", "xasinf_avx512", 16},
+            {"acosf", "xacosf_avx512", 16},
+            {"atanf", "xatanf_avx512", 16},
+            {"atan2f", "xatan2f_avx512", 16},
+            {"logf", "xlogf_avx512", 16},
+            {"cbrtf", "xcbrtf_avx512", 16},
+            {"expf", "xexpf_avx512", 16},
+            {"powf", "xpowf_avx512", 16},
+            {"sinhf", "xsinhf_avx512", 16},
+            {"coshf", "xcoshf_avx512", 16},
+            {"tanhf", "xtanhf_avx512", 16},
+            {"asinhf", "xasinhf_avx512", 16},
+            {"acoshf", "xacoshf_avx512", 16},
+            {"atanhf", "xatanhf_avx512", 16},
+            {"exp2f", "xexp2f_avx512", 16},
+            {"exp10f", "xexp10f_avx512", 16},
+            {"expm1f", "xexpm1f_avx512", 16},
+            {"log10f", "xlog10f_avx512", 16},
+            {"log1pf", "xlog1pf_avx512", 16},
+            {"sqrtf", "xsqrtf_u05_avx512", 16},
+            {"hypotf", "xhypotf_u05_avx512", 16},
+            {"lgammaf", "xlgammaf_u1_avx512", 16},
+            {"tgammaf", "xtgammaf_u1_avx512", 16},
+            {"erff", "xerff_u1_avx512", 16},
+            {"erfcf", "xerfcf_u15_avx512", 16},
+
+//          {"sin", "xsin_avx512", 8},
+//          {"cos", "xcos_avx512", 8},
+            {"tan", "xtan_avx512", 8},
+            {"asin", "xasin_avx512", 8},
+            {"acos", "xacos_avx512", 8},
+            {"atan", "xatan_avx512", 8},
+            {"atan2", "xatan2_avx512", 8},
+            {"log", "xlog_avx512", 8},
+            {"cbrt", "xcbrt_avx512", 8},
+            {"exp", "xexp_avx512", 8},
+            {"pow", "xpow_avx512", 8},
+            {"sinh", "xsinh_avx512", 8},
+            {"cosh", "xcosh_avx512", 8},
+            {"tanh", "xtanh_avx512", 8},
+            {"asinh", "xasinh_avx512", 8},
+            {"acosh", "xacosh_avx512", 8},
+            {"atanh", "xatanh_avx512", 8},
+            {"exp2", "xexp2_avx512", 8},
+            {"exp10", "xexp10_avx512", 8},
+            {"expm1", "xexpm1_avx512", 8},
+            {"log10", "xlog10_avx512", 8},
+            {"log1p", "xlog1p_avx512", 8},
+            {"sqrt", "xsqrt_u05_avx512", 8},
+            {"hypot", "xhypot_u05_avx512", 8},
+            {"lgamma", "xlgamma_u1_avx512", 8},
+            {"tgamma", "xtgamma_u1_avx512", 8},
+            {"erf", "xerf_u1_avx512", 8},
+            {"erfc", "xerfc_u15_avx512", 8},
+
+            {"llvm.sin.f32", "xsinf_avx512", 16},
+            {"llvm.cos.f32", "xcosf_avx512", 16},
+            {"llvm.log.f32", "xlogf_avx512", 16},
+            {"llvm.exp.f32", "xexpf_avx512", 16},
+            {"llvm.pow.f32", "xpowf_avx512", 16},
+            {"llvm.sqrt.f32", "xsqrtf_u05_avx512", 16},
+            {"llvm.exp2.f32", "xexp2f_avx512", 16},
+            {"llvm.log10.f32", "xlog10f_avx512", 16},
+            {"llvm.sin.f64", "xsin_avx512", 8},
+            {"llvm.cos.f64", "xcos_avx512", 8},
+            {"llvm.log.f64", "xlog_avx512", 8},
+            {"llvm.exp.f64", "xexp_avx512", 8},
+            {"llvm.pow.f64", "xpow_avx512", 8},
+            {"llvm.sqrt.f64", "xsqrt_u05_avx512", 8},
+            {"llvm.exp2.f64", "xexp2_avx512", 8},
+            {"llvm.log10.f64", "xlog10_avx512", 8}
+        };
+        platInfo.addVectorizableFunctions(ImprecVecFuncs, true);
+      }
+}
+
+static
+void
+AddMappings_ADVSIMD(PlatformInfo & platInfo, bool allowImprecise) {
+      const VecDesc VecFuncs[] = {
+//        {"ldexpf", "xldexpf_advsimd", 2},
+          {"ilogbf", "xilogbf_advsimd", 2},
+          {"fmaf", "xfmaf_advsimd", 2},
+          {"fabsf", "xfabsf_advsimd", 2},
+          {"copysignf", "xcopysignf_advsimd", 2},
+          {"fmaxf", "xfmaxf_advsimd", 2},
+          {"fminf", "xfminf_advsimd", 2},
+          {"fdimf", "xfdimf_advsimd", 2},
+          {"truncf", "xtruncf_advsimd", 2},
+          {"floorf", "xfloorf_advsimd", 2},
+          {"ceilf", "xceilf_advsimd", 2},
+          {"roundf", "xroundf_advsimd", 2},
+          {"rintf", "xrintf_advsimd", 2},
+          {"nextafterf", "xnextafterf_advsimd", 2},
+          {"frfrexpf", "xfrfrexpf_advsimd", 2},
+          {"expfrexpf", "xexpfrexpf_advsimd", 2},
+          {"fmodf", "xfmodf_advsimd", 2},
+          {"modff", "xmodff_advsimd", 2},
+
+//        {"ldexp", "xldexp_advsimd", 8},
+          {"ilogb", "xilogb_advsimd", 8},
+          {"fma", "xfma_advsimd", 8},
+          {"fabs", "xfabs_advsimd", 8},
+          {"copysign", "xcopysign_advsimd", 8},
+          {"fmax", "xfmax_advsimd", 8},
+          {"fmin", "xfmin_advsimd", 8},
+          {"fdim", "xfdim_advsimd", 8},
+          {"trunc", "xtrunc_advsimd", 8},
+          {"floor", "xfloor_advsimd", 8},
+          {"ceil", "xceil_advsimd", 8},
+          {"round", "xround_advsimd", 8},
+          {"rint", "xrint_advsimd", 8},
+          {"nextafter", "xnextafter_advsimd", 8},
+          {"frfrexp", "xfrfrexp_advsimd", 8},
+          {"expfrexp", "xexpfrexp_advsimd", 8},
+          {"fmod", "xfmod_advsimd", 8},
+          {"modf", "xmodf_advsimd", 8},
+
+          {"llvm.fabs.f32", "xfabsf_advsimd", 2},
+          {"llvm.copysign.f32", "xcopysignf_advsimd", 2},
+          {"llvm.minnum.f32", "xfminf_advsimd", 2},
+          {"llvm.maxnum.f32", "xfmaxf_advsimd", 2},
+          {"llvm.fabs.f64", "xfabs_advsimd", 8},
+          {"llvm.copysign.f64", "xcopysign_advsimd", 8},
+          {"llvm.minnum.f64", "xfmin_advsimd", 8},
+          {"llvm.maxnum.f64", "xfmax_advsimd", 8},
+
+        // extras
+          {"drand48", "vrand_extra_advsimd", 2},
+          {"frand48", "vrand_extra_advsimd", 4}
+      };
+      platInfo.addVectorizableFunctions(VecFuncs, true);
+
+
+
+
+
+
+      if (allowImprecise) {
+        const VecDesc ImprecVecFuncs[] = {
+//          {"sinf", "xsinf_advsimd", 4},
+//          {"cosf", "xcosf_advsimd", 4},
+            {"tanf", "xtanf_advsimd", 4},
+            {"asinf", "xasinf_advsimd", 4},
+            {"acosf", "xacosf_advsimd", 4},
+            {"atanf", "xatanf_advsimd", 4},
+            {"atan2f", "xatan2f_advsimd", 4},
+            {"logf", "xlogf_advsimd", 4},
+            {"cbrtf", "xcbrtf_advsimd", 4},
+            {"expf", "xexpf_advsimd", 4},
+            {"powf", "xpowf_advsimd", 4},
+            {"sinhf", "xsinhf_advsimd", 4},
+            {"coshf", "xcoshf_advsimd", 4},
+            {"tanhf", "xtanhf_advsimd", 4},
+            {"asinhf", "xasinhf_advsimd", 4},
+            {"acoshf", "xacoshf_advsimd", 4},
+            {"atanhf", "xatanhf_advsimd", 4},
+            {"exp2f", "xexp2f_advsimd", 4},
+            {"exp10f", "xexp10f_advsimd", 4},
+            {"expm1f", "xexpm1f_advsimd", 4},
+            {"log10f", "xlog10f_advsimd", 4},
+            {"log1pf", "xlog1pf_advsimd", 4},
+            {"sqrtf", "xsqrtf_u05_advsimd", 4},
+            {"hypotf", "xhypotf_u05_advsimd", 4},
+            {"lgammaf", "xlgammaf_u1_advsimd", 4},
+            {"tgammaf", "xtgammaf_u1_advsimd", 4},
+            {"erff", "xerff_u1_advsimd", 4},
+            {"erfcf", "xerfcf_u15_advsimd", 4},
+
+//          {"sin", "xsin_advsimd", 2},
+//          {"cos", "xcos_advsimd", 2},
+            {"tan", "xtan_advsimd", 2},
+            {"asin", "xasin_advsimd", 2},
+            {"acos", "xacos_advsimd", 2},
+            {"atan", "xatan_advsimd", 2},
+            {"atan2", "xatan2_advsimd", 2},
+            {"log", "xlog_advsimd", 2},
+            {"cbrt", "xcbrt_advsimd", 2},
+            {"exp", "xexp_advsimd", 2},
+            {"pow", "xpow_advsimd", 2},
+            {"sinh", "xsinh_advsimd", 2},
+            {"cosh", "xcosh_advsimd", 2},
+            {"tanh", "xtanh_advsimd", 2},
+            {"asinh", "xasinh_advsimd", 2},
+            {"acosh", "xacosh_advsimd", 2},
+            {"atanh", "xatanh_advsimd", 2},
+            {"exp2", "xexp2_advsimd", 2},
+            {"exp10", "xexp10_advsimd", 2},
+            {"expm1", "xexpm1_advsimd", 2},
+            {"log10", "xlog10_advsimd", 2},
+            {"log1p", "xlog1p_advsimd", 2},
+            {"sqrt", "xsqrt_u05_advsimd", 2},
+            {"hypot", "xhypot_u05_advsimd", 2},
+            {"lgamma", "xlgamma_u1_advsimd", 2},
+            {"tgamma", "xtgamma_u1_advsimd", 2},
+            {"erf", "xerf_u1_advsimd", 2},
+            {"erfc", "xerfc_u15_advsimd", 2},
+
+            {"llvm.sin.f32", "xsinf_advsimd", 4},
+            {"llvm.cos.f32", "xcosf_advsimd", 4},
+            {"llvm.log.f32", "xlogf_advsimd", 4},
+            {"llvm.exp.f32", "xexpf_advsimd", 4},
+            {"llvm.pow.f32", "xpowf_advsimd", 4},
+            {"llvm.sqrt.f32", "xsqrtf_u05_advsimd", 4},
+            {"llvm.exp2.f32", "xexp2f_advsimd", 4},
+            {"llvm.log10.f32", "xlog10f_advsimd", 4},
+            {"llvm.sin.f64", "xsin_advsimd", 2},
+            {"llvm.cos.f64", "xcos_advsimd", 2},
+            {"llvm.log.f64", "xlog_advsimd", 2},
+            {"llvm.exp.f64", "xexp_advsimd", 2},
+            {"llvm.pow.f64", "xpow_advsimd", 2},
+            {"llvm.sqrt.f64", "xsqrt_u05_advsimd", 2},
+            {"llvm.exp2.f64", "xexp2_advsimd", 2},
+            {"llvm.log10.f64", "xlog10_advsimd", 2}
+        };
+        platInfo.addVectorizableFunctions(ImprecVecFuncs, true);
+      }
+}
+
+  static Module const *sleefModules[5 * 2];
+  static Module const *extraModules[5 * 2];
   static Module* scalarModule; // scalar implementations to be inlined
-  static Module* extrasModule; // rv extra functions (vrand, ..)
 
   bool addSleefMappings(const Config & config,
                         PlatformInfo &platInfo,
@@ -521,7 +878,13 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
       return false;
 
 #ifdef RV_ENABLE_BUILTINS
-    if (config.useSSE || config.useAVX || config.useAVX2) {
+    if (config.useADVSIMD) {
+      AddMappings_ADVSIMD(platInfo, allowImprecise);
+    } else {
+      // TODO add neon32 mappings
+    }
+
+    if (config.useSSE || config.useAVX || config.useAVX2 || config.useAVX512) {
       AddMappings_SSE(platInfo, allowImprecise);
     }
 
@@ -529,14 +892,16 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
       AddMappings_AVX(platInfo, allowImprecise);
     }
 
-    if (config.useAVX2) {
+    if (config.useAVX2 || config.useAVX512) {
       AddMappings_AVX2(platInfo, allowImprecise);
     }
+    if (config.useAVX512) {
+      AddMappings_AVX512(platInfo, allowImprecise);
+    }
 
-    // TODO AVX512
-    // TODO NEON
+    // TODO generic mappings
 
-    return config.useAVX || config.useAVX2 || config.useSSE;
+    return config.useAVX || config.useAVX2 || config.useSSE || config.useAVX512 || config.useADVSIMD;
 
 #else
     return false;
@@ -598,6 +963,7 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
   }
 
   Function &cloneFunctionIntoModule(Function &func, Module &cloneInto, StringRef name) {
+#if 0
     if (func.isIntrinsic()) {
 
       // decode ambiguous type arguments
@@ -624,6 +990,7 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
 
       return *Intrinsic::getDeclaration(&cloneInto, func.getIntrinsicID(), overloadedTypes);
     }
+#endif
 
     // eg already migrated
     auto * existingFn = cloneInto.getFunction(func.getName());
@@ -634,6 +1001,8 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
     // create function in new module, create the argument mapping, clone function into new function body, return
     Function & clonedFn = *Function::Create(func.getFunctionType(), Function::LinkageTypes::ExternalLinkage,
                                           name, &cloneInto);
+    clonedFn.copyAttributesFrom(&func);
+
     // external decl
     if (func.isDeclaration()) return clonedFn;
 
@@ -689,27 +1058,39 @@ AddMappings_AVX2(PlatformInfo & platInfo, bool allowImprecise) {
     Function *clonedFn = insertInto->getFunction(vecFuncName);
     if (clonedFn) return clonedFn;
 
-    // remove the trailing _avx2/_avx/_sse
-    auto sleefName = vecFuncName.substr(0, vecFuncName.rfind('_'));
+    // remove the trailing isa specifier (_avx2/_avx/_sse/..)
+    std::string sleefName = vecFuncName.substr(0, vecFuncName.rfind('_'));
 
     SleefISA isa;
-    if (vecFuncName.count("avx2"))     isa = SLEEF_AVX2;
+    if (vecFuncName.count("avx512")) isa = SLEEF_AVX512;
+    else if (vecFuncName.count("avx2")) isa = SLEEF_AVX2;
     else if (vecFuncName.count("avx")) isa = SLEEF_AVX;
     else if (vecFuncName.count("sse")) isa = SLEEF_SSE;
+    else if (vecFuncName.count("advsimd")) isa = SLEEF_ADVSIMD;
     else return nullptr;
 
-    // query the extra module
-    if (avx_extras_Buffer && vecFuncName.count("_extra")) {
-      if (!extrasModule) extrasModule = createModuleFromBuffer(reinterpret_cast<const char*>(&avx_extras_Buffer), avx_extras_BufferLen, context);
-      Function *vecFunc = extrasModule->getFunction(vecFuncName);
+    bool isExtraFunc = vecFuncName.count("_extra");
+    if (isExtraFunc) {
+      int modIdx = (int) isa;
+      auto *& mod = extraModules[modIdx];
+      if (!mod) mod = createModuleFromBuffer(reinterpret_cast<const char*>(extraModuleBuffers[modIdx]), extraModuleBufferLens[modIdx], context);
+      Function *vecFunc = mod->getFunction(sleefName);
       assert(vecFunc && "mapped extra function not found in module!");
       return &cloneFunctionIntoModule(*vecFunc, *insertInto, vecFuncName);
     }
 
-    // Otw, look in SLEEF module
+    // Look in SLEEF module
     auto modIndex = sleefModuleIndex(isa, doublePrecision);
-    auto& mod = sleefModules[modIndex];
-    if (!mod) mod = createModuleFromBuffer(reinterpret_cast<const char*>(sleefModuleBuffers[modIndex]), sleefModuleBufferLens[modIndex], context);
+    const llvm::Module*& mod = sleefModules[modIndex];
+    if (!mod) {
+      mod = createModuleFromBuffer(reinterpret_cast<const char*>(sleefModuleBuffers[modIndex]), sleefModuleBufferLens[modIndex], context);
+
+      IF_DEBUG {
+        bool brokenMod = verifyModule(*mod, &errs());
+        if (brokenMod) abort();
+      }
+    }
+
     Function *vecFunc = mod->getFunction(sleefName);
     assert(vecFunc && "mapped SLEEF function not found in module!");
     return &cloneFunctionIntoModule(*vecFunc, *insertInto, vecFuncName);

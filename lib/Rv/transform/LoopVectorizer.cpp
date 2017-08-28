@@ -232,7 +232,7 @@ LoopVectorizer::vectorizeLoop(Loop &L) {
 
     IF_DEBUG { errs() << "header phi " << phi->getName() << " has shape " << phiShape.str() << "\n"; }
 
-    if (phiShape.isDefined()) vecInfo.setVectorShape(*phi, phiShape);
+    if (phiShape.isDefined()) vecInfo.setPinnedShape(*phi, phiShape);
   }
 
   // set uniform overrides
@@ -362,7 +362,6 @@ bool LoopVectorizer::runOnFunction(Function &F) {
   PlatformInfo platInfo(*F.getParent(), &tti, &tli);
 
   // TODO query target capabilities
-  config.useAVX2 = true;
   config.useSLEEF = true;
 
   bool useImpreciseFunctions = true;

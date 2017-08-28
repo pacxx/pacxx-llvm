@@ -67,7 +67,7 @@ VAWrapperPass::runOnFunction(Function& F) {
   const LoopInfo& LoopInfo = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
   VectorizationAnalysis vea(config, platInfo, Vecinfo, cdg, dfg, LoopInfo);
-  vea.analyze(F);
+  vea.analyze();
 
   return false;
 }
@@ -88,9 +88,44 @@ VectorizationAnalysis::VectorizationAnalysis(Config _config,
 { }
 
 void
-VectorizationAnalysis::analyze(const Function& F) {
+VectorizationAnalysis::updateAnalysis(InstVec & updateList) {
+  auto & F = mVecinfo.getScalarFunction();
   assert (!F.isDeclaration());
-  assert (mWorklist.empty());
+
+  // start from instructions on the update list
+  for (auto * inst : updateList) mWorklist.push(inst);
+
+  compute(F);
+  fixUndefinedShapes(F);
+  computeLoopDivergence();
+
+  // mark all non-loop exiting branches as divergent to trigger a full linearization
+  if (config.foldAllBranches) {
+    for (auto & BB: F) {
+      auto & term = *BB.getTerminator();
+      if (term.getNumSuccessors() <= 1) continue; // uninteresting
+
+      if (!mVecinfo.inRegion(BB)) continue; // no begin vectorized
+
+      auto * loop = mLoopInfo.getLoopFor(&BB);
+      bool keepShape = loop && loop->isLoopExiting(&BB);
+
+      if (!keepShape) {
+        mVecinfo.setVectorShape(term, VectorShape::varying());
+      }
+    }
+  }
+
+
+  IF_DEBUG_VA {
+    errs() << "VecInfo after VA:\n";
+    mVecinfo.dump();
+  }
+}
+void
+VectorizationAnalysis::analyze() {
+  auto & F = mVecinfo.getScalarFunction();
+  assert (!F.isDeclaration());
 
   init(F);
   compute(F);
@@ -131,27 +166,6 @@ void VectorizationAnalysis::fixUndefinedShapes(const Function& F) {
   }
 }
 
-void VectorizationAnalysis::collectOverrides(const Function& F) {
-  // Collect overrides
-  for (auto& BB : F) {
-    for (auto& I : BB) {
-      if (mVecinfo.hasKnownShape(I)) {
-        overrides[&I] = mVecinfo.getVectorShape(I);
-        mVecinfo.dropVectorShape(I);
-      }
-    }
-  }
-
-  IF_DEBUG_VA {
-    for (auto& pair : overrides) {
-      auto * inst = dyn_cast<Instruction>(pair.first);
-      if (inst && mVecinfo.inRegion(*inst)) {
-        errs() << "Override for: " << *pair.first << ", shape: " << pair.second << "\n";
-      }
-    }
-  };
-}
-
 void VectorizationAnalysis::adjustValueShapes(const Function& F) {
   // Enforce shapes to be existing, if absent, set to VectorShape::undef()
   // If already there, also optimize alignment in case of pointer type
@@ -186,27 +200,29 @@ void VectorizationAnalysis::adjustValueShapes(const Function& F) {
 }
 
 void VectorizationAnalysis::init(const Function& F) {
-  collectOverrides(F);
   adjustValueShapes(F);
 
   // Propagation of vector shapes starts at values that do not depend on other values:
-  // - Arguments
-  // - Overridden values (as if they were arguments)
+  // - function argument's users
   // - Allocas (which are uniform at the beginning)
   // - PHIs with constants as incoming values
   // - Calls without arguments
-  for (auto& arg : F.args()) {
-    addDependentValuesToWL(&arg);
+
+// push all users of pinned values
+  std::set<const Instruction*> seen;
+  for (auto * val : mVecinfo.pinned_values()) {
+    for(auto * user : val->users()) {
+      auto * inst = dyn_cast<Instruction>(user);
+      if (inst && seen.insert(inst).second) mWorklist.push(inst);
+    }
   }
 
+// push non-user instructions
   for (const BasicBlock& BB : F) {
     mVecinfo.setVectorShape(BB, VectorShape::uni());
 
     for (const Instruction& I : BB) {
-      if (overrides.count(&I) != 0) {
-        // Call update here to trigger divergence computation
-        update(&I, overrides[&I]);
-      } else if (isa<AllocaInst>(&I)) {
+      if (isa<AllocaInst>(&I)) {
         update(&I, VectorShape::uni(mVecinfo.getMapping().vectorWidth));
       } else if (const CallInst* call = dyn_cast<CallInst>(&I)) {
         if (call->getFunctionType()->getReturnType()->isVoidTy()) continue;
@@ -393,7 +409,7 @@ void VectorizationAnalysis::compute(const Function& F) {
     const Instruction* I = mWorklist.front();
     mWorklist.pop();
 
-    if (overrides.count(I) != 0) {
+    if (mVecinfo.isPinned(*I)) {
       continue;
     }
 
