@@ -120,6 +120,31 @@ bool SPMDVectorizer::runOnModule(Module& M) {
 
         rv::PlatformInfo platformInfo(M, TTI, TLI);
 
+        for (Function &func : platformInfo.getModule()) {
+            if (func.getName() == "llvm.pacxx.barrier0") {
+                rv::VectorMapping mapping(
+                        &func,
+                        &func,
+                        0,
+                        -1,
+                        rv::VectorShape::uni(),
+                        {rv::VectorShape::uni()}
+                );
+                platformInfo.addSIMDMapping(mapping);
+            }
+            else if (func.getName() == "llvm.lifetime.start" || func.getName() == "llvm.lifetime.end") {
+               rv::VectorMapping mapping(
+                       &func,
+                       &func,
+                       0,
+                       -1,
+                       rv::VectorShape::uni(),
+                       {rv::VectorShape::uni(), rv::VectorShape::uni()}
+               );
+               platformInfo.addSIMDMapping(mapping);
+            }
+        }
+
         Function *vectorizedKernel = createVectorizedKernelHeader(&M, scalarCopy);
 
         auto featureString = kernel->getFnAttribute("target-features").getValueAsString().str();
@@ -382,7 +407,6 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
         }
     }
 
-    SmallVector<Instruction*, 8> unsupported_calls;
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
         Instruction *inst = &*II;
 
@@ -419,7 +443,6 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     }
                     case Intrinsic::lifetime_start: // FIXME: tell RV to not vectorize calls to these intrinsics
                     case Intrinsic::lifetime_end:
-                      unsupported_calls.push_back(CI);
                       break;
 
                     default: break;
@@ -427,12 +450,6 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
             }
         }
     }
-
-    for (auto CI : unsupported_calls)
-      CI->eraseFromParent();
-
-    if(Function *barrierFunc = M->getFunction("llvm.pacxx.barrier0"))
-        vecInfo.setPinnedShape(*barrierFunc, rv::VectorShape::uni());
 }
 
 
