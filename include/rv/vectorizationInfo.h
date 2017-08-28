@@ -43,6 +43,8 @@ class VectorizationInfo
 
     Region* region;
 
+    std::set<const llvm::Value*> pinned;
+
 public:
     bool inRegion(const llvm::Instruction & inst) const;
     bool inRegion(const llvm::BasicBlock & block) const;
@@ -67,11 +69,9 @@ public:
     llvm::Value* getPredicate(const llvm::BasicBlock& block) const;
 
     void setPredicate(const llvm::BasicBlock& block, llvm::Value& predicate);
-    void replacePredicate(const llvm::Value& old, llvm::Value& predicate);
     void dropPredicate(const llvm::BasicBlock& block);
 
     void remapPredicate(llvm::Value& dest, llvm::Value& old);
-    const llvm::BasicBlock* getBlockForPredicate(llvm::Value& pred);
 
     bool isDivergentLoop(const llvm::Loop* loop) const;
     bool isDivergentLoopTopLevel(const llvm::Loop* loop) const;
@@ -87,6 +87,15 @@ public:
     // whether this exit block terminates the loop
     bool isKillExit(const llvm::BasicBlock & block) const;
     void setNotKillExit(const llvm::BasicBlock* block);
+
+    /// Disable recomputation of this value's shape and make it effectvely final
+    const decltype(pinned) & pinned_values() const { return pinned; }
+    void setPinned(const llvm::Value&);
+    void setPinnedShape(const llvm::Value& v, VectorShape shape) {
+      setPinned(v);
+      setVectorShape(v, shape);
+    }
+    bool isPinned(const llvm::Value&) const;
 
     llvm::LLVMContext & getContext() const;
     llvm::Function & getScalarFunction() { return *mapping.scalarFn; }

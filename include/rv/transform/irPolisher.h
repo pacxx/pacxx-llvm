@@ -1,6 +1,7 @@
 #ifndef RV_TRANSFORM_IRPOLISHER_H
 #define RV_TRANSFORM_IRPOLISHER_H
 
+#include <unordered_set>
 #include <unordered_map>
 #include <functional>
 #include <queue>
