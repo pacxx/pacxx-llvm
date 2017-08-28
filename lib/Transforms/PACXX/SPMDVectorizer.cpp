@@ -397,9 +397,15 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
   allocaRewriter.visit(kernel);
 
     for(auto &global : M->globals()) {
-      //  if(global.hasMetadata() && global.getMetadata("pacxx.as.shared")) {
-            vecInfo.setPinnedShape(global, rv::VectorShape::uni());
-      //  }
+        for (User *user: global.users()) {
+            if (Instruction *Inst = dyn_cast<Instruction>(user)) {
+                if (Inst->getParent()->getParent() == kernel) {
+                    //vecInfo.setVectorShape(global, rv::VectorShape::uni());
+                    vecInfo.setPinnedShape(global, rv::VectorShape::uni());
+                    break;
+                }
+            }
+        }
     }
 
     for (llvm::inst_iterator II=inst_begin(kernel), IE=inst_end(kernel); II!=IE; ++II) {
@@ -407,6 +413,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
         if (auto AI = dyn_cast<AllocaInst>(inst)) {
           if (AI->getMetadata("pacxx.as.shared")) {
+            //vecInfo.setVectorShape(*AI, rv::VectorShape::uni());
             vecInfo.setPinnedShape(*AI, rv::VectorShape::uni());
           }
         }
@@ -419,6 +426,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
 
                 switch (intrin_id) {
                     case Intrinsic::pacxx_read_tid_x: {
+                        //vecInfo.setVectorShape(*CI, rv::VectorShape::cont());
                         vecInfo.setPinnedShape(*CI, rv::VectorShape::cont());
                         break;
                     }
@@ -433,6 +441,7 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
                     case Intrinsic::pacxx_read_ntid_x:
                     case Intrinsic::pacxx_read_ntid_y:
                     case Intrinsic::pacxx_read_ntid_z: {
+                        //vecInfo.setVectorShape(*CI, rv::VectorShape::uni());
                         vecInfo.setPinnedShape(*CI, rv::VectorShape::uni());
                         break;
                     }

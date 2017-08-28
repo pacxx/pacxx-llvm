@@ -22,6 +22,9 @@
 
 using namespace llvm;
 
+#undef RV_ENABLE_ADVSIMD
+#undef RV_ENABLE_X86
+
 #ifdef RV_ENABLE_ADVSIMD
 extern const unsigned char * advsimd_sp_Buffer;
 extern const size_t advsimd_sp_BufferLen;

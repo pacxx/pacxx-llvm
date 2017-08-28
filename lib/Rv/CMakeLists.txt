@@ -1,3 +1,43 @@
+set(CMAKE_MODULE_PATH
+  ${CMAKE_MODULE_PATH}
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+)
+
+include("rv_macros")
+
+OPTION(RV_ENABLE_SLEEF "Generate RV's builtin vector-math library" ON)
+OPTION(RV_ENABLE_CRT "Implement complex math functions using BC-compiler compiler-rt" OFF)
+OPTION(RV_DEBUG "Enable verbose debug output and expensive internal checks." OFF)
+
+
+# check enabled targets
+IF (X86 IN_LIST LLVM_TARGETS_TO_BUILD)
+  SET(RV_ENABLE_X86 On)
+ELSE()
+  SET(RV_ENABLE_X86 Off)
+ENDIF()
+
+IF (AArch64 IN_LIST LLVM_TARGETS_TO_BUILD)
+  SET(RV_ENABLE_ADVSIMD On)
+ELSE()
+  SET(RV_ENABLE_ADVSIMD Off)
+ENDIF()
+
+if (RV_ENABLE_X86)
+  add_definitions( "-DRV_ENABLE_X86" )
+ENDIF()
+
+if (RV_ENABLE_ADVSIMD)
+  add_definitions( "-DRV_ENABLE_ADVSIMD" )
+endif()
+
+if (RV_ENABLE_SLEEF) 
+  add_definitions( "-DRV_ENABLE_BUILTINS" )
+  if (RV_ENABLE_CRT)
+    add_definitions( "-DRV_ENABLE_CRT" )
+  endif()
+endif()
+
 add_llvm_library(LLVMRV
 
   config.cpp
@@ -48,8 +88,8 @@ add_llvm_library(LLVMRV
   transform/cns/llvmDuplication.cpp
   transform/cns/SplitTree.cpp
 
-  utils/maskGraphUtils.cpp
   utils/rvTools.cpp
 )
 
 add_dependencies(LLVMRV intrinsics_gen)
+
