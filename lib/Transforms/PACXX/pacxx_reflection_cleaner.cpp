@@ -29,6 +29,33 @@ using namespace pacxx;
 
 namespace pacxx {
 
+static bool isPACXXIntrinsic(Intrinsic::ID id){
+  switch(id)
+  {
+  case Intrinsic::pacxx_barrier0:
+  case Intrinsic::pacxx_read_ntid_x:
+  case Intrinsic::pacxx_read_ntid_y:
+  case Intrinsic::pacxx_read_ntid_z:
+  case Intrinsic::pacxx_read_ntid_w:
+  case Intrinsic::pacxx_read_tid_x:
+  case Intrinsic::pacxx_read_tid_y:
+  case Intrinsic::pacxx_read_tid_z:
+  case Intrinsic::pacxx_read_tid_w:
+  case Intrinsic::pacxx_read_ctaid_x:
+  case Intrinsic::pacxx_read_ctaid_y:
+  case Intrinsic::pacxx_read_ctaid_z:
+  case Intrinsic::pacxx_read_ctaid_w:
+  case Intrinsic::pacxx_read_nctaid_x:
+  case Intrinsic::pacxx_read_nctaid_y:
+  case Intrinsic::pacxx_read_nctaid_z:
+  case Intrinsic::pacxx_read_nctaid_w:
+    return true;
+  default:
+    break;
+  }
+  return false;
+}
+
 struct PACXXReflectionCleaner : public ModulePass {
   static char ID;
   PACXXReflectionCleaner() : ModulePass(ID) {}
@@ -54,21 +81,54 @@ bool PACXXReflectionCleaner::runOnModule(Module &M) {
   auto HostMachine =
       HostTarget->createTargetMachine(M.getTargetTriple(), "", "", Options, RM);
   M.setDataLayout(HostMachine->createDataLayout().getStringRepresentation());
+
   cleanFromKerneles(M);
 
   auto reflects = pacxx::getTagedFunctions(&M, "pacxx.reflection", "");
-  for (auto &F : M.getFunctionList()) {
+  for (auto& F : M) {
     F.setCallingConv(CallingConv::C);
-
     F.setAttributes({});
     F.addFnAttr(Attribute::AlwaysInline);
+    if (!F.isIntrinsic() && !F.isDeclaration())
+    if (std::find(reflects.begin(), reflects.end(), &F) == reflects.end())
+      F.setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
   }
+
+  struct IntrinsicVisitor : public InstVisitor<IntrinsicVisitor> {
+
+    void visitCallInst(CallInst &CI) {
+
+      if (auto II = dyn_cast<IntrinsicInst>(&CI)) {
+        if (isPACXXIntrinsic(II->getIntrinsicID())) {
+          dead.push_back(II);
+        }
+      }
+    }
+
+    void finalize(){
+      std::for_each(dead.begin(), dead.end(), [](auto I){
+        I->replaceAllUsesWith(UndefValue::get(I->getType()));
+        I->eraseFromParent();
+      });
+      dead.clear();
+    }
+
+
+  private:
+    SmallVector<IntrinsicInst*, 8> dead;
+
+  } visitor;
+
+  std::for_each(reflects.begin(), reflects.end(), [&](auto F){
+    visitor.visit(F);
+    visitor.finalize();
+  });
 
   return modified;
 }
 
 void PACXXReflectionCleaner::cleanFromKerneles(Module &M) {
-  auto kernels = pacxx::getTagedFunctions(&M, "nvvm.annotations", "kernel");
+  auto kernels = pacxx::getKernels(&M);
 
   for (auto F : kernels) {
     F->replaceAllUsesWith(UndefValue::get(F->getType()));
