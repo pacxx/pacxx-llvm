@@ -23,8 +23,19 @@ struct PACXXDeadCodeElim : public ModulePass {
       if (!I->isInlineAsm()) {
 
         if (!isa<Function>(I->getCalledValue())) {
-        	return;
-	}
+          return;
+        }
+
+        auto F = I->getCalledFunction();
+
+        if (!F)
+          return;
+
+        // mark all called functions as always inline to pull them into the kernel
+        if (F->hasFnAttribute(llvm::Attribute::NoInline))
+          F->removeFnAttr(llvm::Attribute::NoInline);
+        if(!F->hasFnAttribute(llvm::Attribute::AlwaysInline))
+          F->addFnAttr(llvm::Attribute::AlwaysInline);
 
         if (I->getCalledFunction()->getName().find("native8syscalls6printf") !=
             StringRef::npos) {

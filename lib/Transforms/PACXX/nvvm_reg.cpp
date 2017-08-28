@@ -54,18 +54,35 @@ void mergeStores(T &vec) {
 
   IRBuilder<> builder(vec[vec.size() - 1].second);
   Type *elementTy = vec[0].second->getValueOperand()->getType();
-  Type *vecTy = VectorType::get(elementTy, vec.size());
 
-  Value *vector = UndefValue::get(vecTy);
+  Value* value = nullptr;
+  if (elementTy->isIntegerTy(8)){
+    Type* broadTy = builder.getIntNTy(elementTy->getIntegerBitWidth() * vec.size());
 
-  std::for_each(vec.begin(), vec.end(), [&, i = 0](auto &p) mutable {
-    vector = builder.CreateInsertElement(vector, p.second->getValueOperand(), i++);
-    vector->dump();
-  });
+    int i = 0;
+    for(auto& p : vec){
+      auto ext = builder.CreateZExt(p.second->getValueOperand(), broadTy, "mergeStoreExt");
+      auto shl = builder.CreateShl(ext, elementTy->getIntegerBitWidth() * (i++));
+      if (value)
+        value = builder.CreateOr(shl, value);
+      else
+        value = shl;
+      value->dump();
+    }
+  }
+  else {
+    Type *vecTy = VectorType::get(elementTy, vec.size());
 
-  auto addrCast = builder.CreateBitCast(vec[0].first, vector->getType()->getPointerTo(0));
+    value = UndefValue::get(vecTy);
+
+    std::for_each(vec.begin(), vec.end(), [&, i = 0](auto &p) mutable {
+      value = builder.CreateInsertElement(value, p.second->getValueOperand(), i++);
+      value->dump();
+    });
+  }
+  auto addrCast = builder.CreateBitCast(vec[0].first, value->getType()->getPointerTo(0));
   addrCast->dump();
-  auto mergedStore = builder.CreateStore(vector, addrCast);
+  auto mergedStore = builder.CreateStore(value, addrCast);
   mergedStore->dump();
 
   std::for_each(vec.begin(), vec.end(), [](auto &p) {
