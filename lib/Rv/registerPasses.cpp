@@ -57,10 +57,12 @@ registerRVPasses(const llvm::PassManagerBuilder &Builder,
     return;
   }
 
+  /*
   if (rvOnlyCNS) {
     PM.add(rv::createCNSPass());
     return;
   }
+  */
 
   if (rvLoopVecEnabled) {
     // PM.add(rv::createCNSPass());

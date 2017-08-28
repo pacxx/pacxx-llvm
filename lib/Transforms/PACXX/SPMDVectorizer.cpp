@@ -397,8 +397,13 @@ void SPMDVectorizer::prepareForVectorization(Function *kernel, rv::Vectorization
   allocaRewriter.visit(kernel);
 
     for(auto &global : M->globals()) {
-        if(global.hasMetadata() && global.getMetadata("pacxx.as.shared")) {
-            vecInfo.setPinnedShape(global, rv::VectorShape::uni());
+        for (User *user: global.users()) {
+            if (Instruction *Inst = dyn_cast<Instruction>(user)) {
+                if (Inst->getParent()->getParent() == kernel) {
+                    vecInfo.setPinnedShape(global, rv::VectorShape::uni());
+                    break;
+                }
+            }
         }
     }
 
