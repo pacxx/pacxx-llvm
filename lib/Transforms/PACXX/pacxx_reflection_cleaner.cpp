@@ -137,13 +137,7 @@ void PACXXReflectionCleaner::cleanFromKerneles(Module &M) {
 }
 
 char PACXXReflectionCleaner::ID = 0;
-static RegisterPass<PACXXReflectionCleaner>
-    X("pacxx_reflection_cleaner",
-      "PACXXReflectionCleaner: "
-      "finalizes the reflection module by cleaning up",
-      false, false);
 }
-
 namespace llvm {
 Pass *createPACXXReflectionCleanerPass() {
   return new PACXXReflectionCleaner();

@@ -11,4 +11,4 @@
         branch = master
 [submodule "tools/rv"]
 	path = tools/rv
-	url = https://lklein14@bitbucket.org/lklein14/rv.git
+	url = ../../lklein14/rv.git

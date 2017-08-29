@@ -359,12 +359,6 @@ void PACXXReflection::ReflectionHandler::finalize() {
 }
 
 char PACXXReflection::ID = 0;
-static RegisterPass<PACXXReflection> X("pacxx_reflection",
-                                       "PACXXReflection: "
-                                           "removes reflection calls from kernel "
-                                           "code and replaces them with "
-                                           "placeholder",
-                                       false, false);
 }
 
 namespace llvm {
