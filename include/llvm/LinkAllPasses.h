@@ -210,28 +210,10 @@ namespace {
       // PACXX transformation passes
       (void) llvm::createPACXXReflectionPass();
       (void) llvm::createPACXXReflectionCleanerPass();
-      (void) llvm::createPACXXReflectionRemoverPass();
-      (void) llvm::createPACXXSpirPass();
-      (void) llvm::createPACXXNvvmPass();
-      (void) llvm::createPACXXNvvmRegPass();
-      (void) llvm::createPACXXSPIRVectorFixerPass();
       (void) llvm::createPACXXStaticEvalPass();
       (void) llvm::createPACXXVerifier();
       (void) llvm::createPACXXInlinerPass();
       (void) llvm::createPACXXDeadCodeElimPass();
-      //native backend passes
-      (void) llvm::createPACXXAddrSpaceTransformPass();
-      (void) llvm::createPACXXIdRemoverPass();
-      (void) llvm::createSPMDVectorizerPass();
-      (void) llvm::createPACXXNativeBarrierPass();
-      (void) llvm::createPACXXLivenessAnalyzerPass();
-      (void) llvm::createPACXXNativeLinkerPass();
-      (void) llvm::createPACXXNativeSMPass();
-      (void) llvm::createPACXXIntrinsicSchedulerPass();
-      (void) llvm::createPACXXTargetSelectPass({});
-      (void) llvm::createPACXXGEPPass();
-      (void) llvm::createPACXXSelectEmitterPass();
-      (void) llvm::createPACXXIntrinsicMapperPass();
 
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();

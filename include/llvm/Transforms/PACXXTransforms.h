@@ -12,29 +12,10 @@
 namespace llvm {
 Pass *createPACXXReflectionPass();
 Pass *createPACXXReflectionCleanerPass();
-Pass *createPACXXReflectionRemoverPass();
-Pass *createPACXXSpirPass();
-Pass *createPACXXNvvmPass();
-Pass *createPACXXNvvmRegPass(bool runtime = false);
-Pass *createPACXXSPIRVectorFixerPass(size_t offset = 0);
 Pass *createPACXXStaticEvalPass();
 Pass *createPACXXVerifier();
 Pass *createPACXXInlinerPass();
 Pass *createPACXXDeadCodeElimPass();
-Pass *createPACXXTargetSelectPass(const SmallVector<std::string, 2>&);
-Pass *createPACXXGEPPass();
-
-// native backend passes
-Pass *createPACXXAddrSpaceTransformPass();
-Pass *createPACXXIdRemoverPass();
-Pass *createSPMDVectorizerPass();
-Pass *createPACXXLivenessAnalyzerPass();
-Pass *createPACXXNativeBarrierPass();
-Pass *createPACXXNativeSMPass();
-Pass *createPACXXNativeLinkerPass();
-Pass *createPACXXIntrinsicSchedulerPass();
-Pass *createPACXXSelectEmitterPass();
-Pass *createPACXXIntrinsicMapperPass();
 }
 
 namespace pacxx {

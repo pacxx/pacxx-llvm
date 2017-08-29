@@ -9,3 +9,6 @@
 	path = projects/pacxxrt
         url = ../pacxx-runtime.git
         branch = master
+[submodule "tools/rv"]
+	path = tools/rv
+	url = https://lklein14@bitbucket.org/lklein14/rv.git

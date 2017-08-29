@@ -2,28 +2,11 @@ add_llvm_library(LLVMPACXXTransforms
   pacxx_static_analyser.cpp
   pacxx_reflection.cpp
   pacxx_reflection_cleaner.cpp
-  pacxx_reflection_remover.cpp
   pacxx_verifier.cpp
   pacxx_inliner.cpp
   pacxx_dce.cpp
-  spir.cpp
-  nvvm.cpp
-  nvvm_reg.cpp
-  pacxx_target_select.cpp
-  spir_vector_fixer.cpp
-  pacxx_native_linker.cpp
-  pacxx_redundant_id_remover.cpp
-  pacxx_liveness_analysis.cpp
-  pacxx_sm_pass.cpp
-  pacxx_native_barrier.cpp
-  SPMDVectorizer.cpp
-  pacxx_addrspace_transform.cpp
-  pacxx_intrinsic_scheduler.cpp
-  pacxx_select_emitter.cpp
-  pacxx_intrinsic_mapper.cpp
   Log.cpp
   Common.cpp
-  gep_fixer.cpp
   )
 
 add_dependencies(LLVMPACXXTransforms intrinsics_gen)
