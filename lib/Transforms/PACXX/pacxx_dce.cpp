@@ -36,6 +36,8 @@ struct PACXXDeadCodeElim : public ModulePass {
           F->removeFnAttr(llvm::Attribute::NoInline);
         if(!F->hasFnAttribute(llvm::Attribute::AlwaysInline))
           F->addFnAttr(llvm::Attribute::AlwaysInline);
+        if(F->hasFnAttribute(llvm::Attribute::OptimizeNone))
+          F->addFnAttr(llvm::Attribute::OptimizeNone);
 
         if (I->getCalledFunction()->getName().find("native8syscalls6printf") !=
             StringRef::npos) {
