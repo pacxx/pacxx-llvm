@@ -11,4 +11,4 @@
         branch = master
 [submodule "tools/rv"]
 	path = tools/rv
-	url = ../../lklein14/rv.git
+	url = ../pacxx-rv.git
