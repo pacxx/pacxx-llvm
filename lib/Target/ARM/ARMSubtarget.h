@@ -16,11 +16,15 @@
 
 #include "ARMBaseInstrInfo.h"
 #include "ARMBaseRegisterInfo.h"
+#include "ARMConstantPoolValue.h"
 #include "ARMFrameLowering.h"
 #include "ARMISelLowering.h"
 #include "ARMSelectionDAGInfo.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
+#include "llvm/CodeGen/GlobalISel/CallLowering.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
+#include "llvm/CodeGen/GlobalISel/LegalizerInfo.h"
+#include "llvm/CodeGen/GlobalISel/RegisterBankInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/MC/MCSchedule.h"
@@ -50,10 +54,12 @@ protected:
     CortexA35,
     CortexA5,
     CortexA53,
+    CortexA55,
     CortexA57,
     CortexA7,
     CortexA72,
     CortexA73,
+    CortexA75,
     CortexA8,
     CortexA9,
     CortexM3,
@@ -156,6 +162,9 @@ protected:
   bool HasFPARMv8 = false;
   bool HasNEON = false;
 
+  /// HasDotProd - True if the ARMv8.2A dot product instructions are supported.
+  bool HasDotProd = false;
+
   /// UseNEONForSinglePrecisionFP - if the NEONFP attribute has been
   /// specified. Use the method useNEONForSinglePrecisionFP() to
   /// determine if NEON should actually be used.
@@ -184,6 +193,10 @@ protected:
 
   /// UseMISched - True if MachineScheduler should be used for this subtarget.
   bool UseMISched = false;
+
+  /// DisablePostRAScheduler - False if scheduling should happen again after
+  /// register allocation.
+  bool DisablePostRAScheduler = false;
 
   /// HasThumb2 - True if Thumb2 instructions are supported.
   bool HasThumb2 = false;
@@ -421,9 +434,6 @@ public:
   ARMSubtarget(const Triple &TT, const std::string &CPU, const std::string &FS,
                const ARMBaseTargetMachine &TM, bool IsLittle);
 
-  /// This object will take onwership of \p GISelAccessor.
-  void setGISelAccessor(GISelAccessor &GISel) { this->GISel.reset(&GISel); }
-
   /// getMaxInlineSizeThreshold - Returns the maximum memset / memcpy size
   /// that still makes it profitable to inline the call.
   unsigned getMaxInlineSizeThreshold() const {
@@ -471,10 +481,11 @@ private:
   std::unique_ptr<ARMBaseInstrInfo> InstrInfo;
   ARMTargetLowering   TLInfo;
 
-  /// Gather the accessor points to GlobalISel-related APIs.
-  /// This is used to avoid ifndefs spreading around while GISel is
-  /// an optional library.
-  std::unique_ptr<GISelAccessor> GISel;
+  /// GlobalISel related APIs.
+  std::unique_ptr<CallLowering> CallLoweringInfo;
+  std::unique_ptr<InstructionSelector> InstSelector;
+  std::unique_ptr<LegalizerInfo> Legalizer;
+  std::unique_ptr<RegisterBankInfo> RegBankInfo;
 
   void initializeEnvironment();
   void initSubtargetFeatures(StringRef CPU, StringRef FS);
@@ -521,6 +532,7 @@ public:
   bool hasFPARMv8() const { return HasFPARMv8; }
   bool hasNEON() const { return HasNEON;  }
   bool hasCrypto() const { return HasCrypto; }
+  bool hasDotProd() const { return HasDotProd; }
   bool hasCRC() const { return HasCRC; }
   bool hasRAS() const { return HasRAS; }
   bool hasVirtualization() const { return HasVirtualization; }
@@ -655,6 +667,7 @@ public:
   bool isRWPI() const;
 
   bool useMachineScheduler() const { return UseMISched; }
+  bool disablePostRAScheduler() const { return DisablePostRAScheduler; }
   bool useSoftFloat() const { return UseSoftFloat; }
   bool isThumb() const { return InThumbMode; }
   bool isThumb1Only() const { return InThumbMode && !HasThumb2; }
@@ -738,8 +751,22 @@ public:
   /// True if the GV will be accessed via an indirect symbol.
   bool isGVIndirectSymbol(const GlobalValue *GV) const;
 
+  /// Returns the constant pool modifier needed to access the GV.
+  ARMCP::ARMCPModifier getCPModifier(const GlobalValue *GV) const;
+
   /// True if fast-isel is used.
   bool useFastISel() const;
+
+  /// Returns the correct return opcode for the current feature set.
+  /// Use BX if available to allow mixing thumb/arm code, but fall back
+  /// to plain mov pc,lr on ARMv4.
+  unsigned getReturnOpcode() const {
+    if (isThumb())
+      return ARM::tBX_RET;
+    if (hasV4TOps())
+      return ARM::BX_RET;
+    return ARM::MOVPCLR;
+  }
 };
 
 } // end namespace llvm

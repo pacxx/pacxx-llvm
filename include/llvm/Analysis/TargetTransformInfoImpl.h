@@ -340,6 +340,29 @@ public:
 
   unsigned getCacheLineSize() { return 0; }
 
+  llvm::Optional<unsigned> getCacheSize(TargetTransformInfo::CacheLevel Level) {
+    switch (Level) {
+    case TargetTransformInfo::CacheLevel::L1D:
+      LLVM_FALLTHROUGH;
+    case TargetTransformInfo::CacheLevel::L2D:
+      return llvm::Optional<unsigned>();
+    }
+
+    llvm_unreachable("Unknown TargetTransformInfo::CacheLevel");
+  }
+
+  llvm::Optional<unsigned> getCacheAssociativity(
+    TargetTransformInfo::CacheLevel Level) {
+    switch (Level) {
+    case TargetTransformInfo::CacheLevel::L1D:
+      LLVM_FALLTHROUGH;
+    case TargetTransformInfo::CacheLevel::L2D:
+      return llvm::Optional<unsigned>();
+    }
+
+    llvm_unreachable("Unknown TargetTransformInfo::CacheLevel");
+  }
+
   unsigned getPrefetchDistance() { return 0; }
 
   unsigned getMinPrefetchStride() { return 1; }
@@ -651,7 +674,13 @@ public:
     int64_t Scale = 0;
 
     auto GTI = gep_type_begin(PointeeType, Operands);
-    Type *TargetType;
+    Type *TargetType = nullptr;
+
+    // Handle the case where the GEP instruction has a single operand,
+    // the basis, therefore TargetType is a nullptr.
+    if (Operands.empty())
+      return !BaseGV ? TTI::TCC_Free : TTI::TCC_Basic;
+
     for (auto I = Operands.begin(); I != Operands.end(); ++I, ++GTI) {
       TargetType = GTI.getIndexedType();
       // We assume that the cost of Scalar GEP with constant index and the

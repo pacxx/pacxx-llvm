@@ -500,7 +500,8 @@ AMDGPUAsmPrinter::SIFunctionResourceInfo AMDGPUAsmPrinter::analyzeResourceUsage(
 
   // If there are no calls, MachineRegisterInfo can tell us the used register
   // count easily.
-  if (!FrameInfo.hasCalls()) {
+  // A tail call isn't considered a call for MachineFrameInfo's purposes.
+  if (!FrameInfo.hasCalls() && !FrameInfo.hasTailCall()) {
     MCPhysReg HighestVGPRReg = AMDGPU::NoRegister;
     for (MCPhysReg Reg : reverse(AMDGPU::VGPR_32RegClass.getRegisters())) {
       if (MRI.isPhysRegUsed(Reg)) {
@@ -631,10 +632,12 @@ AMDGPUAsmPrinter::SIFunctionResourceInfo AMDGPUAsmPrinter::analyzeResourceUsage(
       }
 
       if (MI.isCall()) {
-        assert(MI.getOpcode() == AMDGPU::SI_CALL);
         // Pseudo used just to encode the underlying global. Is there a better
         // way to track this?
-        const Function *Callee = cast<Function>(MI.getOperand(2).getGlobal());
+
+        const MachineOperand *CalleeOp
+          = TII->getNamedOperand(MI, AMDGPU::OpName::callee);
+        const Function *Callee = cast<Function>(CalleeOp->getGlobal());
         if (Callee->isDeclaration()) {
           // If this is a call to an external function, we can't do much. Make
           // conservative guesses.

@@ -13,37 +13,66 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/OptimizationDiagnosticInfo.h"
-#include "llvm/Analysis/VectorUtils.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constant.h"
 #include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/PatternMatch.h"
-#include "llvm/IR/Statepoint.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compiler.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/MathExtras.h"
 #include <algorithm>
 #include <array>
-#include <cstring>
+#include <cassert>
+#include <cstdint>
+#include <iterator>
+#include <utility>     
+
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
@@ -53,6 +82,12 @@ const unsigned MaxDepth = 6;
 // dominating comparisons.
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
                                               cl::Hidden, cl::init(20));
+
+// This optimization is known to cause performance regressions is some cases,
+// keep it under a temporary flag for now.
+static cl::opt<bool>
+DontImproveNonNegativePhiBits("dont-improve-non-negative-phi-bits",
+                              cl::Hidden, cl::init(true));
 
 /// Returns the bitwidth of the given scalar or pointer type. For vector types,
 /// returns the element type's bitwidth.
@@ -64,6 +99,7 @@ static unsigned getBitWidth(Type *Ty, const DataLayout &DL) {
 }
 
 namespace {
+
 // Simplifying using an assume can only be done in a particular control-flow
 // context (the context instruction provides that context). If an assume and
 // the context instruction are not in the same block then the DT helps in
@@ -73,6 +109,7 @@ struct Query {
   AssumptionCache *AC;
   const Instruction *CxtI;
   const DominatorTree *DT;
+
   // Unlike the other analyses, this may be a nullptr because not all clients
   // provide it currently.
   OptimizationRemarkEmitter *ORE;
@@ -86,11 +123,12 @@ struct Query {
   /// isKnownNonZero, which calls computeKnownBits and isKnownToBeAPowerOfTwo
   /// (all of which can call computeKnownBits), and so on.
   std::array<const Value *, MaxDepth> Excluded;
-  unsigned NumExcluded;
+
+  unsigned NumExcluded = 0;
 
   Query(const DataLayout &DL, AssumptionCache *AC, const Instruction *CxtI,
         const DominatorTree *DT, OptimizationRemarkEmitter *ORE = nullptr)
-      : DL(DL), AC(AC), CxtI(CxtI), DT(DT), ORE(ORE), NumExcluded(0) {}
+      : DL(DL), AC(AC), CxtI(CxtI), DT(DT), ORE(ORE) {}
 
   Query(const Query &Q, const Value *NewExcl)
       : DL(Q.DL), AC(Q.AC), CxtI(Q.CxtI), DT(Q.DT), ORE(Q.ORE),
@@ -107,6 +145,7 @@ struct Query {
     return std::find(Excluded.begin(), End, Value) != End;
   }
 };
+
 } // end anonymous namespace
 
 // Given the provided Value and, potentially, a context instruction, return
@@ -164,7 +203,6 @@ bool llvm::haveNoCommonBitsSet(const Value *LHS, const Value *RHS,
   computeKnownBits(RHS, RHSKnown, DL, 0, AC, CxtI, DT);
   return (LHSKnown.Zero | RHSKnown.Zero).isAllOnesValue();
 }
-
 
 bool llvm::isOnlyUsedInZeroEqualityComparison(const Instruction *CxtI) {
   for (const User *U : CxtI->users()) {
@@ -374,17 +412,19 @@ static bool isEphemeralValueOf(const Instruction *I, const Value *E) {
       continue;
 
     // If all uses of this value are ephemeral, then so is this value.
-    if (all_of(V->users(), [&](const User *U) { return EphValues.count(U); })) {
+    if (llvm::all_of(V->users(), [&](const User *U) {
+                                   return EphValues.count(U);
+                                 })) {
       if (V == E)
         return true;
 
-      EphValues.insert(V);
-      if (const User *U = dyn_cast<User>(V))
-        for (User::const_op_iterator J = U->op_begin(), JE = U->op_end();
-             J != JE; ++J) {
-          if (isSafeToSpeculativelyExecute(*J))
-            WorkSet.push_back(*J);
-        }
+      if (V == I || isSafeToSpeculativelyExecute(V)) {
+       EphValues.insert(V);
+       if (const User *U = dyn_cast<User>(V))
+         for (User::const_op_iterator J = U->op_begin(), JE = U->op_end();
+              J != JE; ++J)
+           WorkSet.push_back(*J);
+      }
     }
   }
 
@@ -417,7 +457,6 @@ static bool isAssumeLikeIntrinsic(const Instruction *I) {
 bool llvm::isValidAssumeForContext(const Instruction *Inv,
                                    const Instruction *CxtI,
                                    const DominatorTree *DT) {
-
   // There are two restrictions on the use of an assume:
   //  1. The assume must dominate the context (or the control flow must
   //     reach the assume whenever it reaches the context).
@@ -885,7 +924,7 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
     }
     break;
   }
-  case Instruction::Or: {
+  case Instruction::Or:
     computeKnownBits(I->getOperand(1), Known, Depth + 1, Q);
     computeKnownBits(I->getOperand(0), Known2, Depth + 1, Q);
 
@@ -894,7 +933,6 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
     // Output known-1 are known to be set if set in either the LHS | RHS.
     Known.One |= Known2.One;
     break;
-  }
   case Instruction::Xor: {
     computeKnownBits(I->getOperand(1), Known, Depth + 1, Q);
     computeKnownBits(I->getOperand(0), Known2, Depth + 1, Q);
@@ -1252,6 +1290,9 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
           Known.Zero.setLowBits(std::min(Known2.countMinTrailingZeros(),
                                          Known3.countMinTrailingZeros()));
 
+          if (DontImproveNonNegativePhiBits)
+            break;
+
           auto *OverflowOp = dyn_cast<OverflowingBinaryOperator>(LU);
           if (OverflowOp && OverflowOp->hasNoSignedWrap()) {
             // If initial value of recurrence is nonnegative, and we are adding
@@ -1553,6 +1594,8 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
 /// types and vectors of integers.
 bool isKnownToBeAPowerOfTwo(const Value *V, bool OrZero, unsigned Depth,
                             const Query &Q) {
+  assert(Depth <= MaxDepth && "Limit Search Depth");
+
   if (const Constant *C = dyn_cast<Constant>(V)) {
     if (C->isNullValue())
       return OrZero;
@@ -1900,7 +1943,7 @@ bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
       }
     }
     // Check if all incoming values are non-zero constant.
-    bool AllNonZeroConstants = all_of(PN->operands(), [](Value *V) {
+    bool AllNonZeroConstants = llvm::all_of(PN->operands(), [](Value *V) {
       return isa<ConstantInt>(V) && !cast<ConstantInt>(V)->isZero();
     });
     if (AllNonZeroConstants)
@@ -2012,6 +2055,7 @@ static unsigned ComputeNumSignBits(const Value *V, unsigned Depth,
 /// vector element with the mininum number of known sign bits.
 static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
                                        const Query &Q) {
+  assert(Depth <= MaxDepth && "Limit Search Depth");
 
   // We return the minimum number of sign bits that are guaranteed to be present
   // in V, so for undef we have to conservatively return 1.  We don't have the
@@ -2186,6 +2230,17 @@ static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
     Tmp = ComputeNumSignBits(U->getOperand(0), Depth + 1, Q);
     if (Tmp == 1) return 1;  // Early out.
     return std::min(Tmp, Tmp2)-1;
+
+  case Instruction::Mul: {
+    // The output of the Mul can be at most twice the valid bits in the inputs.
+    unsigned SignBitsOp0 = ComputeNumSignBits(U->getOperand(0), Depth + 1, Q);
+    if (SignBitsOp0 == 1) return 1;  // Early out.
+    unsigned SignBitsOp1 = ComputeNumSignBits(U->getOperand(1), Depth + 1, Q);
+    if (SignBitsOp1 == 1) return 1;
+    unsigned OutValidBits =
+        (TyBits - SignBitsOp0 + 1) + (TyBits - SignBitsOp1 + 1);
+    return OutValidBits > TyBits ? 1 : TyBits - OutValidBits + 1;
+  }
 
   case Instruction::PHI: {
     const PHINode *PN = cast<PHINode>(U);
@@ -2471,7 +2526,6 @@ Intrinsic::ID llvm::getIntrinsicForCallSite(ImmutableCallSite ICS,
 ///
 /// NOTE: this function will need to be revisited when we support non-default
 /// rounding modes!
-///
 bool llvm::CannotBeNegativeZero(const Value *V, const TargetLibraryInfo *TLI,
                                 unsigned Depth) {
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(V))
@@ -2641,6 +2695,41 @@ bool llvm::SignBitMustBeZero(const Value *V, const TargetLibraryInfo *TLI) {
   return cannotBeOrderedLessThanZeroImpl(V, TLI, true, 0);
 }
 
+bool llvm::isKnownNeverNaN(const Value *V) {
+  assert(V->getType()->isFPOrFPVectorTy() && "Querying for NaN on non-FP type");
+
+  // If we're told that NaNs won't happen, assume they won't.
+  if (auto *FPMathOp = dyn_cast<FPMathOperator>(V))
+    if (FPMathOp->hasNoNaNs())
+      return true;
+
+  // TODO: Handle instructions and potentially recurse like other 'isKnown'
+  // functions. For example, the result of sitofp is never NaN.
+
+  // Handle scalar constants.
+  if (auto *CFP = dyn_cast<ConstantFP>(V))
+    return !CFP->isNaN();
+
+  // Bail out for constant expressions, but try to handle vector constants.
+  if (!V->getType()->isVectorTy() || !isa<Constant>(V))
+    return false;
+
+  // For vectors, verify that each element is not NaN.
+  unsigned NumElts = V->getType()->getVectorNumElements();
+  for (unsigned i = 0; i != NumElts; ++i) {
+    Constant *Elt = cast<Constant>(V)->getAggregateElement(i);
+    if (!Elt)
+      return false;
+    if (isa<UndefValue>(Elt))
+      continue;
+    auto *CElt = dyn_cast<ConstantFP>(Elt);
+    if (!CElt || CElt->isNaN())
+      return false;
+  }
+  // All elements were confirmed not-NaN or undefined.
+  return true;
+}
+
 /// If the specified value can be set by repeating the same byte in memory,
 /// return the i8 value that it is represented with.  This is
 /// true for all i8 values obviously, but is also true for i32 0, i32 -1,
@@ -2700,7 +2789,6 @@ Value *llvm::isBytewiseValue(Value *V) {
   return nullptr;
 }
 
-
 // This is the recursive version of BuildSubAggregate. It takes a few different
 // arguments. Idxs is the index within the nested struct From that we are
 // looking at now (which is of type IndexedType). IdxSkip is the number of
@@ -2711,7 +2799,7 @@ static Value *BuildSubAggregate(Value *From, Value* To, Type *IndexedType,
                                 SmallVectorImpl<unsigned> &Idxs,
                                 unsigned IdxSkip,
                                 Instruction *InsertBefore) {
-  llvm::StructType *STy = dyn_cast<llvm::StructType>(IndexedType);
+  StructType *STy = dyn_cast<StructType>(IndexedType);
   if (STy) {
     // Save the original To argument so we can modify it
     Value *OrigTo = To;
@@ -2750,8 +2838,8 @@ static Value *BuildSubAggregate(Value *From, Value* To, Type *IndexedType,
     return nullptr;
 
   // Insert the value in the new (sub) aggregrate
-  return llvm::InsertValueInst::Create(To, V, makeArrayRef(Idxs).slice(IdxSkip),
-                                       "tmp", InsertBefore);
+  return InsertValueInst::Create(To, V, makeArrayRef(Idxs).slice(IdxSkip),
+                                 "tmp", InsertBefore);
 }
 
 // This helper takes a nested struct and extracts a part of it (which is again a
@@ -3722,7 +3810,7 @@ bool llvm::isOverflowIntrinsicNoWrap(const IntrinsicInst *II,
     return true;
   };
 
-  return any_of(GuardingBranches, AllUsesGuardedByBranch);
+  return llvm::any_of(GuardingBranches, AllUsesGuardedByBranch);
 }
 
 
@@ -3926,7 +4014,7 @@ bool llvm::programUndefinedIfFullPoison(const Instruction *PoisonI) {
     }
 
     break;
-  };
+  }
   return false;
 }
 

@@ -3,7 +3,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; This test checks that x86-cmov-converter optimization transform CMOV
 ;; instruction into branches when it is profitable.
-;; There are 6 cases below:
+;; There are 5 cases below:
 ;;   1. CmovInCriticalPath:
 ;;        CMOV depends on the condition and it is in the hot path.
 ;;        Thus, it worths transforming.
@@ -24,11 +24,6 @@
 ;;
 ;;   5. BinarySearch:
 ;;        Usually, binary search CMOV is not predicted.
-;;        Thus, it does not worth transforming.
-;;
-;;   6. SmallGainPerLoop:
-;;        The gain percentage from converting CMOV into branch is acceptable,
-;;        however, the absolute gain is smaller than a threshold.
 ;;        Thus, it does not worth transforming.
 ;;
 ;; Test was created using the following command line:
@@ -270,35 +265,6 @@ while.end:                                        ; preds = %while.body, %entry
   ret i32 %.lcssa
 }
 
-; CHECK-LABEL: SmallGainPerLoop
-; CHECK-NOT: jg
-; CHECK: cmovg
-
-define void @SmallGainPerLoop(i32 %n, i32 %a, i32 %b, i32* nocapture %c, i32* nocapture readnone %d) #0 {
-entry:
-  %cmp14 = icmp sgt i32 %n, 0
-  br i1 %cmp14, label %for.body.preheader, label %for.cond.cleanup
-
-for.body.preheader:                               ; preds = %entry
-  %wide.trip.count = zext i32 %n to i64
-  br label %for.body
-
-for.cond.cleanup:                                 ; preds = %for.body, %entry
-  ret void
-
-for.body:                                         ; preds = %for.body.preheader, %for.body
-  %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ], [ 0, %for.body.preheader ]
-  %arrayidx = getelementptr inbounds i32, i32* %c, i64 %indvars.iv
-  %0 = load i32, i32* %arrayidx, align 4
-  %mul = mul nsw i32 %0, %a
-  %cmp3 = icmp sgt i32 %mul, %b
-  %. = select i1 %cmp3, i32 10, i32 %0
-  store i32 %., i32* %arrayidx, align 4
-  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
-  %exitcond = icmp eq i64 %indvars.iv.next, %wide.trip.count
-  br i1 %exitcond, label %for.cond.cleanup, label %for.body
-}
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; The following test checks that x86-cmov-converter optimization transforms
 ;; CMOV instructions into branch correctly.
@@ -330,9 +296,9 @@ for.body:                                         ; preds = %for.body.preheader,
 ; CHECK-LABEL: Transform
 ; CHECK-NOT: cmov
 ; CHECK:         divl    [[a:%[0-9a-z]*]]
-; CHECK:         cmpl    [[a]], %eax
 ; CHECK:         movl    $11, [[s1:%[0-9a-z]*]]
 ; CHECK:         movl    [[a]], [[s2:%[0-9a-z]*]]
+; CHECK:         cmpl    [[a]], %edx
 ; CHECK:         ja      [[SinkBB:.*]]
 ; CHECK: [[FalseBB:.*]]:
 ; CHECK:         movl    $22, [[s1]]
@@ -362,6 +328,165 @@ while.body:                                       ; preds = %entry, %while.body
 
 while.end:                                        ; preds = %while.body, %entry
   ret void
+}
+
+; Test that we always will convert a cmov with a memory operand into a branch,
+; even outside of a loop.
+define i32 @test_cmov_memoperand(i32 %a, i32 %b, i32 %x, i32* %y) #0 {
+; CHECK-LABEL: test_cmov_memoperand:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %load = load i32, i32* %y
+  %z = select i1 %cond, i32 %x, i32 %load
+; CHECK-NOT:     cmov
+; CHECK:         ja [[FALSE_BB:.*]]
+; CHECK:         movl (%r{{..}}), %[[R:.*]]
+; CHECK:       [[FALSE_BB]]:
+; CHECK:         movl %[[R]], %
+  ret i32 %z
+}
+
+; Test that we can convert a group of cmovs where only one has a memory
+; operand.
+define i32 @test_cmov_memoperand_in_group(i32 %a, i32 %b, i32 %x, i32* %y.ptr) #0 {
+; CHECK-LABEL: test_cmov_memoperand_in_group:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %y = load i32, i32* %y.ptr
+  %z1 = select i1 %cond, i32 %x, i32 %a
+  %z2 = select i1 %cond, i32 %x, i32 %y
+  %z3 = select i1 %cond, i32 %x, i32 %b
+; CHECK-NOT:     cmov
+; CHECK:         ja [[FALSE_BB:.*]]
+; CHECK-DAG:     movl %{{.*}}, %[[R1:.*]]
+; CHECK-DAG:     movl (%r{{..}}), %[[R2:.*]]
+; CHECK-DAG:     movl %{{.*}} %[[R3:.*]]
+; CHECK:       [[FALSE_BB]]:
+; CHECK:         addl
+; CHECK-DAG:       %[[R1]]
+; CHECK-DAG:       ,
+; CHECK-DAG:       %[[R3]]
+; CHECK-DAG:     addl
+; CHECK-DAG:       %[[R2]]
+; CHECK-DAG:       ,
+; CHECK-DAG:       %[[R3]]
+; CHECK:         movl %[[R3]], %eax
+; CHECK:         retq
+  %s1 = add i32 %z1, %z2
+  %s2 = add i32 %s1, %z3
+  ret i32 %s2
+}
+
+; Same as before but with operands reversed in the select with a load.
+define i32 @test_cmov_memoperand_in_group2(i32 %a, i32 %b, i32 %x, i32* %y.ptr) #0 {
+; CHECK-LABEL: test_cmov_memoperand_in_group2:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %y = load i32, i32* %y.ptr
+  %z2 = select i1 %cond, i32 %a, i32 %x
+  %z1 = select i1 %cond, i32 %y, i32 %x
+  %z3 = select i1 %cond, i32 %b, i32 %x
+; CHECK-NOT:     cmov
+; CHECK:         jbe [[FALSE_BB:.*]]
+; CHECK-DAG:     movl %{{.*}}, %[[R1:.*]]
+; CHECK-DAG:     movl (%r{{..}}), %[[R2:.*]]
+; CHECK-DAG:     movl %{{.*}} %[[R3:.*]]
+; CHECK:       [[FALSE_BB]]:
+; CHECK:         addl
+; CHECK-DAG:       %[[R1]]
+; CHECK-DAG:       ,
+; CHECK-DAG:       %[[R3]]
+; CHECK-DAG:     addl
+; CHECK-DAG:       %[[R2]]
+; CHECK-DAG:       ,
+; CHECK-DAG:       %[[R3]]
+; CHECK:         movl %[[R3]], %eax
+; CHECK:         retq
+  %s1 = add i32 %z1, %z2
+  %s2 = add i32 %s1, %z3
+  ret i32 %s2
+}
+
+; Test that we don't convert a group of cmovs with conflicting directions of
+; loads.
+define i32 @test_cmov_memoperand_conflicting_dir(i32 %a, i32 %b, i32 %x, i32* %y1.ptr, i32* %y2.ptr) #0 {
+; CHECK-LABEL: test_cmov_memoperand_conflicting_dir:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %y1 = load i32, i32* %y1.ptr
+  %y2 = load i32, i32* %y2.ptr
+  %z1 = select i1 %cond, i32 %x, i32 %y1
+  %z2 = select i1 %cond, i32 %y2, i32 %x
+; CHECK:         cmoval
+; CHECK:         cmoval
+  %s1 = add i32 %z1, %z2
+  ret i32 %s1
+}
+
+; Test that we can convert a group of cmovs where only one has a memory
+; operand and where that memory operand's registers come from a prior cmov in
+; the group.
+define i32 @test_cmov_memoperand_in_group_reuse_for_addr(i32 %a, i32 %b, i32* %x, i32* %y) #0 {
+; CHECK-LABEL: test_cmov_memoperand_in_group_reuse_for_addr:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %p = select i1 %cond, i32* %x, i32* %y
+  %load = load i32, i32* %p
+  %z = select i1 %cond, i32 %a, i32 %load
+; CHECK-NOT:     cmov
+; CHECK:         ja [[FALSE_BB:.*]]
+; CHECK:         movl (%r{{..}}), %[[R:.*]]
+; CHECK:       [[FALSE_BB]]:
+; CHECK:         movl %[[R]], %eax
+; CHECK:         retq
+  ret i32 %z
+}
+
+; Test that we can convert a group of two cmovs with memory operands where one
+; uses the result of the other as part of the address.
+define i32 @test_cmov_memoperand_in_group_reuse_for_addr2(i32 %a, i32 %b, i32* %x, i32** %y) #0 {
+; CHECK-LABEL: test_cmov_memoperand_in_group_reuse_for_addr2:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %load1 = load i32*, i32** %y
+  %p = select i1 %cond, i32* %x, i32* %load1
+  %load2 = load i32, i32* %p
+  %z = select i1 %cond, i32 %a, i32 %load2
+; CHECK-NOT:     cmov
+; CHECK:         ja [[FALSE_BB:.*]]
+; CHECK:         movq (%r{{..}}), %[[R1:.*]]
+; CHECK:         movl (%[[R1]]), %[[R2:.*]]
+; CHECK:       [[FALSE_BB]]:
+; CHECK:         movl %[[R2]], %eax
+; CHECK:         retq
+  ret i32 %z
+}
+
+; Test that we can convert a group of cmovs where only one has a memory
+; operand and where that memory operand's registers come from a prior cmov and
+; where that cmov gets *its* input from a prior cmov in the group.
+define i32 @test_cmov_memoperand_in_group_reuse_for_addr3(i32 %a, i32 %b, i32* %x, i32* %y, i32* %z) #0 {
+; CHECK-LABEL: test_cmov_memoperand_in_group_reuse_for_addr3:
+entry:
+  %cond = icmp ugt i32 %a, %b
+; CHECK:         cmpl
+  %p = select i1 %cond, i32* %x, i32* %y
+  %p2 = select i1 %cond, i32* %z, i32* %p
+  %load = load i32, i32* %p2
+  %r = select i1 %cond, i32 %a, i32 %load
+; CHECK-NOT:     cmov
+; CHECK:         ja [[FALSE_BB:.*]]
+; CHECK:         movl (%r{{..}}), %[[R:.*]]
+; CHECK:       [[FALSE_BB]]:
+; CHECK:         movl %[[R]], %eax
+; CHECK:         retq
+  ret i32 %r
 }
 
 attributes #0 = {"target-cpu"="x86-64"}

@@ -790,11 +790,10 @@ public:
        getOperationAction(Op, VT) == Promote);
   }
 
-  /// Return true if the specified operation is illegal but has a custom lowering
-  /// on that type. This is used to help guide high-level lowering
-  /// decisions.
+  /// Return true if the operation uses custom lowering, regardless of whether
+  /// the type is legal or not.
   bool isOperationCustom(unsigned Op, EVT VT) const {
-    return (!isTypeLegal(VT) && getOperationAction(Op, VT) == Custom);
+    return getOperationAction(Op, VT) == Custom;
   }
 
   /// Return true if lowering to a jump table is allowed.
@@ -1591,7 +1590,7 @@ public:
   /// Return true if a select of constants (select Cond, C1, C2) should be
   /// transformed into simple math ops with the condition value. For example:
   /// select Cond, C1, C1-1 --> add (zext Cond), C1-1
-  virtual bool convertSelectOfConstantsToMath() const {
+  virtual bool convertSelectOfConstantsToMath(EVT VT) const {
     return false;
   }
 
@@ -2172,11 +2171,12 @@ public:
     return false;
   }
 
-  /// Return true if EXTRACT_SUBVECTOR is cheap for this result type
-  /// with this index. This is needed because EXTRACT_SUBVECTOR usually
-  /// has custom lowering that depends on the index of the first element,
-  /// and only the target knows which lowering is cheap.
-  virtual bool isExtractSubvectorCheap(EVT ResVT, unsigned Index) const {
+  /// Return true if EXTRACT_SUBVECTOR is cheap for extracting this result type
+  /// from this source type with this index. This is needed because
+  /// EXTRACT_SUBVECTOR usually has custom lowering that depends on the index of
+  /// the first element, and only the target knows which lowering is cheap.
+  virtual bool isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,
+                                       unsigned Index) const {
     return false;
   }
 
@@ -2722,6 +2722,9 @@ public:
   SDValue SimplifySetCC(EVT VT, SDValue N0, SDValue N1, ISD::CondCode Cond,
                         bool foldBooleans, DAGCombinerInfo &DCI,
                         const SDLoc &dl) const;
+
+  // For targets which wrap address, unwrap for analysis.
+  virtual SDValue unwrapAddress(SDValue N) const { return N; }
 
   /// Returns true (and the GlobalValue and the offset) if the node is a
   /// GlobalAddress + offset.

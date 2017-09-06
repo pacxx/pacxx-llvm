@@ -24,18 +24,6 @@ using namespace llvm;
 using namespace llvm::codeview;
 using namespace llvm::pdb;
 
-static StringRef getSymbolKindName(SymbolKind K) {
-  switch (K) {
-#define SYMBOL_RECORD(EnumName, value, name)                                   \
-  case EnumName:                                                               \
-    return #EnumName;
-#include "llvm/DebugInfo/CodeView/CodeViewSymbols.def"
-  default:
-    llvm_unreachable("Unknown symbol kind!");
-  }
-  return "";
-}
-
 static std::string formatLocalSymFlags(uint32_t IndentLevel,
                                        LocalSymFlags Flags) {
   std::vector<std::string> Opts;
@@ -379,12 +367,16 @@ Error MinimalSymbolDumper::visitSymbolBegin(codeview::CVSymbol &Record,
   // append to the existing line.
   P.formatLine("{0} | {1} [size = {2}]",
                fmt_align(Offset, AlignStyle::Right, 6),
-               getSymbolKindName(Record.Type), Record.length());
+               formatSymbolKind(Record.Type), Record.length());
   P.Indent();
   return Error::success();
 }
 
 Error MinimalSymbolDumper::visitSymbolEnd(CVSymbol &Record) {
+  if (RecordBytes) {
+    AutoIndent Indent(P, 7);
+    P.formatBinary("bytes", Record.content(), 0);
+  }
   P.Unindent();
   return Error::success();
 }
@@ -446,18 +438,27 @@ Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR,
                                             SectionSym &Section) {
   P.format(" `{0}`", Section.Name);
   AutoIndent Indent(P, 7);
-  P.formatLine("length = {0}, alignment = {1}, rva = {2}, section # = {3}, "
-               "characteristics = {4}",
+  P.formatLine("length = {0}, alignment = {1}, rva = {2}, section # = {3}",
                Section.Length, Section.Alignment, Section.Rva,
-               Section.SectionNumber, Section.Characteristics);
+               Section.SectionNumber);
+  P.printLine("characteristics =");
+  AutoIndent Indent2(P, 2);
+  P.printLine(formatSectionCharacteristics(P.getIndentLevel(),
+                                           Section.Characteristics, 1, "",
+                                           CharacteristicStyle::Descriptive));
   return Error::success();
 }
 
 Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR, CoffGroupSym &CG) {
   P.format(" `{0}`", CG.Name);
   AutoIndent Indent(P, 7);
-  P.formatLine("length = {0}, addr = {1}, characteristics = {2}", CG.Size,
-               formatSegmentOffset(CG.Segment, CG.Offset), CG.Characteristics);
+  P.formatLine("length = {0}, addr = {1}", CG.Size,
+               formatSegmentOffset(CG.Segment, CG.Offset));
+  P.printLine("characteristics =");
+  AutoIndent Indent2(P, 2);
+  P.printLine(formatSectionCharacteristics(P.getIndentLevel(),
+                                           CG.Characteristics, 1, "",
+                                           CharacteristicStyle::Descriptive));
   return Error::success();
 }
 
@@ -660,7 +661,7 @@ Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR, FrameProcSym &FP) {
 Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR,
                                             HeapAllocationSiteSym &HAS) {
   AutoIndent Indent(P, 7);
-  P.formatLine("type = {0}, addr = {1} call size = {2}", typeIndex(HAS.Type),
+  P.formatLine("type = {0}, addr = {1} call size = {2}", idIndex(HAS.Type),
                formatSegmentOffset(HAS.Segment, HAS.CodeOffset),
                HAS.CallInstructionSize);
   return Error::success();
@@ -672,7 +673,7 @@ Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR, InlineSiteSym &IS) {
   StringRef Annotations(reinterpret_cast<const char *>(Bytes.begin()),
                         Bytes.size());
 
-  P.formatLine("inlinee = {0}, parent = {1}, end = {2}", typeIndex(IS.Inlinee),
+  P.formatLine("inlinee = {0}, parent = {1}, end = {2}", idIndex(IS.Inlinee),
                IS.Parent, IS.End);
   P.formatLine("annotations = {0}", toHex(Annotations));
   return Error::success();
@@ -762,7 +763,7 @@ Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR,
 Error MinimalSymbolDumper::visitKnownRecord(CVSymbol &CVR, CallerSym &Caller) {
   AutoIndent Indent(P, 7);
   for (const auto &I : Caller.Indices) {
-    P.formatLine("callee: {0}", typeIndex(I));
+    P.formatLine("callee: {0}", idIndex(I));
   }
   return Error::success();
 }

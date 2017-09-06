@@ -8,8 +8,27 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Analysis/CGSCCPassManager.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/LazyCallGraph.h"
 #include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constant.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <cassert>
+#include <iterator>
+
+#define DEBUG_TYPE "cgscc"
 
 using namespace llvm;
 
@@ -260,7 +279,7 @@ bool FunctionAnalysisManagerCGSCCProxy::Result::invalidate(
   return false;
 }
 
-} // End llvm namespace
+} // end namespace llvm
 
 /// When a new SCC is created for the graph and there might be function
 /// analysis results cached for the functions now in that SCC two forms of
@@ -307,7 +326,6 @@ static void updateNewSCCFunctionAnalyses(LazyCallGraph::SCC &C,
   }
 }
 
-namespace {
 /// Helper function to update both the \c CGSCCAnalysisManager \p AM and the \c
 /// CGSCCPassManager's \c CGSCCUpdateResult \p UR based on a range of newly
 /// added SCCs.
@@ -319,20 +337,18 @@ namespace {
 /// This function returns the SCC containing \p N. This will be either \p C if
 /// no new SCCs have been split out, or it will be the new SCC containing \p N.
 template <typename SCCRangeT>
-LazyCallGraph::SCC *
+static LazyCallGraph::SCC *
 incorporateNewSCCRange(const SCCRangeT &NewSCCRange, LazyCallGraph &G,
                        LazyCallGraph::Node &N, LazyCallGraph::SCC *C,
-                       CGSCCAnalysisManager &AM, CGSCCUpdateResult &UR,
-                       bool DebugLogging = false) {
-  typedef LazyCallGraph::SCC SCC;
+                       CGSCCAnalysisManager &AM, CGSCCUpdateResult &UR) {
+  using SCC = LazyCallGraph::SCC;
 
   if (NewSCCRange.begin() == NewSCCRange.end())
     return C;
 
   // Add the current SCC to the worklist as its shape has changed.
   UR.CWorklist.insert(C);
-  if (DebugLogging)
-    dbgs() << "Enqueuing the existing SCC in the worklist:" << *C << "\n";
+  DEBUG(dbgs() << "Enqueuing the existing SCC in the worklist:" << *C << "\n");
 
   SCC *OldC = C;
 
@@ -363,13 +379,12 @@ incorporateNewSCCRange(const SCCRangeT &NewSCCRange, LazyCallGraph &G,
   if (NeedFAMProxy)
     updateNewSCCFunctionAnalyses(*C, G, AM);
 
-  for (SCC &NewC :
-       reverse(make_range(std::next(NewSCCRange.begin()), NewSCCRange.end()))) {
+  for (SCC &NewC : llvm::reverse(make_range(std::next(NewSCCRange.begin()),
+                                            NewSCCRange.end()))) {
     assert(C != &NewC && "No need to re-visit the current SCC!");
     assert(OldC != &NewC && "Already handled the original SCC!");
     UR.CWorklist.insert(&NewC);
-    if (DebugLogging)
-      dbgs() << "Enqueuing a newly formed SCC:" << NewC << "\n";
+    DEBUG(dbgs() << "Enqueuing a newly formed SCC:" << NewC << "\n");
 
     // Ensure new SCCs' function analyses are updated.
     if (NeedFAMProxy)
@@ -381,15 +396,14 @@ incorporateNewSCCRange(const SCCRangeT &NewSCCRange, LazyCallGraph &G,
   }
   return C;
 }
-}
 
 LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
     LazyCallGraph &G, LazyCallGraph::SCC &InitialC, LazyCallGraph::Node &N,
-    CGSCCAnalysisManager &AM, CGSCCUpdateResult &UR, bool DebugLogging) {
-  typedef LazyCallGraph::Node Node;
-  typedef LazyCallGraph::Edge Edge;
-  typedef LazyCallGraph::SCC SCC;
-  typedef LazyCallGraph::RefSCC RefSCC;
+    CGSCCAnalysisManager &AM, CGSCCUpdateResult &UR) {
+  using Node = LazyCallGraph::Node;
+  using Edge = LazyCallGraph::Edge;
+  using SCC = LazyCallGraph::SCC;
+  using RefSCC = LazyCallGraph::RefSCC;
 
   RefSCC &InitialRC = InitialC.getOuterRefSCC();
   SCC *C = &InitialC;
@@ -431,7 +445,7 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
   // Now walk all references.
   for (Instruction &I : instructions(F))
     for (Value *Op : I.operand_values())
-      if (Constant *C = dyn_cast<Constant>(Op))
+      if (auto *C = dyn_cast<Constant>(Op))
         if (Visited.insert(C).second)
           Worklist.push_back(C);
 
@@ -475,7 +489,7 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
       } else {
         // Now update the call graph.
         C = incorporateNewSCCRange(RC->switchInternalEdgeToRef(N, E.getNode()),
-                                   G, N, C, AM, UR, DebugLogging);
+                                   G, N, C, AM, UR);
       }
     }
 
@@ -495,9 +509,8 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
                           return false;
 
                         RC->removeOutgoingEdge(N, *TargetN);
-                        if (DebugLogging)
-                          dbgs() << "Deleting outgoing edge from '" << N
-                                 << "' to '" << TargetN << "'\n";
+                        DEBUG(dbgs() << "Deleting outgoing edge from '" << N
+                                     << "' to '" << TargetN << "'\n");
                         return true;
                       }),
       DeadTargets.end());
@@ -523,14 +536,13 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
     // "bottom" we will continue processing in the bottom-up walk.
     assert(NewRefSCCs.front() == RC &&
            "New current RefSCC not first in the returned list!");
-    for (RefSCC *NewRC :
-         reverse(make_range(std::next(NewRefSCCs.begin()), NewRefSCCs.end()))) {
+    for (RefSCC *NewRC : llvm::reverse(make_range(std::next(NewRefSCCs.begin()),
+                                                  NewRefSCCs.end()))) {
       assert(NewRC != RC && "Should not encounter the current RefSCC further "
                             "in the postorder list of new RefSCCs.");
       UR.RCWorklist.insert(NewRC);
-      if (DebugLogging)
-        dbgs() << "Enqueuing a new RefSCC in the update worklist: " << *NewRC
-               << "\n";
+      DEBUG(dbgs() << "Enqueuing a new RefSCC in the update worklist: "
+                   << *NewRC << "\n");
     }
   }
 
@@ -547,9 +559,8 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
       assert(RC->isAncestorOf(TargetRC) &&
              "Cannot potentially form RefSCC cycles here!");
       RC->switchOutgoingEdgeToRef(N, *RefTarget);
-      if (DebugLogging)
-        dbgs() << "Switch outgoing call edge to a ref edge from '" << N
-               << "' to '" << *RefTarget << "'\n";
+      DEBUG(dbgs() << "Switch outgoing call edge to a ref edge from '" << N
+                   << "' to '" << *RefTarget << "'\n");
       continue;
     }
 
@@ -563,7 +574,7 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
 
     // Now update the call graph.
     C = incorporateNewSCCRange(RC->switchInternalEdgeToRef(N, *RefTarget), G, N,
-                               C, AM, UR, DebugLogging);
+                               C, AM, UR);
   }
 
   // Now promote ref edges into call edges.
@@ -577,14 +588,12 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
       assert(RC->isAncestorOf(TargetRC) &&
              "Cannot potentially form RefSCC cycles here!");
       RC->switchOutgoingEdgeToCall(N, *CallTarget);
-      if (DebugLogging)
-        dbgs() << "Switch outgoing ref edge to a call edge from '" << N
-               << "' to '" << *CallTarget << "'\n";
+      DEBUG(dbgs() << "Switch outgoing ref edge to a call edge from '" << N
+                   << "' to '" << *CallTarget << "'\n");
       continue;
     }
-    if (DebugLogging)
-      dbgs() << "Switch an internal ref edge to a call edge from '" << N
-             << "' to '" << *CallTarget << "'\n";
+    DEBUG(dbgs() << "Switch an internal ref edge to a call edge from '" << N
+                 << "' to '" << *CallTarget << "'\n");
 
     // Otherwise we are switching an internal ref edge to a call edge. This
     // may merge away some SCCs, and we add those to the UpdateResult. We also
@@ -647,15 +656,14 @@ LazyCallGraph::SCC &llvm::updateCGAndAnalysisManagerForFunctionPass(
       // post-order sequence, and may end up observing more precise context to
       // optimize the current SCC.
       UR.CWorklist.insert(C);
-      if (DebugLogging)
-        dbgs() << "Enqueuing the existing SCC in the worklist: " << *C << "\n";
+      DEBUG(dbgs() << "Enqueuing the existing SCC in the worklist: " << *C
+                   << "\n");
       // Enqueue in reverse order as we pop off the back of the worklist.
-      for (SCC &MovedC : reverse(make_range(RC->begin() + InitialSCCIndex,
-                                            RC->begin() + NewSCCIndex))) {
+      for (SCC &MovedC : llvm::reverse(make_range(RC->begin() + InitialSCCIndex,
+                                                  RC->begin() + NewSCCIndex))) {
         UR.CWorklist.insert(&MovedC);
-        if (DebugLogging)
-          dbgs() << "Enqueuing a newly earlier in post-order SCC: " << MovedC
-                 << "\n";
+        DEBUG(dbgs() << "Enqueuing a newly earlier in post-order SCC: "
+                     << MovedC << "\n");
       }
     }
   }

@@ -20,7 +20,10 @@
 #include "X86SelectionDAGInfo.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
+#include "llvm/CodeGen/GlobalISel/CallLowering.h"
+#include "llvm/CodeGen/GlobalISel/InstructionSelector.h"
+#include "llvm/CodeGen/GlobalISel/LegalizerInfo.h"
+#include "llvm/CodeGen/GlobalISel/RegisterBankInfo.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/Target/TargetMachine.h"
@@ -235,6 +238,9 @@ protected:
   /// True if SHLD based rotate is fast.
   bool HasFastSHLDRotate;
 
+  /// True if the processor supports macrofusion.
+  bool HasMacroFusion;
+
   /// True if the processor has enhanced REP MOVSB/STOSB.
   bool HasERMSB;
 
@@ -242,9 +248,9 @@ protected:
   /// a stall when returning too early.
   bool PadShortFunctions;
 
-  /// True if the Calls with memory reference should be converted
-  /// to a register-based indirect call.
-  bool CallRegIndirect;
+  /// True if two memory operand instructions should use a temporary register
+  /// instead.
+  bool SlowTwoMemOps;
 
   /// True if the LEA instruction inputs have to be ready at address generation
   /// (AG) time.
@@ -314,10 +320,11 @@ protected:
   /// Instruction itineraries for scheduling
   InstrItineraryData InstrItins;
 
-  /// Gather the accessor points to GlobalISel-related APIs.
-  /// This is used to avoid ifndefs spreading around while GISel is
-  /// an optional library.
-  std::unique_ptr<GISelAccessor> GISel;
+  /// GlobalISel related APIs.
+  std::unique_ptr<CallLowering> CallLoweringInfo;
+  std::unique_ptr<LegalizerInfo> Legalizer;
+  std::unique_ptr<RegisterBankInfo> RegBankInfo;
+  std::unique_ptr<InstructionSelector> InstSelector;
 
 private:
   /// Override the stack alignment.
@@ -345,9 +352,6 @@ public:
   ///
   X86Subtarget(const Triple &TT, StringRef CPU, StringRef FS,
                const X86TargetMachine &TM, unsigned StackAlignOverride);
-
-  /// This object will take onwership of \p GISelAccessor.
-  void setGISelAccessor(GISelAccessor &GISel) { this->GISel.reset(&GISel); }
 
   const X86TargetLowering *getTargetLowering() const override {
     return &TLInfo;
@@ -487,11 +491,12 @@ public:
   bool hasFastVectorFSQRT() const { return HasFastVectorFSQRT; }
   bool hasFastLZCNT() const { return HasFastLZCNT; }
   bool hasFastSHLDRotate() const { return HasFastSHLDRotate; }
+  bool hasMacroFusion() const { return HasMacroFusion; }
   bool hasERMSB() const { return HasERMSB; }
   bool hasSlowDivide32() const { return HasSlowDivide32; }
   bool hasSlowDivide64() const { return HasSlowDivide64; }
   bool padShortFunctions() const { return PadShortFunctions; }
-  bool callRegIndirect() const { return CallRegIndirect; }
+  bool slowTwoMemOps() const { return SlowTwoMemOps; }
   bool LEAusesAG() const { return LEAUsesAG; }
   bool slowLEA() const { return SlowLEA; }
   bool slow3OpsLEA() const { return Slow3OpsLEA; }
@@ -506,6 +511,7 @@ public:
   bool hasPKU() const { return HasPKU; }
   bool hasMPX() const { return HasMPX; }
   bool hasCLFLUSHOPT() const { return HasCLFLUSHOPT; }
+  bool hasCLWB() const { return HasCLWB; }
 
   bool isXRaySupported() const override { return is64Bit(); }
 
