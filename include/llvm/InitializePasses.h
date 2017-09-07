@@ -378,14 +378,6 @@ void initializeWriteBitcodePassPass(PassRegistry&);
 void initializeWriteThinLTOBitcodePass(PassRegistry&);
 void initializeXRayInstrumentationPass(PassRegistry&);
 
-//native backend passes
-void initializePACXXAddrSpaceTransformPass(PassRegistry&);
-void initializeSPMDVectorizerPass(PassRegistry&);
-void initializePACXXNativeBarrierPass(PassRegistry&);
-void initializePACXXNativeLivenessAnalyzerPass(PassRegistry&);
-void initializePACXXNativeSMTransformerPass(PassRegistry&);
-void initializePACXXSelectEmitterPass(PassRegistry&);
-void initializePACXXIntrinsicMapperPass(PassRegistry&);
-}
+} // end namespace llvm
 
-#endif
+#endif // LLVM_INITIALIZEPASSES_H
