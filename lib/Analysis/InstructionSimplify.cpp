@@ -1075,6 +1075,33 @@ Value *llvm::SimplifySDivInst(Value *Op0, Value *Op1, const SimplifyQuery &Q) {
   return ::SimplifySDivInst(Op0, Op1, Q, RecursionLimit);
 }
 
+/// Given a predicate and two operands, return true if the comparison is true.
+/// This is a helper for div/rem simplification where we return some other value
+/// when we can prove a relationship between the operands.
+static bool isICmpTrue(ICmpInst::Predicate Pred, Value *LHS, Value *RHS,
+                       const SimplifyQuery &Q, unsigned MaxRecurse) {
+  Value *V = SimplifyICmpInst(Pred, LHS, RHS, Q, MaxRecurse);
+  Constant *C = dyn_cast_or_null<Constant>(V);
+  return (C && C->isAllOnesValue());
+}
+
+static Value *simplifyUnsignedDivRem(Value *Op0, Value *Op1,
+                                     const SimplifyQuery &Q,
+                                     unsigned MaxRecurse, bool IsDiv) {
+  // Recursion is always used, so bail out at once if we already hit the limit.
+  if (!MaxRecurse--)
+    return nullptr;
+
+  // If we can prove that the quotient is unsigned less than the divisor, then
+  // we know the answer:
+  // X / Y --> 0
+  // X % Y --> X
+  if (isICmpTrue(ICmpInst::ICMP_ULT, Op0, Op1, Q, MaxRecurse))
+    return IsDiv ? Constant::getNullValue(Op0->getType()) : Op0;
+
+  return nullptr;
+}
+
 /// Given operands for a UDiv, see if we can fold the result.
 /// If not, this returns null.
 static Value *SimplifyUDivInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
@@ -1082,15 +1109,8 @@ static Value *SimplifyUDivInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
   if (Value *V = SimplifyDiv(Instruction::UDiv, Op0, Op1, Q, MaxRecurse))
     return V;
 
-  // udiv %V, C -> 0 if %V < C
-  if (MaxRecurse) {
-    if (Constant *C = dyn_cast_or_null<Constant>(SimplifyICmpInst(
-            ICmpInst::ICMP_ULT, Op0, Op1, Q, MaxRecurse - 1))) {
-      if (C->isAllOnesValue()) {
-        return Constant::getNullValue(Op0->getType());
-      }
-    }
-  }
+  if (Value *V = simplifyUnsignedDivRem(Op0, Op1, Q, MaxRecurse, true))
+    return V;
 
   return nullptr;
 }
@@ -1198,15 +1218,8 @@ static Value *SimplifyURemInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
   if (Value *V = SimplifyRem(Instruction::URem, Op0, Op1, Q, MaxRecurse))
     return V;
 
-  // urem %V, C -> %V if %V < C
-  if (MaxRecurse) {
-    if (Constant *C = dyn_cast_or_null<Constant>(SimplifyICmpInst(
-            ICmpInst::ICMP_ULT, Op0, Op1, Q, MaxRecurse - 1))) {
-      if (C->isAllOnesValue()) {
-        return Op0;
-      }
-    }
-  }
+  if (Value *V = simplifyUnsignedDivRem(Op0, Op1, Q, MaxRecurse, false))
+    return V;
 
   return nullptr;
 }
@@ -2063,13 +2076,14 @@ static Value *ExtractEquivalentCondition(Value *V, CmpInst::Predicate Pred,
 static Constant *
 computePointerICmp(const DataLayout &DL, const TargetLibraryInfo *TLI,
                    const DominatorTree *DT, CmpInst::Predicate Pred,
-                   const Instruction *CxtI, Value *LHS, Value *RHS) {
+                   AssumptionCache *AC, const Instruction *CxtI,
+                   Value *LHS, Value *RHS) {
   // First, skip past any trivial no-ops.
   LHS = LHS->stripPointerCasts();
   RHS = RHS->stripPointerCasts();
 
   // A non-null pointer is not equal to a null pointer.
-  if (llvm::isKnownNonNull(LHS) && isa<ConstantPointerNull>(RHS) &&
+  if (llvm::isKnownNonZero(LHS, DL) && isa<ConstantPointerNull>(RHS) &&
       (Pred == CmpInst::ICMP_EQ || Pred == CmpInst::ICMP_NE))
     return ConstantInt::get(GetCompareTy(LHS),
                             !CmpInst::isTrueWhenEqual(Pred));
@@ -2224,9 +2238,11 @@ computePointerICmp(const DataLayout &DL, const TargetLibraryInfo *TLI,
     // cannot be elided. We cannot fold malloc comparison to null. Also, the
     // dynamic allocation call could be either of the operands.
     Value *MI = nullptr;
-    if (isAllocLikeFn(LHS, TLI) && llvm::isKnownNonNullAt(RHS, CxtI, DT))
+    if (isAllocLikeFn(LHS, TLI) &&
+        llvm::isKnownNonZero(RHS, DL, 0, nullptr, CxtI, DT))
       MI = LHS;
-    else if (isAllocLikeFn(RHS, TLI) && llvm::isKnownNonNullAt(LHS, CxtI, DT))
+    else if (isAllocLikeFn(RHS, TLI) &&
+             llvm::isKnownNonZero(LHS, DL, 0, nullptr, CxtI, DT))
       MI = RHS;
     // FIXME: We should also fold the compare when the pointer escapes, but the
     // compare dominates the pointer escape
@@ -3313,7 +3329,8 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
   // Simplify comparisons of related pointers using a powerful, recursive
   // GEP-walk when we have target data available..
   if (LHS->getType()->isPointerTy())
-    if (auto *C = computePointerICmp(Q.DL, Q.TLI, Q.DT, Pred, Q.CxtI, LHS, RHS))
+    if (auto *C = computePointerICmp(Q.DL, Q.TLI, Q.DT, Pred, Q.AC, Q.CxtI, LHS,
+                                     RHS))
       return C;
   if (auto *CLHS = dyn_cast<PtrToIntOperator>(LHS))
     if (auto *CRHS = dyn_cast<PtrToIntOperator>(RHS))
@@ -3321,7 +3338,7 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
               Q.DL.getTypeSizeInBits(CLHS->getType()) &&
           Q.DL.getTypeSizeInBits(CRHS->getPointerOperandType()) ==
               Q.DL.getTypeSizeInBits(CRHS->getType()))
-        if (auto *C = computePointerICmp(Q.DL, Q.TLI, Q.DT, Pred, Q.CxtI,
+        if (auto *C = computePointerICmp(Q.DL, Q.TLI, Q.DT, Pred, Q.AC, Q.CxtI,
                                          CLHS->getPointerOperand(),
                                          CRHS->getPointerOperand()))
           return C;
