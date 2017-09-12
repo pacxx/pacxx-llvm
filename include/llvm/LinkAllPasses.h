@@ -49,7 +49,6 @@
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
 #include "llvm/Transforms/Vectorize.h"
-#include "llvm/Transforms/PACXXTransforms.h"
 #include <cstdlib>
 
 namespace {
@@ -208,13 +207,6 @@ namespace {
       (void) llvm::createFloat2IntPass();
       (void) llvm::createEliminateAvailableExternallyPass();
       (void) llvm::createScalarizeMaskedMemIntrinPass();
-      // PACXX transformation passes
-      (void) llvm::createPACXXReflectionPass();
-      (void) llvm::createPACXXReflectionCleanerPass();
-      (void) llvm::createPACXXStaticEvalPass();
-      (void) llvm::createPACXXVerifier();
-      (void) llvm::createPACXXInlinerPass();
-      (void) llvm::createPACXXDeadCodeElimPass();
 
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();

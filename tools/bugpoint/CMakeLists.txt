@@ -15,7 +15,6 @@ set(LLVM_LINK_COMPONENTS
   Target
   TransformUtils
   Vectorize
-  PACXXTransforms
   )
 
 # Support plugins.
