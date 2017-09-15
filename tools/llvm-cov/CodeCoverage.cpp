@@ -458,10 +458,7 @@ void CodeCoverageTool::demangleSymbols(const CoverageMapping &Coverage) {
   for (const std::string &Arg : ViewOpts.DemanglerOpts)
     ArgsV.push_back(Arg.c_str());
   ArgsV.push_back(nullptr);
-  StringRef InputPathRef = InputPath.str();
-  StringRef OutputPathRef = OutputPath.str();
-  StringRef StderrRef;
-  const StringRef *Redirects[] = {&InputPathRef, &OutputPathRef, &StderrRef};
+  Optional<StringRef> Redirects[] = {InputPath.str(), OutputPath.str(), {""}};
   std::string ErrMsg;
   int RC = sys::ExecuteAndWait(ViewOpts.DemanglerOpts[0], ArgsV.data(),
                                /*env=*/nullptr, Redirects, /*secondsToWait=*/0,
@@ -608,6 +605,15 @@ int CodeCoverageTool::run(Command Cmd, int argc, const char **argv) {
   cl::list<std::string> DemanglerOpts(
       "Xdemangler", cl::desc("<demangler-path>|<demangler-option>"));
 
+  cl::opt<bool> RegionSummary(
+      "show-region-summary", cl::Optional,
+      cl::desc("Show region statistics in summary table"),
+      cl::init(true));
+
+  cl::opt<bool> InstantiationSummary(
+      "show-instantiation-summary", cl::Optional,
+      cl::desc("Show instantiation statistics in summary table"));
+
   auto commandLineParser = [&, this](int argc, const char **argv) -> int {
     cl::ParseCommandLineOptions(argc, argv, "LLVM code coverage tool\n");
     ViewOpts.Debug = DebugDump;
@@ -717,6 +723,9 @@ int CodeCoverageTool::run(Command Cmd, int argc, const char **argv) {
         outs() << SF << '\n';
       ::exit(0);
     }
+
+    ViewOpts.ShowRegionSummary = RegionSummary;
+    ViewOpts.ShowInstantiationSummary = InstantiationSummary;
 
     return 0;
   };

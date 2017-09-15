@@ -941,6 +941,7 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     for (auto LoadExtOp : { ISD::SEXTLOAD, ISD::ZEXTLOAD }) {
       setLoadExtAction(LoadExtOp, MVT::v8i16, MVT::v8i8,  Legal);
       setLoadExtAction(LoadExtOp, MVT::v4i32, MVT::v4i8,  Legal);
+      setLoadExtAction(LoadExtOp, MVT::v2i32, MVT::v2i8,  Legal);
       setLoadExtAction(LoadExtOp, MVT::v2i64, MVT::v2i8,  Legal);
       setLoadExtAction(LoadExtOp, MVT::v4i32, MVT::v4i16, Legal);
       setLoadExtAction(LoadExtOp, MVT::v2i64, MVT::v2i16, Legal);
@@ -2020,7 +2021,7 @@ Value *X86TargetLowering::getIRStackGuard(IRBuilder<> &IRB) const {
   // sysdeps/{i386,x86_64}/nptl/tls.h)
   if (hasStackGuardSlotTLS(Subtarget.getTargetTriple())) {
     if (Subtarget.isTargetFuchsia()) {
-      // <magenta/tls.h> defines MX_TLS_STACK_GUARD_OFFSET with this value.
+      // <zircon/tls.h> defines ZX_TLS_STACK_GUARD_OFFSET with this value.
       return SegmentOffset(IRB, 0x10, getAddressSpace());
     } else {
       // %fs:0x28, unless we're using a Kernel code model, in which case
@@ -2085,7 +2086,7 @@ Value *X86TargetLowering::getSafeStackPointerLocation(IRBuilder<> &IRB) const {
 
   // Fuchsia is similar.
   if (Subtarget.isTargetFuchsia()) {
-    // <magenta/tls.h> defines MX_TLS_UNSAFE_SP_OFFSET with this value.
+    // <zircon/tls.h> defines ZX_TLS_UNSAFE_SP_OFFSET with this value.
     return SegmentOffset(IRB, 0x18, getAddressSpace());
   }
 
@@ -7813,15 +7814,13 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
   // For AVX-length vectors, build the individual 128-bit pieces and use
   // shuffles to put them in place.
   if (VT.is256BitVector() || VT.is512BitVector()) {
-    SmallVector<SDValue, 64> Ops(Op->op_begin(), Op->op_begin() + NumElems);
-
     EVT HVT = EVT::getVectorVT(*DAG.getContext(), ExtVT, NumElems/2);
 
     // Build both the lower and upper subvector.
     SDValue Lower =
-        DAG.getBuildVector(HVT, dl, makeArrayRef(&Ops[0], NumElems / 2));
+        DAG.getBuildVector(HVT, dl, Op->ops().slice(0, NumElems / 2));
     SDValue Upper = DAG.getBuildVector(
-        HVT, dl, makeArrayRef(&Ops[NumElems / 2], NumElems / 2));
+        HVT, dl, Op->ops().slice(NumElems / 2, NumElems /2));
 
     // Recreate the wider vector with the lower and upper part.
     if (VT.is256BitVector())
@@ -16959,6 +16958,7 @@ static SDValue getBitTestCondition(SDValue Src, SDValue BitNo, ISD::CondCode CC,
 /// Result of 'and' is compared against zero. Change to a BT node if possible.
 static SDValue LowerAndToBT(SDValue And, ISD::CondCode CC,
                             const SDLoc &dl, SelectionDAG &DAG) {
+  assert(And.getOpcode() == ISD::AND && "Expected AND node!");
   SDValue Op0 = And.getOperand(0);
   SDValue Op1 = And.getOperand(1);
   if (Op0.getOpcode() == ISD::TRUNCATE)
@@ -17004,32 +17004,6 @@ static SDValue LowerAndToBT(SDValue And, ISD::CondCode CC,
   if (LHS.getNode())
     return getBitTestCondition(LHS, RHS, CC, dl, DAG);
 
-  return SDValue();
-}
-
-// Convert (truncate (srl X, N) to i1) to (bt X, N)
-static SDValue LowerTruncateToBT(SDValue Op, ISD::CondCode CC,
-                                 const SDLoc &dl, SelectionDAG &DAG) {
-
-  assert(Op.getOpcode() == ISD::TRUNCATE && Op.getValueType() == MVT::i1 &&
-         "Expected TRUNCATE to i1 node");
-
-  if (Op.getOperand(0).getOpcode() != ISD::SRL)
-    return SDValue();
-
-  SDValue ShiftRight = Op.getOperand(0);
-  return getBitTestCondition(ShiftRight.getOperand(0), ShiftRight.getOperand(1),
-                             CC, dl, DAG);
-}
-
-/// Result of 'and' or 'trunc to i1' is compared against zero.
-/// Change to a BT node if possible.
-SDValue X86TargetLowering::LowerToBT(SDValue Op, ISD::CondCode CC,
-                                     const SDLoc &dl, SelectionDAG &DAG) const {
-  if (Op.getOpcode() == ISD::AND)
-    return LowerAndToBT(Op, CC, dl, DAG);
-  if (Op.getOpcode() == ISD::TRUNCATE && Op.getValueType() == MVT::i1)
-    return LowerTruncateToBT(Op, CC, dl, DAG);
   return SDValue();
 }
 
@@ -17554,14 +17528,10 @@ SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   // Lower (X & (1 << N)) == 0 to BT(X, N).
   // Lower ((X >>u N) & 1) != 0 to BT(X, N).
   // Lower ((X >>s N) & 1) != 0 to BT(X, N).
-  // Lower (trunc (X >> N) to i1) to BT(X, N).
-  if (Op0.hasOneUse() && isNullConstant(Op1) &&
+  if (Op0.getOpcode() == ISD::AND && Op0.hasOneUse() && isNullConstant(Op1) &&
       (CC == ISD::SETEQ || CC == ISD::SETNE)) {
-    if (SDValue NewSetCC = LowerToBT(Op0, CC, dl, DAG)) {
-      if (VT == MVT::i1)
-        return DAG.getNode(ISD::TRUNCATE, dl, MVT::i1, NewSetCC);
+    if (SDValue NewSetCC = LowerAndToBT(Op0, CC, dl, DAG))
       return NewSetCC;
-    }
   }
 
   // Look for X == 0, X == 1, X != 0, or X != 1.  We can simplify some forms of
@@ -17935,7 +17905,7 @@ SDValue X86TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
     // We know the result of AND is compared against zero. Try to match
     // it to BT.
     if (Cond.getOpcode() == ISD::AND && Cond.hasOneUse()) {
-      if (SDValue NewSetCC = LowerToBT(Cond, ISD::SETNE, DL, DAG)) {
+      if (SDValue NewSetCC = LowerAndToBT(Cond, ISD::SETNE, DL, DAG)) {
         CC = NewSetCC.getOperand(0);
         Cond = NewSetCC.getOperand(1);
         AddTest = false;
@@ -18790,9 +18760,10 @@ SDValue X86TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
     if (isTruncWithZeroHighBitsInput(Cond, DAG))
         Cond = Cond.getOperand(0);
 
-    // We know the result is compared against zero. Try to match it to BT.
-    if (Cond.hasOneUse()) {
-      if (SDValue NewSetCC = LowerToBT(Cond, ISD::SETNE, dl, DAG)) {
+    // We know the result of AND is compared against zero. Try to match
+    // it to BT.
+    if (Cond.getOpcode() == ISD::AND && Cond.hasOneUse()) {
+      if (SDValue NewSetCC = LowerAndToBT(Cond, ISD::SETNE, dl, DAG)) {
         CC = NewSetCC.getOperand(0);
         Cond = NewSetCC.getOperand(1);
         addTest = false;
@@ -24614,7 +24585,6 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::OR:                 return "X86ISD::OR";
   case X86ISD::XOR:                return "X86ISD::XOR";
   case X86ISD::AND:                return "X86ISD::AND";
-  case X86ISD::BEXTR:              return "X86ISD::BEXTR";
   case X86ISD::MUL_IMM:            return "X86ISD::MUL_IMM";
   case X86ISD::MOVMSK:             return "X86ISD::MOVMSK";
   case X86ISD::PTEST:              return "X86ISD::PTEST";
@@ -27091,6 +27061,18 @@ unsigned X86TargetLowering::ComputeNumSignBitsForTargetNode(
     return Tmp;
   }
 
+  case X86ISD::PACKSS: {
+    // PACKSS is just a truncation if the sign bits extend to the packed size.
+    // TODO: Add DemandedElts support.
+    unsigned SrcBits = Op.getOperand(0).getScalarValueSizeInBits();
+    unsigned Tmp0 = DAG.ComputeNumSignBits(Op.getOperand(0), Depth + 1);
+    unsigned Tmp1 = DAG.ComputeNumSignBits(Op.getOperand(1), Depth + 1);
+    unsigned Tmp = std::min(Tmp0, Tmp1);
+    if (Tmp > (SrcBits - VTBits))
+      return Tmp - (SrcBits - VTBits);
+    return 1;
+  }
+
   case X86ISD::VSHLI: {
     SDValue Src = Op.getOperand(0);
     unsigned Tmp = DAG.ComputeNumSignBits(Src, Depth + 1);
@@ -27169,13 +27151,18 @@ static bool matchUnaryVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
       }
       if (Match) {
         unsigned SrcSize = std::max(128u, NumDstElts * MaskEltSize);
-        SrcVT = MVT::getVectorVT(MaskVT.getScalarType(), SrcSize / MaskEltSize);
-        if (SrcVT != MaskVT)
+        MVT ScalarTy = MaskVT.isInteger() ? MaskVT.getScalarType() :
+                                            MVT::getIntegerVT(MaskEltSize);
+        SrcVT = MVT::getVectorVT(ScalarTy, SrcSize / MaskEltSize);
+
+        if (SrcVT.getSizeInBits() != MaskVT.getSizeInBits()) {
           V1 = extractSubVector(V1, 0, DAG, DL, SrcSize);
+          Shuffle = unsigned(X86ISD::VZEXT);
+        } else
+          Shuffle = unsigned(ISD::ZERO_EXTEND_VECTOR_INREG);
+
         DstVT = MVT::getIntegerVT(Scale * MaskEltSize);
         DstVT = MVT::getVectorVT(DstVT, NumDstElts);
-        Shuffle = SrcVT != MaskVT ? unsigned(X86ISD::VZEXT)
-                                  : unsigned(ISD::ZERO_EXTEND_VECTOR_INREG);
         return true;
       }
     }
@@ -32178,9 +32165,6 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
     return ShiftRight;
 
   EVT VT = N->getValueType(0);
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-  SDLoc DL(N);
 
   // Attempt to recursively combine a bitmask AND with shuffles.
   if (VT.isVector() && (VT.getScalarSizeInBits() % 8) == 0) {
@@ -32193,29 +32177,6 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
       return SDValue(); // This routine will use CombineTo to replace N.
   }
 
-  // Create BEXTR instructions
-  // BEXTR is ((X >> imm) & (2**size-1))
-  if (VT != MVT::i32 && VT != MVT::i64)
-    return SDValue();
-
-  if (!Subtarget.hasBMI() && !Subtarget.hasTBM())
-    return SDValue();
-  if (N0.getOpcode() != ISD::SRA && N0.getOpcode() != ISD::SRL)
-    return SDValue();
-
-  ConstantSDNode *MaskNode = dyn_cast<ConstantSDNode>(N1);
-  ConstantSDNode *ShiftNode = dyn_cast<ConstantSDNode>(N0.getOperand(1));
-  if (MaskNode && ShiftNode) {
-    uint64_t Mask = MaskNode->getZExtValue();
-    uint64_t Shift = ShiftNode->getZExtValue();
-    if (isMask_64(Mask)) {
-      uint64_t MaskSize = countPopulation(Mask);
-      if (Shift + MaskSize <= VT.getSizeInBits())
-        return DAG.getNode(X86ISD::BEXTR, DL, VT, N0.getOperand(0),
-                           DAG.getConstant(Shift | (MaskSize << 8), DL,
-                                           VT));
-    }
-  }
   return SDValue();
 }
 
@@ -33188,8 +33149,33 @@ static SDValue combineMaskedStore(SDNode *N, SelectionDAG &DAG,
   if (Mst->isCompressingStore())
     return SDValue();
 
-  if (!Mst->isTruncatingStore())
-    return reduceMaskedStoreToScalarStore(Mst, DAG);
+  if (!Mst->isTruncatingStore()) {
+    if (SDValue ScalarStore = reduceMaskedStoreToScalarStore(Mst, DAG))
+      return ScalarStore;
+
+    // If the mask is checking (0 > X), we're creating a vector with all-zeros
+    // or all-ones elements based on the sign bits of X. AVX1 masked store only
+    // cares about the sign bit of each mask element, so eliminate the compare:
+    // mstore val, ptr, (pcmpgt 0, X) --> mstore val, ptr, X
+    // Note that by waiting to match an x86-specific PCMPGT node, we're
+    // eliminating potentially more complex matching of a setcc node which has
+    // a full range of predicates.
+    SDValue Mask = Mst->getMask();
+    if (Mask.getOpcode() == X86ISD::PCMPGT &&
+        ISD::isBuildVectorAllZeros(Mask.getOperand(0).getNode())) {
+      assert(Mask.getValueType() == Mask.getOperand(1).getValueType() &&
+             "Unexpected type for PCMPGT");
+      return DAG.getMaskedStore(
+          Mst->getChain(), SDLoc(N), Mst->getValue(), Mst->getBasePtr(),
+          Mask.getOperand(1), Mst->getMemoryVT(), Mst->getMemOperand());
+    }
+
+    // TODO: AVX512 targets should also be able to simplify something like the
+    // pattern above, but that pattern will be different. It will either need to
+    // match setcc more generally or match PCMPGTM later (in tablegen?).
+
+    return SDValue();
+  }
 
   // Resolve truncating stores.
   EVT VT = Mst->getValue().getValueType();

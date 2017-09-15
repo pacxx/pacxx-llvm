@@ -15,8 +15,10 @@ define <4 x i64> @test_mm256_abs_epi8(<4 x i64> %a0) {
 ; X64-NEXT:    vpabsb %ymm0, %ymm0
 ; X64-NEXT:    retq
   %arg = bitcast <4 x i64> %a0 to <32 x i8>
-  %call = call <32 x i8> @llvm.x86.avx2.pabs.b(<32 x i8> %arg)
-  %res = bitcast <32 x i8> %call to <4 x i64>
+  %sub = sub <32 x i8> zeroinitializer, %arg
+  %cmp = icmp sgt <32 x i8> %arg, zeroinitializer
+  %sel = select <32 x i1> %cmp, <32 x i8> %arg, <32 x i8> %sub
+  %res = bitcast <32 x i8> %sel to <4 x i64>
   ret <4 x i64> %res
 }
 declare <32 x i8> @llvm.x86.avx2.pabs.b(<32 x i8>) nounwind readnone
@@ -32,8 +34,10 @@ define <4 x i64> @test_mm256_abs_epi16(<4 x i64> %a0) {
 ; X64-NEXT:    vpabsw %ymm0, %ymm0
 ; X64-NEXT:    retq
   %arg = bitcast <4 x i64> %a0 to <16 x i16>
-  %call = call <16 x i16> @llvm.x86.avx2.pabs.w(<16 x i16> %arg)
-  %res = bitcast <16 x i16> %call to <4 x i64>
+  %sub = sub <16 x i16> zeroinitializer, %arg
+  %cmp = icmp sgt <16 x i16> %arg, zeroinitializer
+  %sel = select <16 x i1> %cmp, <16 x i16> %arg, <16 x i16> %sub
+  %res = bitcast <16 x i16> %sel to <4 x i64>
   ret <4 x i64> %res
 }
 declare <16 x i16> @llvm.x86.avx2.pabs.w(<16 x i16>) nounwind readnone
@@ -49,8 +53,10 @@ define <4 x i64> @test_mm256_abs_epi32(<4 x i64> %a0) {
 ; X64-NEXT:    vpabsd %ymm0, %ymm0
 ; X64-NEXT:    retq
   %arg = bitcast <4 x i64> %a0 to <8 x i32>
-  %call = call <8 x i32> @llvm.x86.avx2.pabs.d(<8 x i32> %arg)
-  %res = bitcast <8 x i32> %call to <4 x i64>
+  %sub = sub <8 x i32> zeroinitializer, %arg
+  %cmp = icmp sgt <8 x i32> %arg, zeroinitializer
+  %sel = select <8 x i1> %cmp, <8 x i32> %arg, <8 x i32> %sub
+  %res = bitcast <8 x i32> %sel to <4 x i64>
   ret <4 x i64> %res
 }
 declare <8 x i32> @llvm.x86.avx2.pabs.d(<8 x i32>) nounwind readnone
@@ -259,7 +265,7 @@ define <4 x i64> @test_mm256_andnot_si256(<4 x i64> %a0, <4 x i64> %a1) nounwind
   ret <4 x i64> %res
 }
 
-define <4 x i64> @test_mm256_avg_epu8(<4 x i64> %a0, <4 x i64> %a1) {
+define <4 x i64> @test_mm256_avg_epu8(<4 x i64> %a0, <4 x i64> %a1) nounwind {
 ; X32-LABEL: test_mm256_avg_epu8:
 ; X32:       # BB#0:
 ; X32-NEXT:    vpavgb %ymm1, %ymm0, %ymm0
@@ -271,13 +277,17 @@ define <4 x i64> @test_mm256_avg_epu8(<4 x i64> %a0, <4 x i64> %a1) {
 ; X64-NEXT:    retq
   %arg0 = bitcast <4 x i64> %a0 to <32 x i8>
   %arg1 = bitcast <4 x i64> %a1 to <32 x i8>
-  %res = call <32 x i8> @llvm.x86.avx2.pavg.b(<32 x i8> %arg0, <32 x i8> %arg1)
+  %zext0 = zext <32 x i8> %arg0 to <32 x i16>
+  %zext1 = zext <32 x i8> %arg1 to <32 x i16>
+  %add = add <32 x i16> %zext0, %zext1
+  %add1 = add <32 x i16> %add, <i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1>
+  %lshr = lshr <32 x i16> %add1, <i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1, i16 1>
+  %res = trunc <32 x i16> %lshr to <32 x i8>
   %bc = bitcast <32 x i8> %res to <4 x i64>
   ret <4 x i64> %bc
 }
-declare <32 x i8> @llvm.x86.avx2.pavg.b(<32 x i8>, <32 x i8>) nounwind readnone
 
-define <4 x i64> @test_mm256_avg_epu16(<4 x i64> %a0, <4 x i64> %a1) {
+define <4 x i64> @test_mm256_avg_epu16(<4 x i64> %a0, <4 x i64> %a1) nounwind {
 ; X32-LABEL: test_mm256_avg_epu16:
 ; X32:       # BB#0:
 ; X32-NEXT:    vpavgw %ymm1, %ymm0, %ymm0
@@ -289,11 +299,15 @@ define <4 x i64> @test_mm256_avg_epu16(<4 x i64> %a0, <4 x i64> %a1) {
 ; X64-NEXT:    retq
   %arg0 = bitcast <4 x i64> %a0 to <16 x i16>
   %arg1 = bitcast <4 x i64> %a1 to <16 x i16>
-  %res = call <16 x i16> @llvm.x86.avx2.pavg.w(<16 x i16> %arg0, <16 x i16> %arg1)
+  %zext0 = zext <16 x i16> %arg0 to <16 x i32>
+  %zext1 = zext <16 x i16> %arg1 to <16 x i32>
+  %add = add <16 x i32> %zext0, %zext1
+  %add1 = add <16 x i32> %add, <i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1>
+  %lshr = lshr <16 x i32> %add1, <i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1>
+  %res = trunc <16 x i32> %lshr to <16 x i16>
   %bc = bitcast <16 x i16> %res to <4 x i64>
   ret <4 x i64> %bc
 }
-declare <16 x i16> @llvm.x86.avx2.pavg.w(<16 x i16>, <16 x i16>) nounwind readnone
 
 define <4 x i64> @test_mm256_blend_epi16(<4 x i64> %a0, <4 x i64> %a1) {
 ; X32-LABEL: test_mm256_blend_epi16:
