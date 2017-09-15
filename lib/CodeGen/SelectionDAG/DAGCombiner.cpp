@@ -2675,6 +2675,25 @@ SDValue DAGCombiner::visitMUL(SDNode *N) {
       return DAG.getNode(ISD::MUL, SDLoc(N), VT, N0.getOperand(0), C3);
   }
 
+  // change (mul X, 2^C+/-1) -> (add/sub (shl X, C ), X)
+  if (N1IsConst && ConstValue1.getSExtValue() > 2) {
+    APInt Plus1 = ConstValue1 + 1;
+    APInt Minus1 = ConstValue1 - 1;
+    int isPow2 = Plus1.isPowerOf2() ? 1 : Minus1.isPowerOf2() ? -1 : 0;
+    if (isPow2) {
+      APInt &Pow2 = isPow2 > 0 ? Plus1 : Minus1;
+      // avoid poison through shifts
+      if (VT.getScalarSizeInBits() > Pow2.logBase2()) {
+        SDLoc DL(N);
+        SDValue logBase2 = DAG.getConstant(Pow2.logBase2(), DL, VT);
+        AddToWorklist(logBase2.getNode());
+        auto Shl = DAG.getNode(ISD::SHL, DL, VT, N0, logBase2);
+        AddToWorklist(Shl.getNode());
+        return DAG.getNode(isPow2 > 0 ? ISD::SUB : ISD::ADD, DL, VT, Shl, N0);
+      }
+    }
+  }
+
   // Change (mul (shl X, C), Y) -> (shl (mul X, Y), C) when the shift has one
   // use.
   {
