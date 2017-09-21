@@ -114,7 +114,6 @@ struct DILineInfoSpecifier {
 
 /// This is just a helper to programmatically construct DIDumpType.
 enum DIDumpTypeCounter {
-  DIDT_ID_Null = 0,
 #define HANDLE_DWARF_SECTION(ENUM_NAME, ELF_NAME, CMDLINE_NAME) \
   DIDT_ID_##ENUM_NAME,
 #include "llvm/BinaryFormat/Dwarf.def"
@@ -129,19 +128,36 @@ enum DIDumpType : unsigned {
   DIDT_Null,
   DIDT_All             = ~0U,
 #define HANDLE_DWARF_SECTION(ENUM_NAME, ELF_NAME, CMDLINE_NAME) \
-  DIDT_##ENUM_NAME = 1U << (DIDT_ID_##ENUM_NAME - 1),
+  DIDT_##ENUM_NAME = 1U << DIDT_ID_##ENUM_NAME,
 #include "llvm/BinaryFormat/Dwarf.def"
 #undef HANDLE_DWARF_SECTION
-  DIDT_UUID = 1 << (DIDT_ID_UUID - 1),
+  DIDT_UUID = 1 << DIDT_ID_UUID,
 };
 
 /// Container for dump options that control which debug information will be
 /// dumped.
 struct DIDumpOptions {
-    unsigned DumpType = DIDT_All;
-    bool DumpEH = false;
-    bool SummarizeTypes = false;
-    bool Verbose = false;
+  unsigned DumpType = DIDT_All;
+  unsigned RecurseDepth = -1U;
+  bool ShowChildren = false;
+  bool ShowParents = false;
+  bool SummarizeTypes = false;
+  bool Verbose = false;
+
+  /// Return default option set for printing a single DIE without children.
+  static DIDumpOptions getForSingleDIE() {
+    DIDumpOptions Opts;
+    Opts.RecurseDepth = 0;
+    return Opts;
+  }
+
+  /// Return the options with RecurseDepth set to 0 unless explicitly required.
+  DIDumpOptions noImplicitRecursion() const {
+    DIDumpOptions Opts = *this;
+    if (RecurseDepth == -1U && !ShowChildren)
+      Opts.RecurseDepth = 0;
+    return Opts;
+  }
 };
 
 class DIContext {
@@ -158,8 +174,7 @@ public:
 
   virtual void dump(raw_ostream &OS, DIDumpOptions DumpOpts) = 0;
 
-  virtual bool verify(raw_ostream &OS, unsigned DumpType = DIDT_All,
-                      DIDumpOptions DumpOpts = {}) {
+  virtual bool verify(raw_ostream &OS, DIDumpOptions DumpOpts = {}) {
     // No verifier? Just say things went well.
     return true;
   }

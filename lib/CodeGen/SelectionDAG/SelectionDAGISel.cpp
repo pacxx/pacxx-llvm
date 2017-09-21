@@ -26,7 +26,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/CFG.h"
-#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/OptimizationDiagnosticInfo.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/CodeGen/FastISel.h"
@@ -326,8 +325,6 @@ void SelectionDAGISel::getAnalysisUsage(AnalysisUsage &AU) const {
   if (OptLevel != CodeGenOpt::None)
     AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<GCModuleInfo>();
-  if (OptLevel != CodeGenOpt::None)
-    AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<StackProtector>();
   AU.addPreserved<StackProtector>();
   AU.addPreserved<GCModuleInfo>();
@@ -1185,12 +1182,7 @@ static void propagateSwiftErrorVRegs(FunctionLoweringInfo *FuncInfo) {
 
   // For each machine basic block in reverse post order.
   ReversePostOrderTraversal<MachineFunction *> RPOT(FuncInfo->MF);
-  for (ReversePostOrderTraversal<MachineFunction *>::rpo_iterator
-           It = RPOT.begin(),
-           E = RPOT.end();
-       It != E; ++It) {
-    MachineBasicBlock *MBB = *It;
-
+  for (MachineBasicBlock *MBB : RPOT) {
     // For each swifterror value in the function.
     for(const auto *SwiftErrorVal : FuncInfo->SwiftErrorVals) {
       auto Key = std::make_pair(MBB, SwiftErrorVal);
@@ -1261,6 +1253,8 @@ static void propagateSwiftErrorVRegs(FunctionLoweringInfo *FuncInfo) {
       // If we don't need a phi create a copy to the upward exposed vreg.
       if (!needPHI) {
         assert(UpwardsUse);
+        assert(!VRegs.empty() &&
+               "No predecessors?  Is the Calling Convention correct?");
         unsigned DestReg = UUseVReg;
         BuildMI(*MBB, MBB->getFirstNonPHI(), DLoc, TII->get(TargetOpcode::COPY),
                 DestReg)
@@ -1422,7 +1416,6 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
 
   // Iterate over all basic blocks in the function.
   for (const BasicBlock *LLVMBB : RPOT) {
-    CurDAG->IsDAGPartOfLoop = false;
     if (OptLevel != CodeGenOpt::None) {
       bool AllPredsVisited = true;
       for (const_pred_iterator PI = pred_begin(LLVMBB), PE = pred_end(LLVMBB);
@@ -1598,13 +1591,6 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
           TLI->getSSPStackGuardCheck(*Fn.getParent());
       SDB->SPDescriptor.initialize(LLVMBB, FuncInfo->MBBMap[LLVMBB],
                                    FunctionBasedInstrumentation);
-    }
-
-    if (OptLevel != CodeGenOpt::None) {
-      auto &LIWP = getAnalysis<LoopInfoWrapperPass>();
-      LoopInfo &LI = LIWP.getLoopInfo();
-      if (LI.getLoopFor(LLVMBB))
-        CurDAG->IsDAGPartOfLoop = true;
     }
 
     if (Begin != BI)
