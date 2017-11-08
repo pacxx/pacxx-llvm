@@ -213,6 +213,10 @@ public:
   /// Output \p N in hexadecimal, without any prefix or padding.
   raw_ostream &write_hex(unsigned long long N);
 
+  /// Output a formatted UUID with dash separators.
+  using uuid_t = uint8_t[16];
+  raw_ostream &write_uuid(const uuid_t UUID);
+
   /// Output \p Str, turning '\\', '\t', '\n', '"', and anything that doesn't
   /// satisfy std::isprint into an escape sequence.
   raw_ostream &write_escaped(StringRef Str, bool UseHexEscapes = false);
@@ -358,9 +362,7 @@ class raw_fd_ostream : public raw_pwrite_stream {
   int FD;
   bool ShouldClose;
 
-  /// Error This flag is true if an error of any kind has been detected.
-  ///
-  bool Error;
+  std::error_code EC;
 
   uint64_t pos;
 
@@ -379,7 +381,7 @@ class raw_fd_ostream : public raw_pwrite_stream {
   size_t preferred_buffer_size() const override;
 
   /// Set the flag indicating that an output error has been encountered.
-  void error_detected() { Error = true; }
+  void error_detected(std::error_code EC) { this->EC = EC; }
 
 public:
   /// Open the specified file for writing. If an error occurs, information
@@ -420,13 +422,13 @@ public:
 
   bool has_colors() const override;
 
+  std::error_code error() const { return EC; }
+
   /// Return the value of the flag in this raw_fd_ostream indicating whether an
   /// output error has been encountered.
   /// This doesn't implicitly flush any pending output.  Also, it doesn't
   /// guarantee to detect all errors unless the stream has been closed.
-  bool has_error() const {
-    return Error;
-  }
+  bool has_error() const { return bool(EC); }
 
   /// Set the flag read by has_error() to false. If the error flag is set at the
   /// time when this raw_ostream's destructor is called, report_fatal_error is
@@ -437,9 +439,7 @@ public:
   ///    Unless explicitly silenced."
   ///      - from The Zen of Python, by Tim Peters
   ///
-  void clear_error() {
-    Error = false;
-  }
+  void clear_error() { EC = std::error_code(); }
 };
 
 /// This returns a reference to a raw_ostream for standard output. Use it like:

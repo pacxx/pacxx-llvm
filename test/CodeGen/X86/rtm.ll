@@ -70,12 +70,12 @@ define void @f2(i32 %x) nounwind uwtable {
 ; X64-LABEL: f2:
 ; X64:       # BB#0: # %entry
 ; X64-NEXT:    pushq %rax
-; X64-NEXT:  .Lcfi0:
 ; X64-NEXT:    .cfi_def_cfa_offset 16
 ; X64-NEXT:    movl %edi, {{[0-9]+}}(%rsp)
 ; X64-NEXT:    xabort $1
 ; X64-NEXT:    callq f1
 ; X64-NEXT:    popq %rax
+; X64-NEXT:    .cfi_def_cfa_offset 8
 ; X64-NEXT:    retq
 entry:
   %x.addr = alloca i32, align 4

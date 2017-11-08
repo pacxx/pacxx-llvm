@@ -109,6 +109,12 @@ def FeatureApertureRegs : SubtargetFeature<"aperture-regs",
   "Has Memory Aperture Base and Size Registers"
 >;
 
+def FeatureMadMixInsts : SubtargetFeature<"mad-mix-insts",
+  "HasMadMixInsts",
+  "true",
+  "Has v_mad_mix_f32, v_mad_mixlo_f16, v_mad_mixhi_f16 instructions"
+>;
+
 // XNACK is disabled if SH_MEM_CONFIG.ADDRESS_MODE = GPUVM on chips that support
 // XNACK. The current default kernel driver setting is:
 // - graphics ring: XNACK disabled
@@ -181,13 +187,13 @@ def FeatureGCN3Encoding : SubtargetFeature<"gcn3-encoding",
 def FeatureCIInsts : SubtargetFeature<"ci-insts",
   "CIInsts",
   "true",
-  "Additional intstructions for CI+"
+  "Additional instructions for CI+"
 >;
 
 def FeatureGFX9Insts : SubtargetFeature<"gfx9-insts",
   "GFX9Insts",
   "true",
-  "Additional intstructions for GFX9+"
+  "Additional instructions for GFX9+"
 >;
 
 def FeatureSMemRealTime : SubtargetFeature<"s-memrealtime",
@@ -408,6 +414,13 @@ def FeatureAutoWaitcntBeforeBarrier : SubtargetFeature <
   "Hardware automatically inserts waitcnt before barrier"
 >;
 
+def FeatureCodeObjectV3 : SubtargetFeature <
+  "code-object-v3",
+  "CodeObjectV3",
+  "true",
+  "Generate code object version 3"
+>;
+
 // Dummy feature used to disable assembler instructions.
 def FeatureDisable : SubtargetFeature<"",
   "FeatureDisable","true",
@@ -546,19 +559,25 @@ def FeatureISAVersion8_1_0 : SubtargetFeatureISAVersion <8,1,0,
 
 def FeatureISAVersion9_0_0 : SubtargetFeatureISAVersion <9,0,0,
   [FeatureGFX9,
-   FeatureLDSBankCount32]>;
+   FeatureMadMixInsts,
+   FeatureLDSBankCount32
+   ]>;
 
 def FeatureISAVersion9_0_1 : SubtargetFeatureISAVersion <9,0,1,
   [FeatureGFX9,
+   FeatureMadMixInsts,
    FeatureLDSBankCount32,
    FeatureXNACK]>;
 
 def FeatureISAVersion9_0_2 : SubtargetFeatureISAVersion <9,0,2,
   [FeatureGFX9,
-   FeatureLDSBankCount32]>;
+   FeatureMadMixInsts,
+   FeatureLDSBankCount32
+   ]>;
 
 def FeatureISAVersion9_0_3 : SubtargetFeatureISAVersion <9,0,3,
   [FeatureGFX9,
+   FeatureMadMixInsts,
    FeatureLDSBankCount32,
    FeatureXNACK]>;
 
@@ -721,20 +740,32 @@ def HasDPP : Predicate<"Subtarget->hasDPP()">,
 def HasIntClamp : Predicate<"Subtarget->hasIntClamp()">,
   AssemblerPredicate<"FeatureIntClamp">;
 
-def HasMadMix : Predicate<"Subtarget->hasMadMixInsts()">,
-  AssemblerPredicate<"FeatureGFX9Insts">;
+def HasMadMixInsts : Predicate<"Subtarget->hasMadMixInsts()">,
+  AssemblerPredicate<"FeatureMadMixInsts">;
+
+def EnableLateCFGStructurize : Predicate<
+  "EnableLateStructurizeCFG">;
+
+// Exists to help track down where SubtargetPredicate isn't set rather
+// than letting tablegen crash with an unhelpful error.
+def InvalidPred : Predicate<"predicate not set on instruction or pattern">;
 
 class PredicateControl {
-  Predicate SubtargetPredicate;
+  Predicate SubtargetPredicate = InvalidPred;
   Predicate SIAssemblerPredicate = isSICI;
   Predicate VIAssemblerPredicate = isVI;
   list<Predicate> AssemblerPredicates = [];
   Predicate AssemblerPredicate = TruePredicate;
   list<Predicate> OtherPredicates = [];
-  list<Predicate> Predicates = !listconcat([SubtargetPredicate, AssemblerPredicate],
+  list<Predicate> Predicates = !listconcat([SubtargetPredicate,
+                                            AssemblerPredicate],
                                             AssemblerPredicates,
                                             OtherPredicates);
 }
+
+class AMDGPUPat<dag pattern, dag result> : Pat<pattern, result>,
+  PredicateControl;
+
 
 // Include AMDGPU TD files
 include "R600Schedule.td"

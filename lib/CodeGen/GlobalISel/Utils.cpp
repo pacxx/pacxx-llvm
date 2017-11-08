@@ -17,9 +17,9 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineOptimizationRemarkEmitter.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 
 #define DEBUG_TYPE "globalisel-utils"
@@ -99,7 +99,10 @@ void llvm::reportGISelFailure(MachineFunction &MF, const TargetPassConfig &TPC,
                               const MachineInstr &MI) {
   MachineOptimizationRemarkMissed R(PassName, "GISelFailure: ",
                                     MI.getDebugLoc(), MI.getParent());
-  R << Msg << ": " << ore::MNV("Inst", MI);
+  R << Msg;
+  // Printing MI is expensive;  only do it if expensive remarks are enabled.
+  if (MORE.allowExtraAnalysis(PassName))
+    R << ": " << ore::MNV("Inst", MI);
   reportGISelFailure(MF, TPC, MORE, R);
 }
 

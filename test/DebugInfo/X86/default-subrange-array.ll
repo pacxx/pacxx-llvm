@@ -1,8 +1,8 @@
 ; RUN: llc -mtriple=x86_64-apple-darwin -O0 -filetype=obj -dwarf-version 4 \
-; RUN:     -o - < %s | llvm-dwarfdump - -debug-dump=info \
+; RUN:     -o - < %s | llvm-dwarfdump -v - --debug-info \
 ; RUN:     | FileCheck %s -check-prefixes=CHECK,DWARF4
 ; RUN: llc -mtriple=x86_64-apple-darwin -O0 -filetype=obj -dwarf-version 5 \
-; RUN:     -o - < %s | llvm-dwarfdump - -debug-dump=info \
+; RUN:     -o - < %s | llvm-dwarfdump -v - --debug-info \
 ; RUN:     | FileCheck %s -check-prefixes=CHECK,DWARF5
 
 ; Check that we can omit default array lower-bounds.
@@ -18,7 +18,7 @@ source_filename = "test/DebugInfo/X86/default-subrange-array.ll"
 ; CHECK:       DW_TAG_class_type
 ; CHECK:         DW_TAG_member
 ; CHECK-NEXT:      DW_AT_name {{.*}} "x"
-; CHECK-NEXT:      DW_AT_type [DW_FORM_ref4] {{.*}} => {[[ARRAY:0x[0-9a-f]+]]})
+; CHECK-NEXT:      DW_AT_type [DW_FORM_ref4] {{.*}} => {[[ARRAY:0x[0-9a-f]+]]}
 
 ; CHECK: [[ARRAY]]: DW_TAG_array_type
 ; CHECK-NEXT:         DW_AT_type

@@ -14,14 +14,15 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_SIMACHINEFUNCTIONINFO_H
 #define LLVM_LIB_TARGET_AMDGPU_SIMACHINEFUNCTIONINFO_H
 
-#include "AMDGPUMachineFunction.h"
 #include "AMDGPUArgumentUsageInfo.h"
+#include "AMDGPUMachineFunction.h"
 #include "SIRegisterInfo.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <array>
@@ -37,8 +38,8 @@ class TargetRegisterClass;
 
 class AMDGPUImagePseudoSourceValue : public PseudoSourceValue {
 public:
-  explicit AMDGPUImagePseudoSourceValue() :
-    PseudoSourceValue(PseudoSourceValue::TargetCustom) {}
+  explicit AMDGPUImagePseudoSourceValue(const TargetInstrInfo &TII) :
+    PseudoSourceValue(PseudoSourceValue::TargetCustom, TII) { }
 
   bool isConstant(const MachineFrameInfo *) const override {
     // This should probably be true for most images, but we will start by being
@@ -61,8 +62,8 @@ public:
 
 class AMDGPUBufferPseudoSourceValue : public PseudoSourceValue {
 public:
-  explicit AMDGPUBufferPseudoSourceValue() :
-    PseudoSourceValue(PseudoSourceValue::TargetCustom) {}
+  explicit AMDGPUBufferPseudoSourceValue(const TargetInstrInfo &TII) :
+    PseudoSourceValue(PseudoSourceValue::TargetCustom, TII) { }
 
   bool isConstant(const MachineFrameInfo *) const override {
     // This should probably be true for most images, but we will start by being
@@ -86,9 +87,6 @@ public:
 /// This class keeps track of the SPI_SP_INPUT_ADDR config register, which
 /// tells the hardware which interpolation parameters to load.
 class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
-  // FIXME: This should be removed and getPreloadedValue moved here.
-  friend class SIRegisterInfo;
-
   unsigned TIDReg = AMDGPU::NoRegister;
 
   // Registers that may be reserved for spilling purposes. These may be the same
@@ -142,7 +140,6 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
 
 private:
   unsigned LDSWaveSpillSize = 0;
-  unsigned ScratchOffsetReg;
   unsigned NumUserSGPRs = 0;
   unsigned NumSystemSGPRs = 0;
 
@@ -183,6 +180,11 @@ private:
   // Pointer to where the ABI inserts special kernel arguments separate from the
   // user arguments. This is an offset from the KernargSegmentPtr.
   bool ImplicitArgPtr : 1;
+
+  // The hard-wired high half of the address of the global information table
+  // for AMDPAL OS type. 0xffffffff represents no hard-wired high half, since
+  // current hardware only allows a 16 bit value.
+  unsigned GITPtrHigh;
 
   MCPhysReg getNextUserSGPR() const {
     assert(NumSystemSGPRs == 0 && "System SGPRs must be added after user SGPRs");
@@ -403,6 +405,10 @@ public:
 
   unsigned getPreloadedReg(AMDGPUFunctionArgInfo::PreloadedValue Value) const {
     return ArgInfo.getPreloadedValue(Value).first->getRegister();
+  }
+
+  unsigned getGITPtrHigh() const {
+    return GITPtrHigh;
   }
 
   unsigned getNumUserSGPRs() const {

@@ -30,6 +30,7 @@
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetOptions.h"
 #include <vector>
 #include <cmath>
 
@@ -168,10 +169,13 @@ namespace {
 
   AMDGPULibCalls Simplifier;
 
+  const TargetOptions Options;
+
   public:
     static char ID; // Pass identification
 
-    AMDGPUSimplifyLibCalls() : FunctionPass(ID) {
+    AMDGPUSimplifyLibCalls(const TargetOptions &Opt = TargetOptions())
+      : FunctionPass(ID), Options(Opt) {
       initializeAMDGPUSimplifyLibCallsPass(*PassRegistry::getPassRegistry());
     }
 
@@ -483,7 +487,7 @@ bool AMDGPULibCalls::parseFunctionName(const StringRef& FMangledName,
 
 bool AMDGPULibCalls::isUnsafeMath(const CallInst *CI) const {
   if (auto Op = dyn_cast<FPMathOperator>(CI))
-    if (Op->hasUnsafeAlgebra())
+    if (Op->isFast())
       return true;
   const Function *F = CI->getParent()->getParent();
   Attribute Attr = F->getFnAttribute("unsafe-fp-math");
@@ -1333,7 +1337,8 @@ bool AMDGPULibCalls::fold_sincos(CallInst *CI, IRBuilder<> &B,
   // for OpenCL 2.0 we have only generic implementation of sincos
   // function.
   AMDGPULibFunc nf(AMDGPULibFunc::EI_SINCOS, fInfo);
-  nf.getLeads()[0].PtrKind = AMDGPULibFunc::GENERIC;
+  const AMDGPUAS AS = AMDGPU::getAMDGPUAS(*M);
+  nf.getLeads()[0].PtrKind = AMDGPULibFunc::getEPtrKindFromAddrSpace(AS.FLAT_ADDRESS);
   Function *Fsincos = dyn_cast_or_null<Function>(getFunction(M, nf));
   if (!Fsincos) return false;
 
@@ -1346,7 +1351,6 @@ bool AMDGPULibCalls::fold_sincos(CallInst *CI, IRBuilder<> &B,
   // The allocaInst allocates the memory in private address space. This need
   // to be bitcasted to point to the address space of cos pointer type.
   // In OpenCL 2.0 this is generic, while in 1.2 that is private.
-  const AMDGPUAS AS = AMDGPU::getAMDGPUAS(*M);
   if (PTy->getPointerAddressSpace() != AS.PRIVATE_ADDRESS)
     P = B.CreateAddrSpaceCast(Alloc, PTy);
   CallInst *Call = CreateCallEx2(B, Fsincos, UI->getArgOperand(0), P);
@@ -1680,12 +1684,32 @@ bool AMDGPULibCalls::evaluateCall(CallInst *aCI, FuncInfo &FInfo) {
 }
 
 // Public interface to the Simplify LibCalls pass.
-FunctionPass *llvm::createAMDGPUSimplifyLibCallsPass() {
-  return new AMDGPUSimplifyLibCalls();
+FunctionPass *llvm::createAMDGPUSimplifyLibCallsPass(const TargetOptions &Opt) {
+  return new AMDGPUSimplifyLibCalls(Opt);
 }
 
 FunctionPass *llvm::createAMDGPUUseNativeCallsPass() {
   return new AMDGPUUseNativeCalls();
+}
+
+static bool setFastFlags(Function &F, const TargetOptions &Options) {
+  AttrBuilder B;
+
+  if (Options.UnsafeFPMath || Options.NoInfsFPMath)
+    B.addAttribute("no-infs-fp-math", "true");
+  if (Options.UnsafeFPMath || Options.NoNaNsFPMath)
+    B.addAttribute("no-nans-fp-math", "true");
+  if (Options.UnsafeFPMath) {
+    B.addAttribute("less-precise-fpmad", "true");
+    B.addAttribute("unsafe-fp-math", "true");
+  }
+
+  if (!B.hasAttributes())
+    return false;
+
+  F.addAttributes(AttributeList::FunctionIndex, B);
+
+  return true;
 }
 
 bool AMDGPUSimplifyLibCalls::runOnFunction(Function &F) {
@@ -1698,6 +1722,9 @@ bool AMDGPUSimplifyLibCalls::runOnFunction(Function &F) {
   DEBUG(dbgs() << "AMDIC: process function ";
         F.printAsOperand(dbgs(), false, F.getParent());
         dbgs() << '\n';);
+
+  if (!EnablePreLink)
+    Changed |= setFastFlags(F, Options);
 
   for (auto &BB : F) {
     for (BasicBlock::iterator I = BB.begin(), E = BB.end(); I != E; ) {

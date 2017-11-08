@@ -43,6 +43,7 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachinePostDominators.h"
 #include "llvm/CodeGen/TailDuplicator.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
@@ -55,7 +56,6 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
@@ -2233,6 +2233,10 @@ void MachineBlockPlacement::buildLoopChains(const MachineLoop &L) {
   // If we selected just the header for the loop top, look for a potentially
   // profitable exit block in the event that rotating the loop can eliminate
   // branches by placing an exit edge at the bottom.
+  //
+  // Loops are processed innermost to uttermost, make sure we clear
+  // PreferredLoopExit before processing a new loop.
+  PreferredLoopExit = nullptr;
   if (!RotateLoopWithProfile && LoopTop == L.getHeader())
     PreferredLoopExit = findBestLoopExit(L, LoopBlockSet);
 

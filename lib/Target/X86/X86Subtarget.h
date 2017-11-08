@@ -61,7 +61,16 @@ protected:
   };
 
   enum X86ProcFamilyEnum {
-    Others, IntelAtom, IntelSLM, IntelGLM
+    Others, 
+    IntelAtom,
+    IntelSLM,
+    IntelGLM,
+    IntelHaswell,
+    IntelBroadwell,
+    IntelSkylake,
+    IntelKNL,
+    IntelSKX,
+    IntelCannonlake
   };
 
   /// X86 processor family: Intel Atom, and others
@@ -183,9 +192,6 @@ protected:
 
   /// Processor has Prefetch with intent to Write instruction
   bool HasPFPREFETCHWT1;
-
-  /// True if BT (bit test) of memory instructions are slow.
-  bool IsBTMemSlow;
 
   /// True if SHLD instructions are slow.
   bool IsSHLDSlow;
@@ -339,6 +345,10 @@ private:
   /// True if compiling for 16-bit, false for 32-bit or 64-bit.
   bool In16BitMode;
 
+  /// Contains the Overhead of gather\scatter instructions
+  int GatherOverhead;
+  int ScatterOverhead;
+
   X86SelectionDAGInfo TSInfo;
   // Ordering here is important. X86InstrInfo initializes X86RegisterInfo which
   // X86TargetLowering needs.
@@ -453,7 +463,7 @@ public:
   bool hasPCLMUL() const { return HasPCLMUL; }
   // Prefer FMA4 to FMA - its better for commutation/memory folding and
   // has equal or better performance on all supported targets.
-  bool hasFMA() const { return (HasFMA || hasAVX512()) && !HasFMA4; }
+  bool hasFMA() const { return HasFMA && !HasFMA4; }
   bool hasFMA4() const { return HasFMA4; }
   bool hasAnyFMA() const { return hasFMA() || hasFMA4(); }
   bool hasXOP() const { return HasXOP; }
@@ -476,11 +486,12 @@ public:
   bool hasLAHFSAHF() const { return HasLAHFSAHF; }
   bool hasMWAITX() const { return HasMWAITX; }
   bool hasCLZERO() const { return HasCLZERO; }
-  bool isBTMemSlow() const { return IsBTMemSlow; }
   bool isSHLDSlow() const { return IsSHLDSlow; }
   bool isPMULLDSlow() const { return IsPMULLDSlow; }
   bool isUnalignedMem16Slow() const { return IsUAMem16Slow; }
   bool isUnalignedMem32Slow() const { return IsUAMem32Slow; }
+  int getGatherOverhead() const { return GatherOverhead; }
+  int getScatterOverhead() const { return ScatterOverhead; }
   bool hasSSEUnalignedMem() const { return HasSSEUnalignedMem; }
   bool hasCmpxchg16b() const { return HasCmpxchg16b; }
   bool useLeaForSP() const { return UseLeaForSP; }
@@ -515,6 +526,9 @@ public:
 
   bool isXRaySupported() const override { return is64Bit(); }
 
+  X86ProcFamilyEnum getProcFamily() const { return X86ProcFamily; }
+
+  /// TODO: to be removed later and replaced with suitable properties
   bool isAtom() const { return X86ProcFamily == IntelAtom; }
   bool isSLM() const { return X86ProcFamily == IntelSLM; }
   bool useSoftFloat() const { return UseSoftFloat; }
@@ -574,13 +588,9 @@ public:
 
   bool isOSWindows() const { return TargetTriple.isOSWindows(); }
 
-  bool isTargetWin64() const {
-    return In64BitMode && TargetTriple.isOSWindows();
-  }
+  bool isTargetWin64() const { return In64BitMode && isOSWindows(); }
 
-  bool isTargetWin32() const {
-    return !In64BitMode && (isTargetCygMing() || isTargetKnownWindowsMSVC());
-  }
+  bool isTargetWin32() const { return !In64BitMode && isOSWindows(); }
 
   bool isPICStyleGOT() const { return PICStyle == PICStyles::GOT; }
   bool isPICStyleRIPRel() const { return PICStyle == PICStyles::RIPRel; }
@@ -596,6 +606,7 @@ public:
     // On Win64, all these conventions just use the default convention.
     case CallingConv::C:
     case CallingConv::Fast:
+    case CallingConv::Swift:
     case CallingConv::X86_FastCall:
     case CallingConv::X86_StdCall:
     case CallingConv::X86_ThisCall:
@@ -661,6 +672,8 @@ public:
   AntiDepBreakMode getAntiDepBreakMode() const override {
     return TargetSubtargetInfo::ANTIDEP_CRITICAL;
   }
+
+  bool enableAdvancedRASplitCost() const override { return true; }
 };
 
 } // end namespace llvm

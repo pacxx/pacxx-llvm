@@ -1807,6 +1807,24 @@ public:
     addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
   }
 
+  /// @brief Determine if the function may only access memory that is
+  /// inaccessible from the IR.
+  bool onlyAccessesInaccessibleMemory() const {
+    return hasFnAttr(Attribute::InaccessibleMemOnly);
+  }
+  void setOnlyAccessesInaccessibleMemory() {
+    addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOnly);
+  }
+
+  /// @brief Determine if the function may only access memory that is
+  /// either inaccessible from the IR or pointed to by its arguments.
+  bool onlyAccessesInaccessibleMemOrArgMem() const {
+    return hasFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+  }
+  void setOnlyAccessesInaccessibleMemOrArgMem() {
+    addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
+  }
+
   /// Determine if the call cannot return.
   bool doesNotReturn() const { return hasFnAttr(Attribute::NoReturn); }
   void setDoesNotReturn() {
@@ -3889,6 +3907,24 @@ public:
     addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
   }
 
+  /// @brief Determine if the function may only access memory that is
+  /// inaccessible from the IR.
+  bool onlyAccessesInaccessibleMemory() const {
+    return hasFnAttr(Attribute::InaccessibleMemOnly);
+  }
+  void setOnlyAccessesInaccessibleMemory() {
+    addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOnly);
+  }
+
+  /// @brief Determine if the function may only access memory that is
+  /// either inaccessible from the IR or pointed to by its arguments.
+  bool onlyAccessesInaccessibleMemOrArgMem() const {
+    return hasFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+  }
+  void setOnlyAccessesInaccessibleMemOrArgMem() {
+    addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
+  }
+
   /// Determine if the call cannot return.
   bool doesNotReturn() const { return hasFnAttr(Attribute::NoReturn); }
   void setDoesNotReturn() {
@@ -4201,11 +4237,10 @@ private:
   }
 
 public:
-  using DerefFnTy = std::pointer_to_unary_function<Value *, BasicBlock *>;
+  using DerefFnTy = BasicBlock *(*)(Value *);
   using handler_iterator = mapped_iterator<op_iterator, DerefFnTy>;
   using handler_range = iterator_range<handler_iterator>;
-  using ConstDerefFnTy =
-      std::pointer_to_unary_function<const Value *, const BasicBlock *>;
+  using ConstDerefFnTy = const BasicBlock *(*)(const Value *);
   using const_handler_iterator =
       mapped_iterator<const_op_iterator, ConstDerefFnTy>;
   using const_handler_range = iterator_range<const_handler_iterator>;

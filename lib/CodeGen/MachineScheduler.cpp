@@ -42,6 +42,7 @@
 #include "llvm/CodeGen/ScheduleDFS.h"
 #include "llvm/CodeGen/ScheduleHazardRecognizer.h"
 #include "llvm/CodeGen/SlotIndexes.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/MC/LaneBitmask.h"
@@ -52,7 +53,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
@@ -200,8 +200,7 @@ INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
 INITIALIZE_PASS_END(MachineScheduler, DEBUG_TYPE,
                     "Machine Instruction Scheduler", false, false)
 
-MachineScheduler::MachineScheduler()
-: MachineSchedulerBase(ID) {
+MachineScheduler::MachineScheduler() : MachineSchedulerBase(ID) {
   initializeMachineSchedulerPass(*PassRegistry::getPassRegistry());
 }
 
@@ -225,8 +224,7 @@ char &llvm::PostMachineSchedulerID = PostMachineScheduler::ID;
 INITIALIZE_PASS(PostMachineScheduler, "postmisched",
                 "PostRA Machine Instruction Scheduler", false, false)
 
-PostMachineScheduler::PostMachineScheduler()
-: MachineSchedulerBase(ID) {
+PostMachineScheduler::PostMachineScheduler() : MachineSchedulerBase(ID) {
   initializePostMachineSchedulerPass(*PassRegistry::getPassRegistry());
 }
 
@@ -439,6 +437,7 @@ static bool isSchedBoundary(MachineBasicBlock::iterator MI,
 }
 
 /// A region of an MBB for scheduling.
+namespace {
 struct SchedRegion {
   /// RegionBegin is the first instruction in the scheduling region, and
   /// RegionEnd is either MBB->end() or the scheduling boundary after the
@@ -448,12 +447,15 @@ struct SchedRegion {
   MachineBasicBlock::iterator RegionBegin;
   MachineBasicBlock::iterator RegionEnd;
   unsigned NumRegionInstrs;
+
   SchedRegion(MachineBasicBlock::iterator B, MachineBasicBlock::iterator E,
               unsigned N) :
     RegionBegin(B), RegionEnd(E), NumRegionInstrs(N) {}
 };
+} // end anonymous namespace
 
-typedef SmallVector<SchedRegion, 16> MBBRegionsVector;
+using MBBRegionsVector = SmallVector<SchedRegion, 16>;
+
 static void
 getSchedRegions(MachineBasicBlock *MBB,
                 MBBRegionsVector &Regions,
@@ -1559,14 +1561,10 @@ void BaseMemOpClusterMutation::clusterNeighboringMemOps(
   std::sort(MemOpRecords.begin(), MemOpRecords.end());
   unsigned ClusterLength = 1;
   for (unsigned Idx = 0, End = MemOpRecords.size(); Idx < (End - 1); ++Idx) {
-    if (MemOpRecords[Idx].BaseReg != MemOpRecords[Idx+1].BaseReg) {
-      ClusterLength = 1;
-      continue;
-    }
-
     SUnit *SUa = MemOpRecords[Idx].SU;
     SUnit *SUb = MemOpRecords[Idx+1].SU;
-    if (TII->shouldClusterMemOps(*SUa->getInstr(), *SUb->getInstr(),
+    if (TII->shouldClusterMemOps(*SUa->getInstr(), MemOpRecords[Idx].BaseReg,
+                                 *SUb->getInstr(), MemOpRecords[Idx+1].BaseReg,
                                  ClusterLength) &&
         DAG->addEdge(SUb, SDep(SUa, SDep::Cluster))) {
       DEBUG(dbgs() << "Cluster ld/st SU(" << SUa->NodeNum << ") - SU("
@@ -1589,7 +1587,6 @@ void BaseMemOpClusterMutation::clusterNeighboringMemOps(
 
 /// \brief Callback from DAG postProcessing to create cluster edges for loads.
 void BaseMemOpClusterMutation::apply(ScheduleDAGInstrs *DAGInstrs) {
-
   ScheduleDAGMI *DAG = static_cast<ScheduleDAGMI*>(DAGInstrs);
 
   // Map DAG NodeNum to store chain ID.
@@ -1635,6 +1632,7 @@ namespace {
 class CopyConstrain : public ScheduleDAGMutation {
   // Transient state.
   SlotIndex RegionBeginIdx;
+
   // RegionEndIdx is the slot index of the last non-debug instruction in the
   // scheduling region. So we may have RegionBeginIdx == RegionEndIdx.
   SlotIndex RegionEndIdx;
@@ -1833,6 +1831,13 @@ static const unsigned InvalidCycle = ~0U;
 
 SchedBoundary::~SchedBoundary() { delete HazardRec; }
 
+/// Given a Count of resource usage and a Latency value, return true if a
+/// SchedBoundary becomes resource limited.
+static bool checkResourceLimit(unsigned LFactor, unsigned Count,
+                               unsigned Latency) {
+  return (int)(Count - (Latency * LFactor)) > (int)LFactor;
+}
+
 void SchedBoundary::reset() {
   // A new HazardRec is created for each DAG and owned by SchedBoundary.
   // Destroying and reconstructing it is very expensive though. So keep
@@ -1964,16 +1969,18 @@ bool SchedBoundary::checkHazard(SUnit *SU) {
 
   if (SchedModel->hasInstrSchedModel() && SU->hasReservedResource) {
     const MCSchedClassDesc *SC = DAG->getSchedClass(SU);
-    for (TargetSchedModel::ProcResIter
-           PI = SchedModel->getWriteProcResBegin(SC),
-           PE = SchedModel->getWriteProcResEnd(SC); PI != PE; ++PI) {
-      unsigned NRCycle = getNextResourceCycle(PI->ProcResourceIdx, PI->Cycles);
+    for (const MCWriteProcResEntry &PE :
+          make_range(SchedModel->getWriteProcResBegin(SC),
+                     SchedModel->getWriteProcResEnd(SC))) {
+      unsigned ResIdx = PE.ProcResourceIdx;
+      unsigned Cycles = PE.Cycles;
+      unsigned NRCycle = getNextResourceCycle(ResIdx, Cycles);
       if (NRCycle > CurrCycle) {
 #ifndef NDEBUG
-        MaxObservedStall = std::max(PI->Cycles, MaxObservedStall);
+        MaxObservedStall = std::max(Cycles, MaxObservedStall);
 #endif
         DEBUG(dbgs() << "  SU(" << SU->NodeNum << ") "
-              << SchedModel->getResourceName(PI->ProcResourceIdx)
+              << SchedModel->getResourceName(ResIdx)
               << "=" << NRCycle << "c\n");
         return true;
       }
@@ -2085,10 +2092,9 @@ void SchedBoundary::bumpCycle(unsigned NextCycle) {
     }
   }
   CheckPending = true;
-  unsigned LFactor = SchedModel->getLatencyFactor();
   IsResourceLimited =
-    (int)(getCriticalCount() - (getScheduledLatency() * LFactor))
-    > (int)LFactor;
+      checkResourceLimit(SchedModel->getLatencyFactor(), getCriticalCount(),
+                         getScheduledLatency());
 
   DEBUG(dbgs() << "Cycle: " << CurrCycle << ' ' << Available.getName() << '\n');
 }
@@ -2241,16 +2247,15 @@ void SchedBoundary::bumpNode(SUnit *SU) {
           << " BotLatency SU(" << SU->NodeNum << ") " << BotLatency << "c\n");
   }
   // If we stall for any reason, bump the cycle.
-  if (NextCycle > CurrCycle) {
+  if (NextCycle > CurrCycle)
     bumpCycle(NextCycle);
-  } else {
+  else
     // After updating ZoneCritResIdx and ExpectedLatency, check if we're
     // resource limited. If a stall occurred, bumpCycle does this.
-    unsigned LFactor = SchedModel->getLatencyFactor();
     IsResourceLimited =
-      (int)(getCriticalCount() - (getScheduledLatency() * LFactor))
-      > (int)LFactor;
-  }
+        checkResourceLimit(SchedModel->getLatencyFactor(), getCriticalCount(),
+                           getScheduledLatency());
+
   // Update CurrMOps after calling bumpCycle to handle stalls, since bumpCycle
   // resets CurrMOps. Loop to handle instructions with more MOps than issue in
   // one cycle.  Since we commonly reach the max MOps here, opportunistically
@@ -2365,7 +2370,7 @@ LLVM_DUMP_METHOD void SchedBoundary::dumpScheduledState() const {
     ResCount = getResourceCount(ZoneCritResIdx);
   } else {
     ResFactor = SchedModel->getMicroOpFactor();
-    ResCount = RetiredMOps * SchedModel->getMicroOpFactor();
+    ResCount = RetiredMOps * ResFactor;
   }
   unsigned LFactor = SchedModel->getLatencyFactor();
   dbgs() << Available.getName() << " @" << CurrCycle << "c\n"
@@ -2435,10 +2440,10 @@ void GenericSchedulerBase::setPolicy(CandPolicy &Policy, bool IsPostRA,
     OtherZone ? OtherZone->getOtherResourceCount(OtherCritIdx) : 0;
 
   bool OtherResLimited = false;
-  if (SchedModel->hasInstrSchedModel()) {
-    unsigned LFactor = SchedModel->getLatencyFactor();
-    OtherResLimited = (int)(OtherCount - (RemLatency * LFactor)) > (int)LFactor;
-  }
+  if (SchedModel->hasInstrSchedModel())
+    OtherResLimited = checkResourceLimit(SchedModel->getLatencyFactor(),
+                                         OtherCount, RemLatency);
+
   // Schedule aggressively for latency in PostRA mode. We don't check for
   // acyclic latency during PostRA, and highly out-of-order processors will
   // skip PostRA scheduling.
@@ -2653,7 +2658,7 @@ void GenericScheduler::initialize(ScheduleDAGMI *dag) {
 void GenericScheduler::initPolicy(MachineBasicBlock::iterator Begin,
                                   MachineBasicBlock::iterator End,
                                   unsigned NumRegionInstrs) {
-  const MachineFunction &MF = *Begin->getParent()->getParent();
+  const MachineFunction &MF = *Begin->getMF();
   const TargetLowering *TLI = MF.getSubtarget().getTargetLowering();
 
   // Avoid setting up the register pressure tracker for small regions to save
@@ -3247,7 +3252,6 @@ void PostGenericScheduler::registerRoots() {
 /// \param TryCand refers to the next SUnit candidate, otherwise uninitialized.
 void PostGenericScheduler::tryCandidate(SchedCandidate &Cand,
                                         SchedCandidate &TryCand) {
-
   // Initialize the candidate if needed.
   if (!Cand.isValid()) {
     TryCand.Reason = NodeOrder;
@@ -3486,6 +3490,7 @@ class InstructionShuffler : public MachineSchedStrategy {
   // instructions to be scheduled first.
   PriorityQueue<SUnit*, std::vector<SUnit*>, SUnitOrder<false>>
     TopQ;
+
   // When scheduling bottom-up, use greater-than as the queue priority.
   PriorityQueue<SUnit*, std::vector<SUnit*>, SUnitOrder<true>>
     BottomQ;
@@ -3602,6 +3607,7 @@ struct DOTGraphTraits<ScheduleDAGMI*> : public DefaultDOTGraphTraits {
       SS << " I:" << DFS->getNumInstrs(SU);
     return SS.str();
   }
+
   static std::string getNodeDescription(const SUnit *SU, const ScheduleDAG *G) {
     return G->getGraphNodeLabel(SU);
   }
@@ -3625,7 +3631,6 @@ struct DOTGraphTraits<ScheduleDAGMI*> : public DefaultDOTGraphTraits {
 
 /// viewGraph - Pop up a ghostview window with the reachable parts of the DAG
 /// rendered using 'dot'.
-///
 void ScheduleDAGMI::viewGraph(const Twine &Name, const Twine &Title) {
 #ifndef NDEBUG
   ViewGraph(this, Name, false, Title);

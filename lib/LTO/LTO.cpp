@@ -217,6 +217,11 @@ static void computeCacheKey(
     AddUnsigned(S.TTRes.TheKind);
     AddUnsigned(S.TTRes.SizeM1BitWidth);
 
+    AddUint64(S.TTRes.AlignLog2);
+    AddUint64(S.TTRes.SizeM1);
+    AddUint64(S.TTRes.BitMask);
+    AddUint64(S.TTRes.InlineBits);
+
     AddUint64(S.WPDRes.size());
     for (auto &WPD : S.WPDRes) {
       AddUnsigned(WPD.first);
@@ -230,6 +235,8 @@ static void computeCacheKey(
           AddUint64(Arg);
         AddUnsigned(ByArg.second.TheKind);
         AddUint64(ByArg.second.Info);
+        AddUnsigned(ByArg.second.Byte);
+        AddUnsigned(ByArg.second.Bit);
       }
     }
   };
@@ -623,6 +630,9 @@ LTO::addRegularLTO(BitcodeModule BM, ArrayRef<InputFile::Symbol> Syms,
           NonPrevailingComdats.insert(GV->getComdat());
         cast<GlobalObject>(GV)->setComdat(nullptr);
       }
+
+      // Set the 'local' flag based on the linker resolution for this symbol.
+      GV->setDSOLocal(Res.FinalDefinitionInLinkageUnit);
     }
     // Common resolution: collect the maximum size/alignment over all commons.
     // We also record if we see an instance of a common as prevailing, so that
@@ -636,7 +646,6 @@ LTO::addRegularLTO(BitcodeModule BM, ArrayRef<InputFile::Symbol> Syms,
       CommonRes.Prevailing |= Res.Prevailing;
     }
 
-    // FIXME: use proposed local attribute for FinalDefinitionInLinkageUnit.
   }
   if (!M.getComdatSymbolTable().empty())
     for (GlobalValue &GV : M.global_values())
@@ -691,10 +700,10 @@ Error LTO::addThinLTO(BitcodeModule BM, ArrayRef<InputFile::Symbol> Syms,
     assert(ResI != ResE);
     SymbolResolution Res = *ResI++;
 
-    if (Res.Prevailing) {
-      if (!Sym.getIRName().empty()) {
-        auto GUID = GlobalValue::getGUID(GlobalValue::getGlobalIdentifier(
-            Sym.getIRName(), GlobalValue::ExternalLinkage, ""));
+    if (!Sym.getIRName().empty()) {
+      auto GUID = GlobalValue::getGUID(GlobalValue::getGlobalIdentifier(
+          Sym.getIRName(), GlobalValue::ExternalLinkage, ""));
+      if (Res.Prevailing) {
         ThinLTO.PrevailingModuleForGUID[GUID] = BM.getModuleIdentifier();
 
         // For linker redefined symbols (via --wrap or --defsym) we want to
@@ -705,6 +714,15 @@ Error LTO::addThinLTO(BitcodeModule BM, ArrayRef<InputFile::Symbol> Syms,
           if (auto S = ThinLTO.CombinedIndex.findSummaryInModule(
                   GUID, BM.getModuleIdentifier()))
             S->setLinkage(GlobalValue::WeakAnyLinkage);
+      }
+
+      // If the linker resolved the symbol to a local definition then mark it
+      // as local in the summary for the module we are adding.
+      if (Res.FinalDefinitionInLinkageUnit) {
+        if (auto S = ThinLTO.CombinedIndex.findSummaryInModule(
+                GUID, BM.getModuleIdentifier())) {
+          S->setDSOLocal(true);
+        }
       }
     }
   }
@@ -1091,41 +1109,44 @@ Error LTO::runThinLTO(AddStreamFn AddStream, NativeObjectCache Cache,
       ThinLTO.ModuleMap.size());
   StringMap<std::map<GlobalValue::GUID, GlobalValue::LinkageTypes>> ResolvedODR;
 
-  if (Conf.OptLevel > 0) {
+  if (Conf.OptLevel > 0)
     ComputeCrossModuleImport(ThinLTO.CombinedIndex, ModuleToDefinedGVSummaries,
                              ImportLists, ExportLists);
 
-    std::set<GlobalValue::GUID> ExportedGUIDs;
-    for (auto &Res : GlobalResolutions) {
-      // First check if the symbol was flagged as having external references.
-      if (Res.second.Partition != GlobalResolution::External)
-        continue;
-      // IRName will be defined if we have seen the prevailing copy of
-      // this value. If not, no need to mark as exported from a ThinLTO
-      // partition (and we can't get the GUID).
-      if (Res.second.IRName.empty())
-        continue;
-      auto GUID = GlobalValue::getGUID(
-          GlobalValue::dropLLVMManglingEscape(Res.second.IRName));
-      // Mark exported unless index-based analysis determined it to be dead.
-      if (ThinLTO.CombinedIndex.isGUIDLive(GUID))
-        ExportedGUIDs.insert(GUID);
-    }
-
-    // Any functions referenced by the jump table in the regular LTO object must
-    // be exported.
-    for (auto &Def : ThinLTO.CombinedIndex.cfiFunctionDefs())
-      ExportedGUIDs.insert(
-          GlobalValue::getGUID(GlobalValue::dropLLVMManglingEscape(Def)));
-
-    auto isExported = [&](StringRef ModuleIdentifier, GlobalValue::GUID GUID) {
-      const auto &ExportList = ExportLists.find(ModuleIdentifier);
-      return (ExportList != ExportLists.end() &&
-              ExportList->second.count(GUID)) ||
-             ExportedGUIDs.count(GUID);
-    };
-    thinLTOInternalizeAndPromoteInIndex(ThinLTO.CombinedIndex, isExported);
+  // Figure out which symbols need to be internalized. This also needs to happen
+  // at -O0 because summary-based DCE is implemented using internalization, and
+  // we must apply DCE consistently with the full LTO module in order to avoid
+  // undefined references during the final link.
+  std::set<GlobalValue::GUID> ExportedGUIDs;
+  for (auto &Res : GlobalResolutions) {
+    // First check if the symbol was flagged as having external references.
+    if (Res.second.Partition != GlobalResolution::External)
+      continue;
+    // IRName will be defined if we have seen the prevailing copy of
+    // this value. If not, no need to mark as exported from a ThinLTO
+    // partition (and we can't get the GUID).
+    if (Res.second.IRName.empty())
+      continue;
+    auto GUID = GlobalValue::getGUID(
+        GlobalValue::dropLLVMManglingEscape(Res.second.IRName));
+    // Mark exported unless index-based analysis determined it to be dead.
+    if (ThinLTO.CombinedIndex.isGUIDLive(GUID))
+      ExportedGUIDs.insert(GUID);
   }
+
+  // Any functions referenced by the jump table in the regular LTO object must
+  // be exported.
+  for (auto &Def : ThinLTO.CombinedIndex.cfiFunctionDefs())
+    ExportedGUIDs.insert(
+        GlobalValue::getGUID(GlobalValue::dropLLVMManglingEscape(Def)));
+
+  auto isExported = [&](StringRef ModuleIdentifier, GlobalValue::GUID GUID) {
+    const auto &ExportList = ExportLists.find(ModuleIdentifier);
+    return (ExportList != ExportLists.end() &&
+            ExportList->second.count(GUID)) ||
+           ExportedGUIDs.count(GUID);
+  };
+  thinLTOInternalizeAndPromoteInIndex(ThinLTO.CombinedIndex, isExported);
 
   auto isPrevailing = [&](GlobalValue::GUID GUID,
                           const GlobalValueSummary *S) {
@@ -1159,7 +1180,7 @@ Error LTO::runThinLTO(AddStreamFn AddStream, NativeObjectCache Cache,
   return BackendProc->wait();
 }
 
-Expected<std::unique_ptr<tool_output_file>>
+Expected<std::unique_ptr<ToolOutputFile>>
 lto::setupOptimizationRemarks(LLVMContext &Context,
                               StringRef LTORemarksFilename,
                               bool LTOPassRemarksWithHotness, int Count) {
@@ -1172,7 +1193,7 @@ lto::setupOptimizationRemarks(LLVMContext &Context,
 
   std::error_code EC;
   auto DiagnosticFile =
-      llvm::make_unique<tool_output_file>(Filename, EC, sys::fs::F_None);
+      llvm::make_unique<ToolOutputFile>(Filename, EC, sys::fs::F_None);
   if (EC)
     return errorCodeToError(EC);
   Context.setDiagnosticsOutputFile(

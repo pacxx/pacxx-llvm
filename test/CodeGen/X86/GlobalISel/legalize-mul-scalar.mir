@@ -1,6 +1,8 @@
 # RUN: llc -mtriple=x86_64-linux-gnu -global-isel -run-pass=legalizer %s -o - | FileCheck %s
 
 --- |
+  define void @test_mul_i1() { ret void}
+
   define i16 @test_mul_i16(i16 %arg1, i16 %arg2) {
     %ret = mul i16 %arg1, %arg2
     ret i16 %ret
@@ -18,6 +20,30 @@
 
 ...
 ---
+name:            test_mul_i1
+# CHECK-LABEL: name:  test_mul_i1
+alignment:       4
+legalized:       false
+regBankSelected: false
+registers:
+  - { id: 0, class: _, preferred-register: '' }
+  - { id: 1, class: _, preferred-register: '' }
+  - { id: 2, class: _, preferred-register: '' }
+# CHECK:          %0:_(s32) = COPY %edx
+# CHECK-NEXT:     %3:_(s8) = G_TRUNC %0(s32)
+# CHECK-NEXT:     %4:_(s8) = G_TRUNC %0(s32)
+# CHECK-NEXT:     %5:_(s8) = G_MUL %3, %4
+# CHECK-NEXT:     %2:_(s1) = G_TRUNC %5(s8)
+# CHECK-NEXT:     RET 0
+body:             |
+  bb.1 (%ir-block.0):
+
+    %0(s32) = COPY %edx
+    %1(s1) = G_TRUNC %0(s32)
+    %2(s1) = G_MUL %1, %1
+    RET 0
+...
+---
 name:            test_mul_i16
 # CHECK-LABEL: name:  test_mul_i16
 alignment:       4
@@ -33,17 +59,17 @@ registers:
   - { id: 2, class: _ }
 # CHECK:      body:             |
 # CHECK-NEXT:   bb.0 (%ir-block.0):
-# CHECK-NEXT:     %0(s16) = COPY %edi
-# CHECK-NEXT:     %1(s16) = COPY %esi
-# CHECK-NEXT:     %2(s16) = G_MUL %0, %1
+# CHECK-NEXT:     %0:_(s16) = COPY %di
+# CHECK-NEXT:     %1:_(s16) = COPY %si
+# CHECK-NEXT:     %2:_(s16) = G_MUL %0, %1
 # CHECK-NEXT:     %ax = COPY %2(s16)
 # CHECK-NEXT:     RET 0, implicit %ax
 body:             |
   bb.1 (%ir-block.0):
     liveins: %edi, %esi
 
-    %0(s16) = COPY %edi
-    %1(s16) = COPY %esi
+    %0(s16) = COPY %di
+    %1(s16) = COPY %si
     %2(s16) = G_MUL %0, %1
     %ax = COPY %2(s16)
     RET 0, implicit %ax
@@ -65,9 +91,9 @@ registers:
   - { id: 2, class: _ }
 # CHECK:      body:             |
 # CHECK-NEXT:   bb.0 (%ir-block.0):
-# CHECK-NEXT:     %0(s32) = COPY %edi
-# CHECK-NEXT:     %1(s32) = COPY %esi
-# CHECK-NEXT:     %2(s32) = G_MUL %0, %1
+# CHECK-NEXT:     %0:_(s32) = COPY %edi
+# CHECK-NEXT:     %1:_(s32) = COPY %esi
+# CHECK-NEXT:     %2:_(s32) = G_MUL %0, %1
 # CHECK-NEXT:     %eax = COPY %2(s32)
 # CHECK-NEXT:     RET 0, implicit %eax
 body:             |
@@ -97,9 +123,9 @@ registers:
   - { id: 2, class: _ }
 # CHECK:      body:             |
 # CHECK-NEXT:   bb.0 (%ir-block.0):
-# CHECK-NEXT:     %0(s64) = COPY %rdi
-# CHECK-NEXT:     %1(s64) = COPY %rsi
-# CHECK-NEXT:     %2(s64) = G_MUL %0, %1
+# CHECK-NEXT:     %0:_(s64) = COPY %rdi
+# CHECK-NEXT:     %1:_(s64) = COPY %rsi
+# CHECK-NEXT:     %2:_(s64) = G_MUL %0, %1
 # CHECK-NEXT:     %rax = COPY %2(s64)
 # CHECK-NEXT:     RET 0, implicit %rax
 body:             |

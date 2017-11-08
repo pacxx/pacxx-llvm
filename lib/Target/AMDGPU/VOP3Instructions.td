@@ -399,8 +399,10 @@ def V_MQSAD_U32_U8 : VOP3Inst <"v_mqsad_u32_u8", VOP3_Profile<VOP_V4I32_I64_I32_
 } // End Constraints = "@earlyclobber $vdst"
 
 let isCommutable = 1 in {
+let SchedRW = [WriteDouble, WriteSALU] in {
 def V_MAD_U64_U32 : VOP3Inst <"v_mad_u64_u32", VOP3b_I64_I1_I32_I32_I64>;
 def V_MAD_I64_I32 : VOP3Inst <"v_mad_i64_i32", VOP3b_I64_I1_I32_I32_I64>;
+} // End SchedRW = [WriteDouble, WriteSALU]
 } // End isCommutable = 1
 
 } // End SubtargetPredicate = isCIVI
@@ -450,17 +452,17 @@ let Predicates = [Has16BitInsts] in {
 
 multiclass Ternary_i16_Pats <SDPatternOperator op1, SDPatternOperator op2,
                              Instruction inst, SDPatternOperator op3> {
-def : Pat<
+def : GCNPat <
   (op2 (op1 i16:$src0, i16:$src1), i16:$src2),
   (inst i16:$src0, i16:$src1, i16:$src2, (i1 0))
 >;
 
-def : Pat<
+def : GCNPat<
   (i32 (op3 (op2 (op1 i16:$src0, i16:$src1), i16:$src2))),
   (inst i16:$src0, i16:$src1, i16:$src2, (i1 0))
 >;
 
-def : Pat<
+def : GCNPat<
   (i64 (op3 (op2 (op1 i16:$src0, i16:$src1), i16:$src2))),
    (REG_SEQUENCE VReg_64,
      (inst i16:$src0, i16:$src1, i16:$src2, (i1 0)), sub0,
@@ -528,7 +530,7 @@ class getClampRes<VOPProfile P, Instruction inst> {
             ret1));
 }
 
-class IntClampPat<VOP3Inst inst, SDPatternOperator node> : Pat<
+class IntClampPat<VOP3Inst inst, SDPatternOperator node> : GCNPat<
   getClampPat<inst.Pfl, node>.ret,
   getClampRes<inst.Pfl, inst>.ret
 >;

@@ -63,6 +63,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/StackMaps.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
@@ -98,7 +99,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
@@ -168,8 +168,7 @@ bool FastISel::hasTrivialKill(const Value *V) {
 
   // No-op casts are trivially coalesced by fast-isel.
   if (const auto *Cast = dyn_cast<CastInst>(I))
-    if (Cast->isNoopCast(DL.getIntPtrType(Cast->getContext())) &&
-        !hasTrivialKill(Cast->getOperand(0)))
+    if (Cast->isNoopCast(DL) && !hasTrivialKill(Cast->getOperand(0)))
       return false;
 
   // Even the value might have only one use in the LLVM IR, it is possible that

@@ -110,6 +110,8 @@ public:
     return nullptr;
   }
 
+  virtual unsigned getHwMode() const { return 0; }
+
   /// Target can subclass this hook to select a different DAG scheduler.
   virtual RegisterScheduler::FunctionPassCtor
       getDAGScheduler(CodeGenOpt::Level) const {
@@ -218,6 +220,11 @@ public:
   /// This heuristic may be compile time intensive, \p OptLevel provides
   /// a finer grain to tune the register allocator.
   virtual bool enableRALocalReassignment(CodeGenOpt::Level OptLevel) const;
+
+  /// \brief True if the subtarget should consider the cost of local intervals
+  /// created by a split candidate when choosing the best split candidate. This
+  /// heuristic may be compile time intensive.
+  virtual bool enableAdvancedRASplitCost() const;
 
   /// \brief Enable use of alias analysis during code generation (during MI
   /// scheduling, DAGCombine, etc.).

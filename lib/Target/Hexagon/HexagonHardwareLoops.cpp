@@ -111,9 +111,7 @@ namespace {
   public:
     static char ID;
 
-    HexagonHardwareLoops() : MachineFunctionPass(ID) {
-      initializeHexagonHardwareLoopsPass(*PassRegistry::getPassRegistry());
-    }
+    HexagonHardwareLoops() : MachineFunctionPass(ID) {}
 
     bool runOnMachineFunction(MachineFunction &MF) override;
 
@@ -278,7 +276,7 @@ namespace {
     /// value, either directly, or via a register.
     void setImmediate(MachineOperand &MO, int64_t Val);
 
-    /// \brief Fix the data flow of the induction varible.
+    /// \brief Fix the data flow of the induction variable.
     /// The desired flow is: phi ---> bump -+-> comparison-in-latch.
     ///                                     |
     ///                                     +-> back to phi
@@ -513,8 +511,8 @@ HexagonHardwareLoops::getComparisonKind(unsigned CondOpc,
                                         int64_t IVBump) const {
   Comparison::Kind Cmp = (Comparison::Kind)0;
   switch (CondOpc) {
-  case Hexagon::C2_cmpeqi:
   case Hexagon::C2_cmpeq:
+  case Hexagon::C2_cmpeqi:
   case Hexagon::C2_cmpeqp:
     Cmp = Comparison::EQ;
     break;
@@ -522,21 +520,35 @@ HexagonHardwareLoops::getComparisonKind(unsigned CondOpc,
   case Hexagon::C4_cmpneqi:
     Cmp = Comparison::NE;
     break;
+  case Hexagon::C2_cmplt:
+    Cmp = Comparison::LTs;
+    break;
+  case Hexagon::C2_cmpltu:
+    Cmp = Comparison::LTu;
+    break;
   case Hexagon::C4_cmplte:
+  case Hexagon::C4_cmpltei:
     Cmp = Comparison::LEs;
     break;
   case Hexagon::C4_cmplteu:
+  case Hexagon::C4_cmplteui:
     Cmp = Comparison::LEu;
     break;
-  case Hexagon::C2_cmpgtui:
+  case Hexagon::C2_cmpgt:
+  case Hexagon::C2_cmpgti:
+  case Hexagon::C2_cmpgtp:
+    Cmp = Comparison::GTs;
+    break;
   case Hexagon::C2_cmpgtu:
+  case Hexagon::C2_cmpgtui:
   case Hexagon::C2_cmpgtup:
     Cmp = Comparison::GTu;
     break;
-  case Hexagon::C2_cmpgti:
-  case Hexagon::C2_cmpgt:
-  case Hexagon::C2_cmpgtp:
-    Cmp = Comparison::GTs;
+  case Hexagon::C2_cmpgei:
+    Cmp = Comparison::GEs;
+    break;
+  case Hexagon::C2_cmpgeui:
+    Cmp = Comparison::GEs;
     break;
   default:
     return (Comparison::Kind)0;
@@ -685,15 +697,21 @@ CountValue *HexagonHardwareLoops::getLoopTripCount(MachineLoop *L,
   if (InitialValue->isReg()) {
     unsigned R = InitialValue->getReg();
     MachineBasicBlock *DefBB = MRI->getVRegDef(R)->getParent();
-    if (!MDT->properlyDominates(DefBB, Header))
-      return nullptr;
+    if (!MDT->properlyDominates(DefBB, Header)) {
+      int64_t V;
+      if (!checkForImmediate(*InitialValue, V))
+        return nullptr;
+    }
     OldInsts.push_back(MRI->getVRegDef(R));
   }
   if (EndValue->isReg()) {
     unsigned R = EndValue->getReg();
     MachineBasicBlock *DefBB = MRI->getVRegDef(R)->getParent();
-    if (!MDT->properlyDominates(DefBB, Header))
-      return nullptr;
+    if (!MDT->properlyDominates(DefBB, Header)) {
+      int64_t V;
+      if (!checkForImmediate(*EndValue, V))
+        return nullptr;
+    }
     OldInsts.push_back(MRI->getVRegDef(R));
   }
 
@@ -1238,7 +1256,7 @@ bool HexagonHardwareLoops::convertToHardwareLoop(MachineLoop *L,
     // if the immediate fits in the instructions.  Otherwise, we need to
     // create a new virtual register.
     int64_t CountImm = TripCount->getImm();
-    if (!TII->isValidOffset(LOOP_i, CountImm)) {
+    if (!TII->isValidOffset(LOOP_i, CountImm, TRI)) {
       unsigned CountReg = MRI->createVirtualRegister(&Hexagon::IntRegsRegClass);
       BuildMI(*Preheader, InsertPos, DL, TII->get(Hexagon::A2_tfrsi), CountReg)
         .addImm(CountImm);

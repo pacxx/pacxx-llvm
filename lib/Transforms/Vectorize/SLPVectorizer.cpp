@@ -6,6 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+//
 // This pass implements the Bottom Up SLP vectorizer. It detects consecutive
 // stores that can be put together into vector-stores. Next, it attempts to
 // construct vectorizable tree using the use-def chains. If a profitable tree
@@ -39,7 +40,7 @@
 #include "llvm/Analysis/LoopAccessAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryLocation.h"
-#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -361,14 +362,17 @@ static Value *isOneOf(Value *OpValue, Value *Op) {
 }
 
 namespace {
+
 /// Contains data for the instructions going to be vectorized.
 struct RawInstructionsData {
   /// Main Opcode of the instructions going to be vectorized.
   unsigned Opcode = 0;
+
   /// The list of instructions have some instructions with alternate opcodes.
   bool HasAltOpcodes = false;
 };
-} // namespace
+
+} // end anonymous namespace
 
 /// Checks the list of the vectorized instructions \p VL and returns info about
 /// this list.
@@ -392,19 +396,24 @@ static RawInstructionsData getMainOpcode(ArrayRef<Value *> VL) {
 }
 
 namespace {
+
 /// Main data required for vectorization of instructions.
 struct InstructionsState {
   /// The very first instruction in the list with the main opcode.
   Value *OpValue = nullptr;
+
   /// The main opcode for the list of instructions.
   unsigned Opcode = 0;
+
   /// Some of the instructions in the list have alternate opcodes.
   bool IsAltShuffle = false;
+
   InstructionsState() = default;
   InstructionsState(Value *OpValue, unsigned Opcode, bool IsAltShuffle)
       : OpValue(OpValue), Opcode(Opcode), IsAltShuffle(IsAltShuffle) {}
 };
-} // namespace
+
+} // end anonymous namespace
 
 /// \returns analysis of the Instructions in \p VL described in
 /// InstructionsState, the Opcode that we suppose the whole list 
@@ -973,6 +982,7 @@ private:
     return os;
   }
 #endif
+
   friend struct GraphTraits<BoUpSLP *>;
   friend struct DOTGraphTraits<BoUpSLP *>;
 
@@ -1176,9 +1186,9 @@ private:
 
     /// The ID of the scheduling region. For a new vectorization iteration this
     /// is incremented which "removes" all ScheduleData from the region.
-    int SchedulingRegionID = 1;
     // Make sure that the initial SchedulingRegionID is greater than the
     // initial SchedulingRegionID in ScheduleData (which is 0).
+    int SchedulingRegionID = 1;
   };
 
   /// Attaches the BlockScheduling structures to basic blocks.
@@ -1212,6 +1222,7 @@ private:
 
   unsigned MaxVecRegSize; // This is set by TTI or overridden by cl::opt.
   unsigned MinVecRegSize; // Set by cl::opt (default: 128).
+
   /// Instruction builder to construct the vectorized tree.
   IRBuilder<> Builder;
 
@@ -1436,10 +1447,10 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
 
   // Check that none of the instructions in the bundle are already in the tree.
   for (unsigned i = 0, e = VL.size(); i != e; ++i) {
-      auto *I = dyn_cast<Instruction>(VL[i]);
-      if (!I)
-        continue;
-      if (getTreeEntry(I)) {
+    auto *I = dyn_cast<Instruction>(VL[i]);
+    if (!I)
+      continue;
+    if (getTreeEntry(I)) {
       DEBUG(dbgs() << "SLP: The instruction (" << *VL[i] <<
             ") is already in tree.\n");
       newTreeEntry(VL, false, UserTreeIdx);
@@ -1447,7 +1458,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     }
   }
 
-  // If any of the scalars is marked as a value that needs to stay scalar then
+  // If any of the scalars is marked as a value that needs to stay scalar, then
   // we need to gather the scalars.
   for (unsigned i = 0, e = VL.size(); i != e; ++i) {
     if (MustGather.count(VL[i])) {
@@ -1459,7 +1470,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
 
   // Check that all of the users of the scalars that we want to vectorize are
   // schedulable.
-  Instruction *VL0 = cast<Instruction>(S.OpValue);
+  auto *VL0 = cast<Instruction>(S.OpValue);
   BasicBlock *BB = VL0->getParent();
 
   if (!DT->isReachableFromEntry(BB)) {
@@ -1470,9 +1481,9 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     return;
   }
 
-  // Check that every instructions appears once in this bundle.
+  // Check that every instruction appears once in this bundle.
   for (unsigned i = 0, e = VL.size(); i < e; ++i)
-    for (unsigned j = i+1; j < e; ++j)
+    for (unsigned j = i + 1; j < e; ++j)
       if (VL[i] == VL[j]) {
         DEBUG(dbgs() << "SLP: Scalar used twice in bundle.\n");
         newTreeEntry(VL, false, UserTreeIdx);
@@ -1480,9 +1491,9 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       }
 
   auto &BSRef = BlocksSchedules[BB];
-  if (!BSRef) {
+  if (!BSRef)
     BSRef = llvm::make_unique<BlockScheduling>(BB);
-  }
+
   BlockScheduling &BS = *BSRef.get();
 
   if (!BS.tryScheduleBundle(VL, this, S.OpValue)) {
@@ -1541,11 +1552,10 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     }
     case Instruction::Load: {
       // Check that a vectorized load would load the same memory as a scalar
-      // load.
-      // For example we don't want vectorize loads that are smaller than 8 bit.
-      // Even though we have a packed struct {<i2, i2, i2, i2>} LLVM treats
-      // loading/storing it as an i8 struct. If we vectorize loads/stores from
-      // such a struct we read/write packed bits disagreeing with the
+      // load. For example, we don't want to vectorize loads that are smaller
+      // than 8-bit. Even though we have a packed struct {<i2, i2, i2, i2>} LLVM
+      // treats loading/storing it as an i8 struct. If we vectorize loads/stores
+      // from such a struct, we read/write packed bits disagreeing with the
       // unvectorized version.
       Type *ScalarTy = VL0->getType();
 
@@ -2984,27 +2994,26 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       unsigned Alignment = SI->getAlignment();
       unsigned AS = SI->getPointerAddressSpace();
 
-      ValueList ValueOp;
+      ValueList ScalarStoreValues;
       for (Value *V : E->Scalars)
-        ValueOp.push_back(cast<StoreInst>(V)->getValueOperand());
+        ScalarStoreValues.push_back(cast<StoreInst>(V)->getValueOperand());
 
       setInsertPointAfterBundle(E->Scalars, VL0);
 
-      Value *VecValue = vectorizeTree(ValueOp);
-      Value *VecPtr = Builder.CreateBitCast(SI->getPointerOperand(),
-                                            VecTy->getPointerTo(AS));
+      Value *VecValue = vectorizeTree(ScalarStoreValues);
+      Value *ScalarPtr = SI->getPointerOperand();
+      Value *VecPtr = Builder.CreateBitCast(ScalarPtr, VecTy->getPointerTo(AS));
       StoreInst *S = Builder.CreateStore(VecValue, VecPtr);
 
-      // The pointer operand uses an in-tree scalar so we add the new BitCast to
-      // ExternalUses list to make sure that an extract will be generated in the
+      // The pointer operand uses an in-tree scalar, so add the new BitCast to
+      // ExternalUses to make sure that an extract will be generated in the
       // future.
-      Value *PO = SI->getPointerOperand();
-      if (getTreeEntry(PO))
-        ExternalUses.push_back(ExternalUser(PO, cast<User>(VecPtr), 0));
+      if (getTreeEntry(ScalarPtr))
+        ExternalUses.push_back(ExternalUser(ScalarPtr, cast<User>(VecPtr), 0));
 
-      if (!Alignment) {
+      if (!Alignment)
         Alignment = DL->getABITypeAlignment(SI->getValueOperand()->getType());
-      }
+
       S->setAlignment(Alignment);
       E->VectorizedValue = S;
       ++NumVectorInstructions;
@@ -3595,12 +3604,6 @@ void BoUpSLP::BlockScheduling::initScheduleData(Instruction *FromI,
   for (Instruction *I = FromI; I != ToI; I = I->getNextNode()) {
     ScheduleData *SD = ScheduleDataMap[I];
     if (!SD) {
-      // Allocate a new ScheduleData for the instruction.
-      if (ChunkPos >= ChunkSize) {
-        ScheduleDataChunks.push_back(
-            llvm::make_unique<ScheduleData[]>(ChunkSize));
-        ChunkPos = 0;
-      }
       SD = allocateScheduleDataChunks();
       ScheduleDataMap[I] = SD;
       SD->Inst = I;
@@ -4654,7 +4657,9 @@ namespace {
 ///   *p =
 ///
 class HorizontalReduction {
-  SmallVector<Value *, 16> ReductionOps;
+  using ReductionOpsType = SmallVector<Value *, 16>;
+  using ReductionOpsListType = SmallVector<ReductionOpsType, 2>;
+  ReductionOpsListType  ReductionOps;
   SmallVector<Value *, 32> ReducedVals;
   // Use map vector to make stable output.
   MapVector<Instruction *, Value *> ExtraArgs;
@@ -4668,6 +4673,7 @@ class HorizontalReduction {
     RK_Max,        /// Maximum reduction data.
     RK_UMax,       /// Unsigned maximum reduction data.
   };
+
   /// Contains info about operation, like its opcode, left and right operands.
   class OperationData {
     /// Opcode of the instruction.
@@ -4678,8 +4684,10 @@ class HorizontalReduction {
 
     /// Right operand of the reduction operation.
     Value *RHS = nullptr;
+
     /// Kind of the reduction operation.
     ReductionKind Kind = RK_None;
+
     /// True if float point min/max reduction has no NaNs.
     bool NoNaN = false;
 
@@ -4695,12 +4703,43 @@ class HorizontalReduction {
                (Kind == RK_UMin || Kind == RK_UMax)));
     }
 
+    /// Creates reduction operation with the current opcode.
+    Value *createOp(IRBuilder<> &Builder, const Twine &Name) const {
+      assert(isVectorizable() &&
+             "Expected add|fadd or min/max reduction operation.");
+      Value *Cmp;
+      switch (Kind) {
+      case RK_Arithmetic:
+        return Builder.CreateBinOp((Instruction::BinaryOps)Opcode, LHS, RHS,
+                                   Name);
+      case RK_Min:
+        Cmp = Opcode == Instruction::ICmp ? Builder.CreateICmpSLT(LHS, RHS)
+                                          : Builder.CreateFCmpOLT(LHS, RHS);
+        break;
+      case RK_Max:
+        Cmp = Opcode == Instruction::ICmp ? Builder.CreateICmpSGT(LHS, RHS)
+                                          : Builder.CreateFCmpOGT(LHS, RHS);
+        break;
+      case RK_UMin:
+        assert(Opcode == Instruction::ICmp && "Expected integer types.");
+        Cmp = Builder.CreateICmpULT(LHS, RHS);
+        break;
+      case RK_UMax:
+        assert(Opcode == Instruction::ICmp && "Expected integer types.");
+        Cmp = Builder.CreateICmpUGT(LHS, RHS);
+        break;
+      case RK_None:
+        llvm_unreachable("Unknown reduction operation.");
+      }
+      return Builder.CreateSelect(Cmp, LHS, RHS, Name);
+    }
+
   public:
     explicit OperationData() = default;
 
     /// Construction for reduced values. They are identified by opcode only and
     /// don't have associated LHS/RHS values.
-    explicit OperationData(Value *V) : Kind(RK_None) {
+    explicit OperationData(Value *V) {
       if (auto *I = dyn_cast<Instruction>(V))
         Opcode = I->getOpcode();
     }
@@ -4712,6 +4751,7 @@ class HorizontalReduction {
         : Opcode(Opcode), LHS(LHS), RHS(RHS), Kind(Kind), NoNaN(NoNaN) {
       assert(Kind != RK_None && "One of the reduction operations is expected.");
     }
+
     explicit operator bool() const { return Opcode; }
 
     /// Get the index of the first operand.
@@ -4748,22 +4788,86 @@ class HorizontalReduction {
       llvm_unreachable("Reduction kind is not set");
     }
 
-    /// Expected number of uses for reduction operations/reduced values.
-    unsigned getRequiredNumberOfUses() const {
+    /// Checks if the operation has the same parent as \p P.
+    bool hasSameParent(Instruction *I, Value *P, bool IsRedOp) const {
       assert(Kind != RK_None && !!*this && LHS && RHS &&
              "Expected reduction operation.");
+      if (!IsRedOp)
+        return I->getParent() == P;
       switch (Kind) {
       case RK_Arithmetic:
-        return 1;
+        // Arithmetic reduction operation must be used once only.
+        return I->getParent() == P;
       case RK_Min:
       case RK_UMin:
       case RK_Max:
-      case RK_UMax:
-        return 2;
+      case RK_UMax: {
+        // SelectInst must be used twice while the condition op must have single
+        // use only.
+        auto *Cmp = cast<Instruction>(cast<SelectInst>(I)->getCondition());
+        return I->getParent() == P && Cmp && Cmp->getParent() == P;
+      }
       case RK_None:
         break;
       }
       llvm_unreachable("Reduction kind is not set");
+    }
+    /// Expected number of uses for reduction operations/reduced values.
+    bool hasRequiredNumberOfUses(Instruction *I, bool IsReductionOp) const {
+      assert(Kind != RK_None && !!*this && LHS && RHS &&
+             "Expected reduction operation.");
+      switch (Kind) {
+      case RK_Arithmetic:
+        return I->hasOneUse();
+      case RK_Min:
+      case RK_UMin:
+      case RK_Max:
+      case RK_UMax:
+        return I->hasNUses(2) &&
+               (!IsReductionOp ||
+                cast<SelectInst>(I)->getCondition()->hasOneUse());
+      case RK_None:
+        break;
+      }
+      llvm_unreachable("Reduction kind is not set");
+    }
+
+    /// Initializes the list of reduction operations.
+    void initReductionOps(ReductionOpsListType &ReductionOps) {
+      assert(Kind != RK_None && !!*this && LHS && RHS &&
+             "Expected reduction operation.");
+      switch (Kind) {
+      case RK_Arithmetic:
+        ReductionOps.assign(1, ReductionOpsType());
+        break;
+      case RK_Min:
+      case RK_UMin:
+      case RK_Max:
+      case RK_UMax:
+        ReductionOps.assign(2, ReductionOpsType());
+        break;
+      case RK_None:
+        llvm_unreachable("Reduction kind is not set");
+      }
+    }
+    /// Add all reduction operations for the reduction instruction \p I.
+    void addReductionOps(Instruction *I, ReductionOpsListType &ReductionOps) {
+      assert(Kind != RK_None && !!*this && LHS && RHS &&
+             "Expected reduction operation.");
+      switch (Kind) {
+      case RK_Arithmetic:
+        ReductionOps[0].emplace_back(I);
+        break;
+      case RK_Min:
+      case RK_UMin:
+      case RK_Max:
+      case RK_UMax:
+        ReductionOps[0].emplace_back(cast<SelectInst>(I)->getCondition());
+        ReductionOps[1].emplace_back(I);
+        break;
+      case RK_None:
+        llvm_unreachable("Reduction kind is not set");
+      }
     }
 
     /// Checks if instruction is associative and can be vectorized.
@@ -4776,7 +4880,7 @@ class HorizontalReduction {
       case RK_Min:
       case RK_Max:
         return Opcode == Instruction::ICmp ||
-               cast<Instruction>(I->getOperand(0))->hasUnsafeAlgebra();
+               cast<Instruction>(I->getOperand(0))->isFast();
       case RK_UMin:
       case RK_UMax:
         assert(Opcode == Instruction::ICmp &&
@@ -4834,36 +4938,57 @@ class HorizontalReduction {
       llvm_unreachable("Reduction kind is not set");
     }
 
-    /// Creates reduction operation with the current opcode.
-    Value *createOp(IRBuilder<> &Builder, const Twine &Name = "") const {
+    /// Creates reduction operation with the current opcode with the IR flags
+    /// from \p ReductionOps.
+    Value *createOp(IRBuilder<> &Builder, const Twine &Name,
+                    const ReductionOpsListType &ReductionOps) const {
       assert(isVectorizable() &&
              "Expected add|fadd or min/max reduction operation.");
-      Value *Cmp;
+      auto *Op = createOp(Builder, Name);
       switch (Kind) {
       case RK_Arithmetic:
-        return Builder.CreateBinOp((Instruction::BinaryOps)Opcode, LHS, RHS,
-                                   Name);
+        propagateIRFlags(Op, ReductionOps[0]);
+        return Op;
       case RK_Min:
-        Cmp = Opcode == Instruction::ICmp ? Builder.CreateICmpSLT(LHS, RHS)
-                                          : Builder.CreateFCmpOLT(LHS, RHS);
-        break;
       case RK_Max:
-        Cmp = Opcode == Instruction::ICmp ? Builder.CreateICmpSGT(LHS, RHS)
-                                          : Builder.CreateFCmpOGT(LHS, RHS);
-        break;
       case RK_UMin:
-        assert(Opcode == Instruction::ICmp && "Expected integer types.");
-        Cmp = Builder.CreateICmpULT(LHS, RHS);
-        break;
       case RK_UMax:
-        assert(Opcode == Instruction::ICmp && "Expected integer types.");
-        Cmp = Builder.CreateICmpUGT(LHS, RHS);
-        break;
+        if (auto *SI = dyn_cast<SelectInst>(Op))
+          propagateIRFlags(SI->getCondition(), ReductionOps[0]);
+        propagateIRFlags(Op, ReductionOps[1]);
+        return Op;
       case RK_None:
-        llvm_unreachable("Unknown reduction operation.");
+        break;
       }
-      return Builder.CreateSelect(Cmp, LHS, RHS, Name);
+      llvm_unreachable("Unknown reduction operation.");
     }
+    /// Creates reduction operation with the current opcode with the IR flags
+    /// from \p I.
+    Value *createOp(IRBuilder<> &Builder, const Twine &Name,
+                    Instruction *I) const {
+      assert(isVectorizable() &&
+             "Expected add|fadd or min/max reduction operation.");
+      auto *Op = createOp(Builder, Name);
+      switch (Kind) {
+      case RK_Arithmetic:
+        propagateIRFlags(Op, I);
+        return Op;
+      case RK_Min:
+      case RK_Max:
+      case RK_UMin:
+      case RK_UMax:
+        if (auto *SI = dyn_cast<SelectInst>(Op)) {
+          propagateIRFlags(SI->getCondition(),
+                           cast<SelectInst>(I)->getCondition());
+        }
+        propagateIRFlags(Op, I);
+        return Op;
+      case RK_None:
+        break;
+      }
+      llvm_unreachable("Unknown reduction operation.");
+    }
+
     TargetTransformInfo::ReductionFlags getFlags() const {
       TargetTransformInfo::ReductionFlags Flags;
       Flags.NoNaN = NoNaN;
@@ -4999,7 +5124,7 @@ public:
     // trees containing only binary operators.
     SmallVector<std::pair<Instruction *, unsigned>, 32> Stack;
     Stack.push_back(std::make_pair(B, ReductionData.getFirstOperandIndex()));
-    const unsigned NUses = ReductionData.getRequiredNumberOfUses();
+    ReductionData.initReductionOps(ReductionOps);
     while (!Stack.empty()) {
       Instruction *TreeN = Stack.back().first;
       unsigned EdgeToVist = Stack.back().second++;
@@ -5025,7 +5150,7 @@ public:
             markExtraArg(Stack[Stack.size() - 2], TreeN);
             ExtraArgs.erase(TreeN);
           } else
-            ReductionOps.push_back(TreeN);
+            ReductionData.addReductionOps(TreeN, ReductionOps);
         }
         // Retract.
         Stack.pop_back();
@@ -5043,8 +5168,10 @@ public:
         // reduced value class.
         if (I && (!ReducedValueData || OpData == ReducedValueData ||
                   OpData == ReductionData)) {
+          const bool IsReductionOperation = OpData == ReductionData;
           // Only handle trees in the current basic block.
-          if (I->getParent() != B->getParent()) {
+          if (!ReductionData.hasSameParent(I, B->getParent(),
+                                           IsReductionOperation)) {
             // I is an extra argument for TreeN (its parent operation).
             markExtraArg(Stack.back(), I);
             continue;
@@ -5052,13 +5179,15 @@ public:
 
           // Each tree node needs to have minimal number of users except for the
           // ultimate reduction.
-          if (!I->hasNUses(NUses) && I != B) {
+          if (!ReductionData.hasRequiredNumberOfUses(I,
+                                                     OpData == ReductionData) &&
+              I != B) {
             // I is an extra argument for TreeN (its parent operation).
             markExtraArg(Stack.back(), I);
             continue;
           }
 
-          if (OpData == ReductionData) {
+          if (IsReductionOperation) {
             // We need to be able to reassociate the reduction operations.
             if (!OpData.isAssociative(I)) {
               // I is an extra argument for TreeN (its parent operation).
@@ -5103,7 +5232,7 @@ public:
     Value *VectorizedTree = nullptr;
     IRBuilder<> Builder(ReductionRoot);
     FastMathFlags Unsafe;
-    Unsafe.setUnsafeAlgebra();
+    Unsafe.setFast();
     Builder.setFastMathFlags(Unsafe);
     unsigned i = 0;
 
@@ -5112,12 +5241,15 @@ public:
     // to use it.
     for (auto &Pair : ExtraArgs)
       ExternallyUsedValues[Pair.second].push_back(Pair.first);
+    SmallVector<Value *, 16> IgnoreList;
+    for (auto &V : ReductionOps)
+      IgnoreList.append(V.begin(), V.end());
     while (i < NumReducedVals - ReduxWidth + 1 && ReduxWidth > 2) {
       auto VL = makeArrayRef(&ReducedVals[i], ReduxWidth);
-      V.buildTree(VL, ExternallyUsedValues, ReductionOps);
+      V.buildTree(VL, ExternallyUsedValues, IgnoreList);
       if (V.shouldReorder()) {
         SmallVector<Value *, 8> Reversed(VL.rbegin(), VL.rend());
-        V.buildTree(Reversed, ExternallyUsedValues, ReductionOps);
+        V.buildTree(Reversed, ExternallyUsedValues, IgnoreList);
       }
       if (V.isTreeTinyAndNotFullyVectorizable())
         break;
@@ -5145,14 +5277,14 @@ public:
 
       // Emit a reduction.
       Value *ReducedSubTree =
-          emitReduction(VectorizedRoot, Builder, ReduxWidth, ReductionOps, TTI);
+          emitReduction(VectorizedRoot, Builder, ReduxWidth, TTI);
       if (VectorizedTree) {
         Builder.SetCurrentDebugLocation(Loc);
         OperationData VectReductionData(ReductionData.getOpcode(),
                                         VectorizedTree, ReducedSubTree,
                                         ReductionData.getKind());
-        VectorizedTree = VectReductionData.createOp(Builder, "op.rdx");
-        propagateIRFlags(VectorizedTree, ReductionOps);
+        VectorizedTree =
+            VectReductionData.createOp(Builder, "op.rdx", ReductionOps);
       } else
         VectorizedTree = ReducedSubTree;
       i += ReduxWidth;
@@ -5167,8 +5299,7 @@ public:
         OperationData VectReductionData(ReductionData.getOpcode(),
                                         VectorizedTree, I,
                                         ReductionData.getKind());
-        VectorizedTree = VectReductionData.createOp(Builder);
-        propagateIRFlags(VectorizedTree, ReductionOps);
+        VectorizedTree = VectReductionData.createOp(Builder, "", ReductionOps);
       }
       for (auto &Pair : ExternallyUsedValues) {
         assert(!Pair.second.empty() &&
@@ -5179,8 +5310,7 @@ public:
           OperationData VectReductionData(ReductionData.getOpcode(),
                                           VectorizedTree, Pair.first,
                                           ReductionData.getKind());
-          VectorizedTree = VectReductionData.createOp(Builder, "op.extra");
-          propagateIRFlags(VectorizedTree, I);
+          VectorizedTree = VectReductionData.createOp(Builder, "op.extra", I);
         }
       }
       // Update users.
@@ -5264,8 +5394,7 @@ private:
 
   /// \brief Emit a horizontal reduction of the vectorized value.
   Value *emitReduction(Value *VectorizedValue, IRBuilder<> &Builder,
-                       unsigned ReduxWidth, ArrayRef<Value *> RedOps,
-                       const TargetTransformInfo *TTI) {
+                       unsigned ReduxWidth, const TargetTransformInfo *TTI) {
     assert(VectorizedValue && "Need to have a vectorized tree node");
     assert(isPowerOf2_32(ReduxWidth) &&
            "We only handle power-of-two reductions for now");
@@ -5273,7 +5402,7 @@ private:
     if (!IsPairwiseReduction)
       return createSimpleTargetReduction(
           Builder, TTI, ReductionData.getOpcode(), VectorizedValue,
-          ReductionData.getFlags(), RedOps);
+          ReductionData.getFlags(), ReductionOps.back());
 
     Value *TmpVec = VectorizedValue;
     for (unsigned i = ReduxWidth / 2; i != 0; i >>= 1) {
@@ -5289,8 +5418,7 @@ private:
           "rdx.shuf.r");
       OperationData VectReductionData(ReductionData.getOpcode(), LeftShuf,
                                       RightShuf, ReductionData.getKind());
-      TmpVec = VectReductionData.createOp(Builder, "op.rdx");
-      propagateIRFlags(TmpVec, RedOps);
+      TmpVec = VectReductionData.createOp(Builder, "op.rdx", ReductionOps);
     }
 
     // The result is in the first element of the vector.
@@ -5308,7 +5436,6 @@ private:
 ///  starting from the last insertelement instruction.
 ///
 /// Returns true if it matches
-///
 static bool findBuildVector(InsertElementInst *LastInsertElem,
                             SmallVectorImpl<Value *> &BuildVector,
                             SmallVectorImpl<Value *> &BuildVectorOpds) {
@@ -5490,7 +5617,7 @@ static bool tryToVectorizeHorReductionOrInstOperands(
       for (auto *Op : Inst->operand_values())
         if (VisitedInstrs.insert(Op).second)
           if (auto *I = dyn_cast<Instruction>(Op))
-            if (!isa<PHINode>(Inst) && I->getParent() == BB)
+            if (!isa<PHINode>(I) && I->getParent() == BB)
               Stack.emplace_back(Op, Level);
   }
   return Res;

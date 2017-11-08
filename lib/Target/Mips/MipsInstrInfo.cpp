@@ -157,24 +157,23 @@ unsigned MipsInstrInfo::removeBranch(MachineBasicBlock &MBB,
   assert(!BytesRemoved && "code size not handled");
 
   MachineBasicBlock::reverse_iterator I = MBB.rbegin(), REnd = MBB.rend();
-  unsigned removed;
-
-  // Skip all the debug instructions.
-  while (I != REnd && I->isDebugValue())
-    ++I;
-
-  if (I == REnd)
-    return 0;
-
-  MachineBasicBlock::iterator FirstBr = ++I.getReverse();
+  unsigned removed = 0;
 
   // Up to 2 branches are removed.
   // Note that indirect branches are not removed.
-  for (removed = 0; I != REnd && removed < 2; ++I, ++removed)
+  while (I != REnd && removed < 2) {
+    // Skip past debug instructions.
+    if (I->isDebugValue()) {
+      ++I;
+      continue;
+    }
     if (!getAnalyzableBrOpc(I->getOpcode()))
       break;
-
-  MBB.erase((--I).getReverse(), FirstBr);
+    // Remove the branch.
+    I->eraseFromParent();
+    I = MBB.rbegin();
+    ++removed;
+  }
 
   return removed;
 }
@@ -218,7 +217,13 @@ MipsInstrInfo::BranchType MipsInstrInfo::analyzeBranch(
   unsigned SecondLastOpc = 0;
   MachineInstr *SecondLastInst = nullptr;
 
-  if (++I != REnd) {
+  // Skip past any debug instruction to see if the second last actual
+  // is a branch.
+  ++I;
+  while (I != REnd && I->isDebugValue())
+    ++I;
+
+  if (I != REnd) {
     SecondLastInst = &*I;
     SecondLastOpc = getAnalyzableBrOpc(SecondLastInst->getOpcode());
 
@@ -530,4 +535,127 @@ bool MipsInstrInfo::findCommutedOpIndices(MachineInstr &MI, unsigned &SrcOpIdx1,
     return true;
   }
   return TargetInstrInfo::findCommutedOpIndices(MI, SrcOpIdx1, SrcOpIdx2);
+}
+
+// ins, ext, dext*, dins have the following constraints:
+// 0 <= pos      <  X
+// 0 <  size     <= X
+// 0 <  pos+size <= x
+//
+// dinsm and dinsm have the following contraints:
+// 0 <= pos      <  X
+// 0 <= size     <= X
+// 0 <  pos+size <= x
+
+static bool verifyInsExtInstruction(const MachineInstr &MI, StringRef &ErrInfo,
+                                    const int64_t PosLow, const int64_t PosHigh,
+                                    const int64_t SizeLow,
+                                    const int64_t SizeHigh,
+                                    const int64_t BothLow,
+                                    const int64_t BothHigh) {
+  MachineOperand MOPos = MI.getOperand(2);
+  if (!MOPos.isImm()) {
+    ErrInfo = "Position is not an immediate!";
+    return false;
+  }
+  int64_t Pos = MOPos.getImm();
+  if (!((PosLow <= Pos) && (Pos < PosHigh))) {
+    ErrInfo = "Position operand is out of range!";
+    return false;
+  }
+
+  MachineOperand MOSize = MI.getOperand(3);
+  if (!MOSize.isImm()) {
+    ErrInfo = "Size operand is not an immediate!";
+    return false;
+  }
+  int64_t Size = MOSize.getImm();
+  if (!((SizeLow < Size) && (Size <= SizeHigh))) {
+    ErrInfo = "Size operand is out of range!";
+    return false;
+  }
+
+  if (!((BothLow < (Pos + Size)) && ((Pos + Size) <= BothHigh))) {
+    ErrInfo = "Position + Size is out of range!";
+    return false;
+  }
+
+  return true;
+}
+
+//  Perform target specific instruction verification.
+bool MipsInstrInfo::verifyInstruction(const MachineInstr &MI,
+                                      StringRef &ErrInfo) const {
+  // Verify that ins and ext instructions are well formed.
+  switch (MI.getOpcode()) {
+    case Mips::EXT:
+    case Mips::EXT_MM:
+    case Mips::INS:
+    case Mips::INS_MM:
+    case Mips::DINS:
+    case Mips::DINS_MM64R6:
+      return verifyInsExtInstruction(MI, ErrInfo, 0, 32, 0, 32, 0, 32);
+    case Mips::DINSM:
+    case Mips::DINSM_MM64R6:
+      // The ISA spec has a subtle difference here in that it says:
+      //  2 <= size <= 64 for 'dinsm', so we change the bounds so that it
+      // is in line with the rest of instructions.
+      return verifyInsExtInstruction(MI, ErrInfo, 0, 32, 1, 64, 32, 64);
+    case Mips::DINSU:
+    case Mips::DINSU_MM64R6:
+      // The ISA spec has a subtle difference here in that it says:
+      //  2 <= size <= 64 for 'dinsm', so we change the bounds so that it
+      // is in line with the rest of instructions.
+      return verifyInsExtInstruction(MI, ErrInfo, 32, 64, 1, 32, 32, 64);
+    case Mips::DEXT:
+    case Mips::DEXT_MM64R6:
+      return verifyInsExtInstruction(MI, ErrInfo, 0, 32, 0, 32, 0, 63);
+    case Mips::DEXTM:
+    case Mips::DEXTM_MM64R6:
+      return verifyInsExtInstruction(MI, ErrInfo, 0, 32, 32, 64, 32, 64);
+    case Mips::DEXTU:
+    case Mips::DEXTU_MM64R6:
+      return verifyInsExtInstruction(MI, ErrInfo, 32, 64, 0, 32, 32, 64);
+    default:
+      return true;
+  }
+
+  return true;
+}
+
+std::pair<unsigned, unsigned>
+MipsInstrInfo::decomposeMachineOperandsTargetFlags(unsigned TF) const {
+  return std::make_pair(TF, 0u);
+}
+
+ArrayRef<std::pair<unsigned, const char*>>
+MipsInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
+ using namespace MipsII;
+
+ static const std::pair<unsigned, const char*> Flags[] = {
+    {MO_GOT,          "mips-got"},
+    {MO_GOT_CALL,     "mips-got-call"},
+    {MO_GPREL,        "mips-gprel"},
+    {MO_ABS_HI,       "mips-abs-hi"},
+    {MO_ABS_LO,       "mips-abs-lo"},
+    {MO_TLSGD,        "mips-tlsgd"},
+    {MO_TLSLDM,       "mips-tlsldm"},
+    {MO_DTPREL_HI,    "mips-dtprel-hi"},
+    {MO_DTPREL_LO,    "mips-dtprel-lo"},
+    {MO_GOTTPREL,     "mips-gottprel"},
+    {MO_TPREL_HI,     "mips-tprel-hi"},
+    {MO_TPREL_LO,     "mips-tprel-lo"},
+    {MO_GPOFF_HI,     "mips-gpoff-hi"},
+    {MO_GPOFF_LO,     "mips-gpoff-lo"},
+    {MO_GOT_DISP,     "mips-got-disp"},
+    {MO_GOT_PAGE,     "mips-got-page"},
+    {MO_GOT_OFST,     "mips-got-ofst"},
+    {MO_HIGHER,       "mips-higher"},
+    {MO_HIGHEST,      "mips-highest"},
+    {MO_GOT_HI16,     "mips-got-hi16"},
+    {MO_GOT_LO16,     "mips-got-lo16"},
+    {MO_CALL_HI16,    "mips-call-hi16"},
+    {MO_CALL_LO16,    "mips-call-lo16"}
+  };
+  return makeArrayRef(Flags);
 }

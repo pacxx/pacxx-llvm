@@ -34,10 +34,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "InstCombineInternal.h"
-#include "llvm-c/Initialization.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/None.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -48,26 +52,56 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
-#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/Analysis/TargetFolder.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Operator.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/CBindingWrapping.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/DebugCounter.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/InstCombine/InstCombineWorklist.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
-#include <climits>
+#include <cassert>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
@@ -90,6 +124,16 @@ EnableExpensiveCombines("expensive-combines",
 static cl::opt<unsigned>
 MaxArraySize("instcombine-maxarray-size", cl::init(1024),
              cl::desc("Maximum array size considered when doing a combine"));
+
+// FIXME: Remove this flag when it is no longer necessary to convert
+// llvm.dbg.declare to avoid inaccurate debug info. Setting this to false
+// increases variable availability at the cost of accuracy. Variables that
+// cannot be promoted by mem2reg or SROA will be described as living in memory
+// for their entire lifetime. However, passes like DSE and instcombine can
+// delete stores to the alloca, leading to misleading and inaccurate debug
+// information. This flag can be removed when those passes are fixed.
+static cl::opt<unsigned> ShouldLowerDbgDeclare("instcombine-lower-dbg-declare",
+                                               cl::Hidden, cl::init(true));
 
 Value *InstCombiner::EmitGEPOffset(User *GEP) {
   return llvm::EmitGEPOffset(&Builder, DL, GEP);
@@ -385,7 +429,7 @@ bool InstCombiner::SimplifyAssociativeOrCommutative(BinaryOperator &I) {
 
     // No further simplifications.
     return Changed;
-  } while (1);
+  } while (true);
 }
 
 /// Return whether "X LOp (Y ROp Z)" is always equal to
@@ -708,36 +752,37 @@ Value *InstCombiner::SimplifyUsingDistributiveLaws(BinaryOperator &I) {
     }
   }
 
-  // (op (select (a, c, b)), (select (a, d, b))) -> (select (a, (op c, d), 0))
-  // (op (select (a, b, c)), (select (a, b, d))) -> (select (a, 0, (op c, d)))
-  if (auto *SI0 = dyn_cast<SelectInst>(LHS)) {
-    if (auto *SI1 = dyn_cast<SelectInst>(RHS)) {
-      if (SI0->getCondition() == SI1->getCondition()) {
-        Value *SI = nullptr;
-        if (Value *V =
-                SimplifyBinOp(TopLevelOpcode, SI0->getFalseValue(),
-                              SI1->getFalseValue(), SQ.getWithInstruction(&I)))
-          SI = Builder.CreateSelect(SI0->getCondition(),
-                                    Builder.CreateBinOp(TopLevelOpcode,
-                                                        SI0->getTrueValue(),
-                                                        SI1->getTrueValue()),
-                                    V);
-        if (Value *V =
-                SimplifyBinOp(TopLevelOpcode, SI0->getTrueValue(),
-                              SI1->getTrueValue(), SQ.getWithInstruction(&I)))
-          SI = Builder.CreateSelect(
-              SI0->getCondition(), V,
-              Builder.CreateBinOp(TopLevelOpcode, SI0->getFalseValue(),
-                                  SI1->getFalseValue()));
-        if (SI) {
-          SI->takeName(&I);
-          return SI;
-        }
-      }
-    }
+  return SimplifySelectsFeedingBinaryOp(I, LHS, RHS);
+}
+
+Value *InstCombiner::SimplifySelectsFeedingBinaryOp(BinaryOperator &I,
+                                                    Value *LHS, Value *RHS) {
+  Instruction::BinaryOps Opcode = I.getOpcode();
+  // (op (select (a, b, c)), (select (a, d, e))) -> (select (a, (op b, d), (op
+  // c, e)))
+  Value *A, *B, *C, *D, *E;
+  Value *SI = nullptr;
+  if (match(LHS, m_Select(m_Value(A), m_Value(B), m_Value(C))) &&
+      match(RHS, m_Select(m_Specific(A), m_Value(D), m_Value(E)))) {
+    bool SelectsHaveOneUse = LHS->hasOneUse() && RHS->hasOneUse();
+    BuilderTy::FastMathFlagGuard Guard(Builder);
+    if (isa<FPMathOperator>(&I))
+      Builder.setFastMathFlags(I.getFastMathFlags());
+
+    Value *V1 = SimplifyBinOp(Opcode, C, E, SQ.getWithInstruction(&I));
+    Value *V2 = SimplifyBinOp(Opcode, B, D, SQ.getWithInstruction(&I));
+    if (V1 && V2)
+      SI = Builder.CreateSelect(A, V2, V1);
+    else if (V2 && SelectsHaveOneUse)
+      SI = Builder.CreateSelect(A, V2, Builder.CreateBinOp(Opcode, C, E));
+    else if (V1 && SelectsHaveOneUse)
+      SI = Builder.CreateSelect(A, Builder.CreateBinOp(Opcode, B, D), V1);
+
+    if (SI)
+      SI->takeName(&I);
   }
 
-  return nullptr;
+  return SI;
 }
 
 /// Given a 'sub' instruction, return the RHS of the instruction if the LHS is a
@@ -1162,7 +1207,7 @@ Value *InstCombiner::Descale(Value *Val, APInt Scale, bool &NoSignedWrap) {
   // Parent - initially null, but after drilling down notes where Op came from.
   // In the example above, Parent is (Val, 0) when Op is M1, because M1 is the
   // 0'th operand of Val.
-  std::pair<Instruction*, unsigned> Parent;
+  std::pair<Instruction *, unsigned> Parent;
 
   // Set if the transform requires a descaling at deeper levels that doesn't
   // overflow.
@@ -1172,7 +1217,6 @@ Value *InstCombiner::Descale(Value *Val, APInt Scale, bool &NoSignedWrap) {
   int32_t logScale = Scale.exactLogBase2();
 
   for (;; Op = Parent.first->getOperand(Parent.second)) { // Drill down
-
     if (ConstantInt *CI = dyn_cast<ConstantInt>(Op)) {
       // If Op is a constant divisible by Scale then descale to the quotient.
       APInt Quotient(Scale), Remainder(Scale); // Init ensures right bitwidth.
@@ -1187,7 +1231,6 @@ Value *InstCombiner::Descale(Value *Val, APInt Scale, bool &NoSignedWrap) {
     }
 
     if (BinaryOperator *BO = dyn_cast<BinaryOperator>(Op)) {
-
       if (BO->getOpcode() == Instruction::Mul) {
         // Multiplication.
         NoSignedWrap = BO->hasNoSignedWrap();
@@ -1362,7 +1405,7 @@ Value *InstCombiner::Descale(Value *Val, APInt Scale, bool &NoSignedWrap) {
     // Move up one level in the expression.
     assert(Ancestor->hasOneUse() && "Drilled down when more than one use!");
     Ancestor = Ancestor->user_back();
-  } while (1);
+  } while (true);
 }
 
 /// \brief Creates node of binary operation with the same attributes as the
@@ -1609,7 +1652,6 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
   // Combine Indices - If the source pointer to this getelementptr instruction
   // is a getelementptr instruction, combine the indices of the two
   // getelementptr instructions into a single instruction.
-  //
   if (GEPOperator *Src = dyn_cast<GEPOperator>(PtrOp)) {
     if (!shouldMergeGEPs(*cast<GEPOperator>(&GEP), *Src))
       return nullptr;
@@ -1634,7 +1676,6 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
     if (EndsWithSequential) {
       // Replace: gep (gep %P, long B), long A, ...
       // With:    T = long A+B; gep %P, T, ...
-      //
       Value *SO1 = Src->getOperand(Src->getNumOperands()-1);
       Value *GO1 = GEP.getOperand(1);
 
@@ -2092,6 +2133,16 @@ Instruction *InstCombiner::visitAllocSite(Instruction &MI) {
   // to null and free calls, delete the calls and replace the comparisons with
   // true or false as appropriate.
   SmallVector<WeakTrackingVH, 64> Users;
+
+  // If we are removing an alloca with a dbg.declare, insert dbg.value calls
+  // before each store.
+  TinyPtrVector<DbgInfoIntrinsic *> DIIs;
+  std::unique_ptr<DIBuilder> DIB;
+  if (isa<AllocaInst>(MI)) {
+    DIIs = FindDbgAddrUses(&MI);
+    DIB.reset(new DIBuilder(*MI.getModule(), /*AllowUnresolved=*/false));
+  }
+
   if (isAllocSiteRemovable(&MI, Users, &TLI)) {
     for (unsigned i = 0, e = Users.size(); i != e; ++i) {
       // Lowering all @llvm.objectsize calls first because they may
@@ -2124,6 +2175,9 @@ Instruction *InstCombiner::visitAllocSite(Instruction &MI) {
       } else if (isa<BitCastInst>(I) || isa<GetElementPtrInst>(I) ||
                  isa<AddrSpaceCastInst>(I)) {
         replaceInstUsesWith(*I, UndefValue::get(I->getType()));
+      } else if (auto *SI = dyn_cast<StoreInst>(I)) {
+        for (auto *DII : DIIs)
+          ConvertDebugDeclareToDebugValue(DII, SI, *DIB);
       }
       eraseInstFromFunction(*I);
     }
@@ -2135,6 +2189,10 @@ Instruction *InstCombiner::visitAllocSite(Instruction &MI) {
       InvokeInst::Create(F, II->getNormalDest(), II->getUnwindDest(),
                          None, "", II->getParent());
     }
+
+    for (auto *DII : DIIs)
+      eraseInstFromFunction(*DII);
+
     return eraseInstFromFunction(MI);
   }
   return nullptr;
@@ -2196,7 +2254,6 @@ tryToMoveFreeBeforeNullTest(CallInst &FI) {
   FI.moveBefore(TI);
   return &FI;
 }
-
 
 Instruction *InstCombiner::visitFree(CallInst &FI) {
   Value *Op = FI.getArgOperand(0);
@@ -3031,7 +3088,6 @@ bool InstCombiner::run() {
 /// them to the worklist (this significantly speeds up instcombine on code where
 /// many instructions are dead or constant).  Additionally, if we find a branch
 /// whose condition is a known constant, we only visit the reachable successors.
-///
 static bool AddReachableCodeToWorklist(BasicBlock *BB, const DataLayout &DL,
                                        SmallPtrSetImpl<BasicBlock *> &Visited,
                                        InstCombineWorklist &ICWorklist,
@@ -3180,19 +3236,19 @@ static bool combineInstructionsOverFunction(
       F.getContext(), TargetFolder(DL),
       IRBuilderCallbackInserter([&Worklist, &AC](Instruction *I) {
         Worklist.Add(I);
-
-        using namespace llvm::PatternMatch;
         if (match(I, m_Intrinsic<Intrinsic::assume>()))
           AC.registerAssumption(cast<CallInst>(I));
       }));
 
   // Lower dbg.declare intrinsics otherwise their value may be clobbered
   // by instcombiner.
-  bool MadeIRChange = LowerDbgDeclare(F);
+  bool MadeIRChange = false;
+  if (ShouldLowerDbgDeclare)
+    MadeIRChange = LowerDbgDeclare(F);
 
   // Iterate while there is work to do.
   int Iteration = 0;
-  for (;;) {
+  while (true) {
     ++Iteration;
     DEBUG(dbgs() << "\n\nINSTCOMBINE ITERATION #" << Iteration << " on "
                  << F.getName() << "\n");
@@ -3266,6 +3322,7 @@ bool InstructionCombiningPass::runOnFunction(Function &F) {
 }
 
 char InstructionCombiningPass::ID = 0;
+
 INITIALIZE_PASS_BEGIN(InstructionCombiningPass, "instcombine",
                       "Combine redundant instructions", false, false)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)

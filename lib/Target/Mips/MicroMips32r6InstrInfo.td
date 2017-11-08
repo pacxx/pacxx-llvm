@@ -229,6 +229,7 @@ class SRL16_MMR6_ENC : SHIFT_FM_MM16<1>, MicroMipsR6Inst16;
 class BREAK16_MMR6_ENC : POOL16C_BREAKPOINT_FM_MMR6<0b011011>;
 class LI16_MMR6_ENC : LI_FM_MM16;
 class MOVE16_MMR6_ENC : MOVE_FM_MM16<0b000011>;
+class MOVEP_MMR6_ENC  : POOL16C_MOVEP16_FM_MMR6;
 class SDBBP16_MMR6_ENC : POOL16C_BREAKPOINT_FM_MMR6<0b111011>;
 class SUBU16_MMR6_ENC : POOL16A_SUBU16_FM_MMR6;
 class XOR16_MMR6_ENC : POOL16C_OR16_XOR16_FM_MMR6<0b1000>;
@@ -1204,6 +1205,7 @@ class LI16_MMR6_DESC : LoadImmMM16<"li16", li16_imm, GPRMM16Opnd>,
       MMR6Arch<"li16">, MicroMipsR6Inst16, IsAsCheapAsAMove;
 class MOVE16_MMR6_DESC : MoveMM16<"move16", GPR32Opnd>, MMR6Arch<"move16">,
       MicroMipsR6Inst16;
+class MOVEP_MMR6_DESC : MovePMM16<"movep", GPRMM16OpndMoveP>, MMR6Arch<"movep">;
 class SDBBP16_MMR6_DESC : BrkSdbbp16MM<"sdbbp16", II_SDBBP>, MMR6Arch<"sdbbp16">,
       MicroMipsR6Inst16;
 class SUBU16_MMR6_DESC : ArithRMM16<"subu16", GPRMM16Opnd, 0, II_SUBU, sub>,
@@ -1485,7 +1487,7 @@ def MTC1_MMR6 : StdMMR6Rel, MTC1_MMR6_DESC, MTC1_MMR6_ENC, ISA_MICROMIPS32R6;
 def MTC2_MMR6 : StdMMR6Rel, MTC2_MMR6_ENC, MTC2_MMR6_DESC, ISA_MICROMIPS32R6;
 def MTHC0_MMR6 : R6MMR6Rel, MTHC0_MMR6_ENC, MTHC0_MMR6_DESC, ISA_MICROMIPS32R6;
 def MTHC1_D32_MMR6 : StdMMR6Rel, MTHC1_D32_MMR6_DESC, MTHC1_MMR6_ENC, ISA_MICROMIPS32R6;
-let DecoderNamespace = "MicroMips32r6FP64" in {
+let DecoderNamespace = "MicroMipsFP64" in {
   def MTHC1_D64_MMR6 : R6MMR6Rel, MTHC1_D64_MMR6_DESC, MTHC1_MMR6_ENC,
                        ISA_MICROMIPS32R6;
 }
@@ -1496,7 +1498,7 @@ def MFC2_MMR6 : StdMMR6Rel, MFC2_MMR6_ENC, MFC2_MMR6_DESC, ISA_MICROMIPS32R6;
 def MFHC0_MMR6 : R6MMR6Rel, MFHC0_MMR6_ENC, MFHC0_MMR6_DESC, ISA_MICROMIPS32R6;
 def MFHC1_D32_MMR6 : StdMMR6Rel, MFHC1_D32_MMR6_DESC, MFHC1_MMR6_ENC,
                      ISA_MICROMIPS32R6;
-let DecoderNamespace = "MicroMips32r6FP64" in {
+let DecoderNamespace = "MicroMipsFP64" in {
   def MFHC1_D64_MMR6 : StdMMR6Rel, MFHC1_D64_MMR6_DESC, MFHC1_MMR6_ENC,
                        ISA_MICROMIPS32R6;
 }
@@ -1679,6 +1681,8 @@ def LI16_MMR6 : StdMMR6Rel, LI16_MMR6_DESC, LI16_MMR6_ENC,
                 ISA_MICROMIPS32R6;
 def MOVE16_MMR6 : StdMMR6Rel, MOVE16_MMR6_DESC, MOVE16_MMR6_ENC,
                   ISA_MICROMIPS32R6;
+def MOVEP_MMR6  : StdMMR6Rel, MOVEP_MMR6_DESC, MOVEP_MMR6_ENC,
+                  ISA_MICROMIPS32R6;
 def SDBBP16_MMR6 : StdMMR6Rel, SDBBP16_MMR6_DESC, SDBBP16_MMR6_ENC,
                    ISA_MICROMIPS32R6;
 def SUBU16_MMR6 : StdMMR6Rel, SUBU16_MMR6_DESC, SUBU16_MMR6_ENC,
@@ -1729,7 +1733,7 @@ def BC2EQZC_MMR6 : R6MMR6Rel, MipsR6Inst, BC2EQZC_MMR6_ENC, BC2EQZC_MMR6_DESC,
                    ISA_MICROMIPS32R6;
 def BC2NEZC_MMR6 : R6MMR6Rel, MipsR6Inst, BC2NEZC_MMR6_ENC, BC2NEZC_MMR6_DESC,
                    ISA_MICROMIPS32R6;
-let DecoderNamespace = "MicroMips32r6FP64" in {
+let DecoderNamespace = "MicroMipsFP64" in {
   def LDC1_D64_MMR6 : StdMMR6Rel, LDC1_D64_MMR6_DESC, LDC1_MMR6_ENC,
                       ISA_MICROMIPS32R6 {
     let BaseOpcode = "LDC164";
@@ -1828,6 +1832,9 @@ def : MipsInstAlias<"not $rt, $rs",
 def : MipsInstAlias<"seh $rd", (SEH_MMR6 GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
                     ISA_MICROMIPS32R6;
 def : MipsInstAlias<"seb $rd", (SEB_MMR6 GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
+                    ISA_MICROMIPS32R6;
+def : MipsInstAlias<"lapc $rd, $imm",
+                    (ADDIUPC_MMR6 GPR32Opnd:$rd, simm19_lsl2:$imm)>,
                     ISA_MICROMIPS32R6;
 
 //===----------------------------------------------------------------------===//

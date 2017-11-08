@@ -31,6 +31,8 @@ class Module;
 class raw_ostream;
 template <class BlockT> class BlockFrequencyInfoImpl;
 
+enum PGOViewCountsType { PGOVCT_None, PGOVCT_Graph, PGOVCT_Text };
+
 /// BlockFrequencyInfo pass uses BlockFrequencyInfoImpl implementation to
 /// estimate IR basic block frequencies.
 class BlockFrequencyInfo {
@@ -72,6 +74,10 @@ public:
   /// This uses the frequency \p Freq and multiplies it by
   /// the enclosing function's count (if available) and returns the value.
   Optional<uint64_t> getProfileCountFromFreq(uint64_t Freq) const;
+
+  /// \brief Returns true if \p BB is an irreducible loop header
+  /// block. Otherwise false.
+  bool isIrrLoopHeader(const BasicBlock *BB);
 
   // Set the frequency of the given basic block.
   void setBlockFreq(const BasicBlock *BB, uint64_t Freq);

@@ -168,8 +168,7 @@ const MCExpr *TargetLoweringObjectFileELF::getTTypeGlobalReference(
                                                            MMI, Streamer);
 }
 
-static SectionKind
-getELFKindForNamedSection(StringRef Name, SectionKind K) {
+static SectionKind getELFKindForNamedSection(StringRef Name, SectionKind K) {
   // N.B.: The defaults used in here are no the same ones used in MC.
   // We follow gcc, MC follows gas. For example, given ".section .eh_frame",
   // both gas and MC will produce a section with no flags. Given
@@ -1248,15 +1247,13 @@ static const Comdat *getWasmComdat(const GlobalValue *GV) {
 
 MCSection *TargetLoweringObjectFileWasm::getExplicitSectionGlobal(
     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
-  llvm_unreachable("getExplicitSectionGlobal not yet implemented");
-  return nullptr;
+  StringRef Name = GO->getSection();
+  return getContext().getWasmSection(Name, SectionKind::getData());
 }
 
-static MCSectionWasm *
-selectWasmSectionForGlobal(MCContext &Ctx, const GlobalObject *GO,
-                           SectionKind Kind, Mangler &Mang,
-                           const TargetMachine &TM, bool EmitUniqueSection,
-                           unsigned Flags, unsigned *NextUniqueID) {
+static MCSectionWasm *selectWasmSectionForGlobal(
+    MCContext &Ctx, const GlobalObject *GO, SectionKind Kind, Mangler &Mang,
+    const TargetMachine &TM, bool EmitUniqueSection, unsigned *NextUniqueID) {
   StringRef Group = "";
   if (getWasmComdat(GO))
     llvm_unreachable("comdat not yet supported for wasm");
@@ -1279,8 +1276,7 @@ selectWasmSectionForGlobal(MCContext &Ctx, const GlobalObject *GO,
     UniqueID = *NextUniqueID;
     (*NextUniqueID)++;
   }
-  return Ctx.getWasmSection(Name, /*Type=*/0, Flags,
-                            Group, UniqueID);
+  return Ctx.getWasmSection(Name, Kind, Group, UniqueID);
 }
 
 MCSection *TargetLoweringObjectFileWasm::SelectSectionForGlobal(
@@ -1299,8 +1295,7 @@ MCSection *TargetLoweringObjectFileWasm::SelectSectionForGlobal(
   EmitUniqueSection |= GO->hasComdat();
 
   return selectWasmSectionForGlobal(getContext(), GO, Kind, getMangler(), TM,
-                                    EmitUniqueSection, /*Flags=*/0,
-                                    &NextUniqueID);
+                                    EmitUniqueSection, &NextUniqueID);
 }
 
 bool TargetLoweringObjectFileWasm::shouldPutJumpTableInFunctionSection(
@@ -1330,7 +1325,9 @@ const MCExpr *TargetLoweringObjectFileWasm::lowerRelativeReference(
       MCSymbolRefExpr::create(TM.getSymbol(RHS), getContext()), getContext());
 }
 
-void
-TargetLoweringObjectFileWasm::InitializeWasm() {
-  // TODO: Initialize StaticCtorSection and StaticDtorSection.
+void TargetLoweringObjectFileWasm::InitializeWasm() {
+  StaticCtorSection =
+      getContext().getWasmSection(".init_array", SectionKind::getData());
+  StaticDtorSection =
+      getContext().getWasmSection(".fini_array", SectionKind::getData());
 }

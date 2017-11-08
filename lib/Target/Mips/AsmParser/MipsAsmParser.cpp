@@ -463,6 +463,9 @@ public:
     Match_RequiresSameSrcAndDst,
     Match_NoFCCRegisterForCurrentISA,
     Match_NonZeroOperandForSync,
+    Match_RequiresPosSizeRange0_32,
+    Match_RequiresPosSizeRange33_64,
+    Match_RequiresPosSizeUImm6,
 #define GET_OPERAND_DIAGNOSTIC_TYPES
 #include "MipsGenAsmMatcher.inc"
 #undef GET_OPERAND_DIAGNOSTIC_TYPES
@@ -470,7 +473,7 @@ public:
 
   MipsAsmParser(const MCSubtargetInfo &sti, MCAsmParser &parser,
                 const MCInstrInfo &MII, const MCTargetOptions &Options)
-    : MCTargetAsmParser(Options, sti),
+    : MCTargetAsmParser(Options, sti, MII),
         ABI(MipsABIInfo::computeTargetABI(Triple(sti.getTargetTriple()),
                                           sti.getCPU(), Options)) {
     MCAsmParserExtension::Initialize(parser);
@@ -4977,6 +4980,50 @@ unsigned MipsAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
     if (Inst.getOperand(0).getReg() == Inst.getOperand(1).getReg())
       return Match_RequiresDifferentOperands;
     return Match_Success;
+  case Mips::DINS:
+  case Mips::DINS_MM64R6: {
+    assert(Inst.getOperand(2).isImm() && Inst.getOperand(3).isImm() &&
+           "Operands must be immediates for dins!");
+    const signed Pos = Inst.getOperand(2).getImm();
+    const signed Size = Inst.getOperand(3).getImm();
+    if ((0 > (Pos + Size)) || ((Pos + Size) > 32))
+      return Match_RequiresPosSizeRange0_32;
+    return Match_Success;
+  }
+  case Mips::DINSM:
+  case Mips::DINSM_MM64R6:
+  case Mips::DINSU:
+  case Mips::DINSU_MM64R6: {
+    assert(Inst.getOperand(2).isImm() && Inst.getOperand(3).isImm() &&
+           "Operands must be immediates for dinsm/dinsu!");
+    const signed Pos = Inst.getOperand(2).getImm();
+    const signed Size = Inst.getOperand(3).getImm();
+    if ((32 >= (Pos + Size)) || ((Pos + Size) > 64))
+      return Match_RequiresPosSizeRange33_64;
+    return Match_Success;
+  }
+  case Mips::DEXT:
+  case Mips::DEXT_MM64R6: {
+    assert(Inst.getOperand(2).isImm() && Inst.getOperand(3).isImm() &&
+           "Operands must be immediates for DEXTM!");
+    const signed Pos = Inst.getOperand(2).getImm();
+    const signed Size = Inst.getOperand(3).getImm();
+    if ((1 > (Pos + Size)) || ((Pos + Size) > 63))
+      return Match_RequiresPosSizeUImm6;
+    return Match_Success;
+  }
+  case Mips::DEXTM:
+  case Mips::DEXTU:
+  case Mips::DEXTM_MM64R6:
+  case Mips::DEXTU_MM64R6: {
+    assert(Inst.getOperand(2).isImm() && Inst.getOperand(3).isImm() &&
+           "Operands must be immediates for dextm/dextu!");
+    const signed Pos = Inst.getOperand(2).getImm();
+    const signed Size = Inst.getOperand(3).getImm();
+    if ((32 > (Pos + Size)) || ((Pos + Size) > 64))
+      return Match_RequiresPosSizeRange33_64;
+    return Match_Success;
+  }
   }
 
   uint64_t TSFlags = getInstDesc(Inst.getOpcode()).TSFlags;
@@ -5122,6 +5169,7 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                  "expected 11-bit signed immediate");
   case Match_UImm16:
   case Match_UImm16_Relaxed:
+  case Match_UImm16_AltRelaxed:
     return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
                  "expected 16-bit unsigned immediate");
   case Match_SImm16:
@@ -5168,6 +5216,24 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_MemSImm16:
     return Error(RefineErrorLoc(IDLoc, Operands, ErrorInfo),
                  "expected memory with 16-bit signed offset");
+  case Match_RequiresPosSizeRange0_32: {
+    SMLoc ErrorStart = Operands[3]->getStartLoc();
+    SMLoc ErrorEnd = Operands[4]->getEndLoc();
+    return Error(ErrorStart, "size plus position are not in the range 0 .. 32",
+                 SMRange(ErrorStart, ErrorEnd));
+    }
+  case Match_RequiresPosSizeUImm6: {
+    SMLoc ErrorStart = Operands[3]->getStartLoc();
+    SMLoc ErrorEnd = Operands[4]->getEndLoc();
+    return Error(ErrorStart, "size plus position are not in the range 1 .. 63",
+                 SMRange(ErrorStart, ErrorEnd));
+    }
+  case Match_RequiresPosSizeRange33_64: {
+    SMLoc ErrorStart = Operands[3]->getStartLoc();
+    SMLoc ErrorEnd = Operands[4]->getEndLoc();
+    return Error(ErrorStart, "size plus position are not in the range 33 .. 64",
+                 SMRange(ErrorStart, ErrorEnd));
+    }
   }
 
   llvm_unreachable("Implement any new match types added!");
@@ -5793,14 +5859,21 @@ OperandMatchResultTy
 MipsAsmParser::parseInvNum(OperandVector &Operands) {
   MCAsmParser &Parser = getParser();
   const MCExpr *IdVal;
-  // If the first token is '$' we may have register operand.
-  if (Parser.getTok().is(AsmToken::Dollar))
-    return MatchOperand_NoMatch;
+  // If the first token is '$' we may have register operand. We have to reject
+  // cases where it is not a register. Complicating the matter is that
+  // register names are not reserved across all ABIs.
+  // Peek past the dollar to see if it's a register name for this ABI.
   SMLoc S = Parser.getTok().getLoc();
+  if (Parser.getTok().is(AsmToken::Dollar)) {
+    return matchCPURegisterName(Parser.getLexer().peekTok().getString()) == -1
+               ? MatchOperand_ParseFail
+               : MatchOperand_NoMatch;
+  }
   if (getParser().parseExpression(IdVal))
     return MatchOperand_ParseFail;
   const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(IdVal);
-  assert(MCE && "Unexpected MCExpr type.");
+  if (!MCE)
+    return MatchOperand_NoMatch;
   int64_t Val = MCE->getValue();
   SMLoc E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
   Operands.push_back(MipsOperand::CreateImm(
@@ -6518,6 +6591,10 @@ bool MipsAsmParser::parseSetFeature(uint64_t Feature) {
     setFeatureBits(Mips::FeatureDSP, "dsp");
     getTargetStreamer().emitDirectiveSetDsp();
     break;
+  case Mips::FeatureDSPR2:
+    setFeatureBits(Mips::FeatureDSPR2, "dspr2");
+    getTargetStreamer().emitDirectiveSetDspr2();
+    break;
   case Mips::FeatureMicroMips:
     setFeatureBits(Mips::FeatureMicroMips, "micromips");
     getTargetStreamer().emitDirectiveSetMicroMips();
@@ -6862,6 +6939,8 @@ bool MipsAsmParser::parseDirectiveSet() {
     return parseSetFeature(Mips::FeatureMips64r6);
   } else if (Tok.getString() == "dsp") {
     return parseSetFeature(Mips::FeatureDSP);
+  } else if (Tok.getString() == "dspr2") {
+    return parseSetFeature(Mips::FeatureDSPR2);
   } else if (Tok.getString() == "nodsp") {
     return parseSetNoDspDirective();
   } else if (Tok.getString() == "msa") {

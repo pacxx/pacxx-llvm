@@ -115,8 +115,6 @@
 
 using namespace llvm;
 
-static cl::opt<bool> VerifyDebugInfo("verify-debug-info", cl::init(true));
-
 namespace llvm {
 
 struct VerifierSupport {
@@ -567,6 +565,10 @@ void Verifier::visitGlobalValue(const GlobalValue &GV) {
 
   if (GV.isDeclarationForLinker())
     Assert(!GV.hasComdat(), "Declaration may not be in a Comdat!", &GV);
+
+  if (GV.hasDLLImportStorageClass())
+    Assert(!GV.isDSOLocal(),
+           "GlobalValue with DLLImport Storage is dso_local!", &GV);
 
   forEachUser(&GV, GlobalValueVisited, [&](const Value *V) -> bool {
     if (const Instruction *I = dyn_cast<Instruction>(V)) {
@@ -1146,7 +1148,6 @@ void Verifier::visitDITemplateValueParameter(
 void Verifier::visitDIVariable(const DIVariable &N) {
   if (auto *S = N.getRawScope())
     AssertDI(isa<DIScope>(S), "invalid scope", &N, S);
-  AssertDI(isType(N.getRawType()), "invalid type ref", &N, N.getRawType());
   if (auto *F = N.getRawFile())
     AssertDI(isa<DIFile>(F), "invalid file", &N, F);
 }
@@ -1169,6 +1170,7 @@ void Verifier::visitDILocalVariable(const DILocalVariable &N) {
   // Checks common to all variables.
   visitDIVariable(N);
 
+  AssertDI(isType(N.getRawType()), "invalid type ref", &N, N.getRawType());
   AssertDI(N.getTag() == dwarf::DW_TAG_variable, "invalid tag", &N);
   AssertDI(N.getRawScope() && isa<DILocalScope>(N.getRawScope()),
            "local variable requires a valid scope", &N, N.getRawScope());
@@ -1181,6 +1183,8 @@ void Verifier::visitDIExpression(const DIExpression &N) {
 void Verifier::visitDIGlobalVariableExpression(
     const DIGlobalVariableExpression &GVE) {
   AssertDI(GVE.getVariable(), "missing variable");
+  if (auto *Var = GVE.getVariable())
+    visitDIGlobalVariable(*Var);
   if (auto *Expr = GVE.getExpression()) {
     visitDIExpression(*Expr);
     if (auto Fragment = Expr->getFragmentInfo())
@@ -4001,6 +4005,9 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
            "invalid llvm.dbg.declare intrinsic call 1", CS);
     visitDbgIntrinsic("declare", cast<DbgInfoIntrinsic>(*CS.getInstruction()));
     break;
+  case Intrinsic::dbg_addr: // llvm.dbg.addr
+    visitDbgIntrinsic("addr", cast<DbgInfoIntrinsic>(*CS.getInstruction()));
+    break;
   case Intrinsic::dbg_value: // llvm.dbg.value
     visitDbgIntrinsic("value", cast<DbgInfoIntrinsic>(*CS.getInstruction()));
     break;
@@ -4020,9 +4027,7 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
     break;
   }
   case Intrinsic::memcpy_element_unordered_atomic: {
-    const ElementUnorderedAtomicMemCpyInst *MI =
-        cast<ElementUnorderedAtomicMemCpyInst>(CS.getInstruction());
-    ;
+    const AtomicMemCpyInst *MI = cast<AtomicMemCpyInst>(CS.getInstruction());
 
     ConstantInt *ElementSizeCI =
         dyn_cast<ConstantInt>(MI->getRawElementSizeInBytes());
@@ -4057,7 +4062,7 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
     break;
   }
   case Intrinsic::memmove_element_unordered_atomic: {
-    auto *MI = cast<ElementUnorderedAtomicMemMoveInst>(CS.getInstruction());
+    auto *MI = cast<AtomicMemMoveInst>(CS.getInstruction());
 
     ConstantInt *ElementSizeCI =
         dyn_cast<ConstantInt>(MI->getRawElementSizeInBytes());
@@ -4092,7 +4097,7 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
     break;
   }
   case Intrinsic::memset_element_unordered_atomic: {
-    auto *MI = cast<ElementUnorderedAtomicMemSetInst>(CS.getInstruction());
+    auto *MI = cast<AtomicMemSetInst>(CS.getInstruction());
 
     ConstantInt *ElementSizeCI =
         dyn_cast<ConstantInt>(MI->getRawElementSizeInBytes());
@@ -4588,6 +4593,11 @@ void Verifier::verifyFnArgs(const DbgInfoIntrinsic &I) {
 }
 
 void Verifier::verifyCompileUnits() {
+  // When more than one Module is imported into the same context, such as during
+  // an LTO build before linking the modules, ODR type uniquing may cause types
+  // to point to a different CU. This check does not make sense in this case.
+  if (M.getContext().isODRUniquingDebugTypes())
+    return;
   auto *CUs = M.getNamedMetadata("llvm.dbg.cu");
   SmallPtrSet<const Metadata *, 2> Listed;
   if (CUs)
@@ -4679,19 +4689,8 @@ struct VerifierLegacyPass : public FunctionPass {
         HasErrors |= !V->verify(F);
 
     HasErrors |= !V->verify();
-    if (FatalErrors) {
-      if (HasErrors)
-        report_fatal_error("Broken module found, compilation aborted!");
-      assert(!V->hasBrokenDebugInfo() && "Module contains invalid debug info");
-    }
-
-    // Strip broken debug info.
-    if (V->hasBrokenDebugInfo()) {
-      DiagnosticInfoIgnoringInvalidDebugMetadata DiagInvalid(M);
-      M.getContext().diagnose(DiagInvalid);
-      if (!StripDebugInfo(M))
-        report_fatal_error("Failed to strip malformed debug info");
-    }
+    if (FatalErrors && (HasErrors || V->hasBrokenDebugInfo()))
+      report_fatal_error("Broken module found, compilation aborted!");
     return false;
   }
 
@@ -4994,19 +4993,9 @@ VerifierAnalysis::Result VerifierAnalysis::run(Function &F,
 
 PreservedAnalyses VerifierPass::run(Module &M, ModuleAnalysisManager &AM) {
   auto Res = AM.getResult<VerifierAnalysis>(M);
-  if (FatalErrors) {
-    if (Res.IRBroken)
-      report_fatal_error("Broken module found, compilation aborted!");
-    assert(!Res.DebugInfoBroken && "Module contains invalid debug info");
-  }
+  if (FatalErrors && (Res.IRBroken || Res.DebugInfoBroken))
+    report_fatal_error("Broken module found, compilation aborted!");
 
-  // Strip broken debug info.
-  if (Res.DebugInfoBroken) {
-    DiagnosticInfoIgnoringInvalidDebugMetadata DiagInvalid(M);
-    M.getContext().diagnose(DiagInvalid);
-    if (!StripDebugInfo(M))
-      report_fatal_error("Failed to strip malformed debug info");
-  }
   return PreservedAnalyses::all();
 }
 

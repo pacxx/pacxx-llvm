@@ -12,29 +12,50 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/IPO/FunctionImport.h"
-
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/ADT/Triple.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/AutoUpgrade.h"
-#include "llvm/IR/DiagnosticPrinter.h"
-#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalObject.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Verifier.h"
+#include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/Linker/Linker.h"
-#include "llvm/Object/IRObjectFile.h"
+#include "llvm/Linker/IRMover.h"
+#include "llvm/Object/ModuleSymbolTable.h"
+#include "llvm/Object/SymbolicFile.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/Utils/FunctionImportUtils.h"
-
-#define DEBUG_TYPE "function-import"
+#include <cassert>
+#include <memory>
+#include <set>
+#include <string>
+#include <system_error>
+#include <tuple>
+#include <utility>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "function-import"
 
 STATISTIC(NumImportedFunctions, "Number of functions imported");
 STATISTIC(NumImportedModules, "Number of modules imported from");
@@ -91,6 +112,12 @@ static cl::opt<bool> EnableImportMetadata(
                                   ),
     cl::Hidden, cl::desc("Enable import metadata like 'thinlto_src_module'"));
 
+/// Summary file to use for function importing when using -function-import from
+/// the command line.
+static cl::opt<std::string>
+    SummaryFile("summary-file",
+                cl::desc("The summary file to use for function importing."));
+
 // Load lazily a module from \p FileName in \p Context.
 static std::unique_ptr<Module> loadFile(const std::string &FileName,
                                         LLVMContext &Context) {
@@ -108,8 +135,6 @@ static std::unique_ptr<Module> loadFile(const std::string &FileName,
 
   return Result;
 }
-
-namespace {
 
 /// Given a list of possible callee implementation for a call site, select one
 /// that fits the \p Threshold.
@@ -184,8 +209,27 @@ selectCallee(const ModuleSummaryIndex &Index,
   return cast<GlobalValueSummary>(It->get());
 }
 
+namespace {
+
 using EdgeInfo = std::tuple<const FunctionSummary *, unsigned /* Threshold */,
                             GlobalValue::GUID>;
+
+} // anonymous namespace
+
+static ValueInfo
+updateValueInfoForIndirectCalls(const ModuleSummaryIndex &Index, ValueInfo VI) {
+  if (!VI.getSummaryList().empty())
+    return VI;
+  // For SamplePGO, the indirect call targets for local functions will
+  // have its original name annotated in profile. We try to find the
+  // corresponding PGOFuncName as the GUID.
+  // FIXME: Consider updating the edges in the graph after building
+  // it, rather than needing to perform this mapping on each walk.
+  auto GUID = Index.getGUIDFromOriginalID(VI.getGUID());
+  if (GUID == 0)
+    return nullptr;
+  return Index.getValueInfo(GUID);
+}
 
 /// Compute the list of functions to import for a given caller. Mark these
 /// imported functions and the symbols they reference in their source module as
@@ -201,17 +245,9 @@ static void computeImportForFunction(
     DEBUG(dbgs() << " edge -> " << VI.getGUID() << " Threshold:" << Threshold
                  << "\n");
 
-    if (VI.getSummaryList().empty()) {
-      // For SamplePGO, the indirect call targets for local functions will
-      // have its original name annotated in profile. We try to find the
-      // corresponding PGOFuncName as the GUID.
-      auto GUID = Index.getGUIDFromOriginalID(VI.getGUID());
-      if (GUID == 0)
-        continue;
-      VI = Index.getValueInfo(GUID);
-      if (!VI)
-        continue;
-    }
+    VI = updateValueInfoForIndirectCalls(Index, VI);
+    if (!VI)
+      continue;
 
     if (DefinedGVSummaries.count(VI.getGUID())) {
       DEBUG(dbgs() << "ignored! Target already in destination module.\n");
@@ -317,10 +353,8 @@ static void ComputeImportForModule(
       DEBUG(dbgs() << "Ignores Dead GUID: " << GVSummary.first << "\n");
       continue;
     }
-    auto *Summary = GVSummary.second;
-    if (auto *AS = dyn_cast<AliasSummary>(Summary))
-      Summary = &AS->getAliasee();
-    auto *FuncSummary = dyn_cast<FunctionSummary>(Summary);
+    auto *FuncSummary =
+        dyn_cast<FunctionSummary>(GVSummary.second->getBaseObject());
     if (!FuncSummary)
       // Skip import for global variables
       continue;
@@ -348,8 +382,6 @@ static void ComputeImportForModule(
                              Worklist, ImportList, ExportLists);
   }
 }
-
-} // anonymous namespace
 
 /// Compute all the import and export for every module using the Index.
 void llvm::ComputeCrossModuleImport(
@@ -404,7 +436,6 @@ void llvm::ComputeCrossModuleImport(
 void llvm::ComputeCrossModuleImportForModule(
     StringRef ModulePath, const ModuleSummaryIndex &Index,
     FunctionImporter::ImportMapTy &ImportList) {
-
   // Collect the list of functions this module defines.
   // GUID -> Summary
   GVSummaryMapTy FunctionSummaryMap;
@@ -458,6 +489,17 @@ void llvm::computeDeadSymbols(
   // Make value live and add it to the worklist if it was not live before.
   // FIXME: we should only make the prevailing copy live here
   auto visit = [&](ValueInfo VI) {
+    // FIXME: If we knew which edges were created for indirect call profiles,
+    // we could skip them here. Any that are live should be reached via
+    // other edges, e.g. reference edges. Otherwise, using a profile collected
+    // on a slightly different binary might provoke preserving, importing
+    // and ultimately promoting calls to functions not linked into this
+    // binary, which increases the binary size unnecessarily. Note that
+    // if this code changes, the importer needs to change so that edges
+    // to functions marked dead are skipped.
+    VI = updateValueInfoForIndirectCalls(Index, VI);
+    if (!VI)
+      return;
     for (auto &S : VI.getSummaryList())
       if (S->isLive())
         return;
@@ -470,17 +512,12 @@ void llvm::computeDeadSymbols(
   while (!Worklist.empty()) {
     auto VI = Worklist.pop_back_val();
     for (auto &Summary : VI.getSummaryList()) {
-      for (auto Ref : Summary->refs())
+      GlobalValueSummary *Base = Summary->getBaseObject();
+      for (auto Ref : Base->refs())
         visit(Ref);
-      if (auto *FS = dyn_cast<FunctionSummary>(Summary.get()))
+      if (auto *FS = dyn_cast<FunctionSummary>(Base))
         for (auto Call : FS->calls())
           visit(Call.first);
-      if (auto *AS = dyn_cast<AliasSummary>(Summary.get())) {
-        auto AliaseeGUID = AS->getAliasee().getOriginalName();
-        ValueInfo AliaseeVI = Index.getValueInfo(AliaseeGUID);
-        if (AliaseeVI)
-          visit(AliaseeVI);
-      }
     }
   }
   Index.setWithGlobalValueDeadStripping();
@@ -652,12 +689,11 @@ void llvm::thinLTOInternalizeModule(Module &TheModule,
 
   // FIXME: See if we can just internalize directly here via linkage changes
   // based on the index, rather than invoking internalizeModule.
-  llvm::internalizeModule(TheModule, MustPreserveGV);
+  internalizeModule(TheModule, MustPreserveGV);
 }
 
 // Automatically import functions in Module \p DestModule based on the summaries
 // index.
-//
 Expected<bool> FunctionImporter::importFunctions(
     Module &DestModule, const FunctionImporter::ImportMapTy &ImportList) {
   DEBUG(dbgs() << "Starting import for Module "
@@ -704,10 +740,9 @@ Expected<bool> FunctionImporter::importFunctions(
           // Add 'thinlto_src_module' metadata for statistics and debugging.
           F.setMetadata(
               "thinlto_src_module",
-              llvm::MDNode::get(
-                  DestModule.getContext(),
-                  {llvm::MDString::get(DestModule.getContext(),
-                                       SrcModule->getSourceFileName())}));
+              MDNode::get(DestModule.getContext(),
+                          {MDString::get(DestModule.getContext(),
+                                         SrcModule->getSourceFileName())}));
         }
         GlobalsToImport.insert(&F);
       }
@@ -768,12 +803,6 @@ Expected<bool> FunctionImporter::importFunctions(
   return ImportedCount;
 }
 
-/// Summary file to use for function importing when using -function-import from
-/// the command line.
-static cl::opt<std::string>
-    SummaryFile("summary-file",
-                cl::desc("The summary file to use for function importing."));
-
 static bool doImportingForModule(Module &M) {
   if (SummaryFile.empty())
     report_fatal_error("error: -function-import requires -summary-file\n");
@@ -827,16 +856,17 @@ static bool doImportingForModule(Module &M) {
 }
 
 namespace {
+
 /// Pass that performs cross-module function import provided a summary file.
 class FunctionImportLegacyPass : public ModulePass {
 public:
   /// Pass identification, replacement for typeid
   static char ID;
 
+  explicit FunctionImportLegacyPass() : ModulePass(ID) {}
+
   /// Specify pass name for debug output
   StringRef getPassName() const override { return "Function Importing"; }
-
-  explicit FunctionImportLegacyPass() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override {
     if (skipModule(M))
@@ -845,7 +875,8 @@ public:
     return doImportingForModule(M);
   }
 };
-} // anonymous namespace
+
+} // end anonymous namespace
 
 PreservedAnalyses FunctionImportPass::run(Module &M,
                                           ModuleAnalysisManager &AM) {
@@ -860,7 +891,9 @@ INITIALIZE_PASS(FunctionImportLegacyPass, "function-import",
                 "Summary Based Function Import", false, false)
 
 namespace llvm {
+
 Pass *createFunctionImportPass() {
   return new FunctionImportLegacyPass();
 }
-}
+
+} // end namespace llvm

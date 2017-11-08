@@ -294,9 +294,7 @@ define i64 @test5(i64 %a) {
 ; X86-LABEL: test5:
 ; X86:       # BB#0: # %entry
 ; X86-NEXT:    pushl %esi
-; X86-NEXT:  .Lcfi0:
 ; X86-NEXT:    .cfi_def_cfa_offset 8
-; X86-NEXT:  .Lcfi1:
 ; X86-NEXT:    .cfi_offset %esi, -8
 ; X86-NEXT:    movl {{[0-9]+}}(%esp), %ecx
 ; X86-NEXT:    movl {{[0-9]+}}(%esp), %eax
@@ -309,6 +307,7 @@ define i64 @test5(i64 %a) {
 ; X86-NEXT:    subl %ecx, %edx
 ; X86-NEXT:    subl %esi, %edx
 ; X86-NEXT:    popl %esi
+; X86-NEXT:   .cfi_def_cfa_offset 4
 ; X86-NEXT:    retl
 entry:
 	%tmp3 = mul i64 %a, -31
@@ -351,9 +350,7 @@ define i64 @test7(i64 %a) {
 ; X86-LABEL: test7:
 ; X86:       # BB#0: # %entry
 ; X86-NEXT:    pushl %esi
-; X86-NEXT:  .Lcfi2:
 ; X86-NEXT:    .cfi_def_cfa_offset 8
-; X86-NEXT:  .Lcfi3:
 ; X86-NEXT:    .cfi_offset %esi, -8
 ; X86-NEXT:    movl {{[0-9]+}}(%esp), %ecx
 ; X86-NEXT:    movl {{[0-9]+}}(%esp), %eax
@@ -366,6 +363,7 @@ define i64 @test7(i64 %a) {
 ; X86-NEXT:    subl %ecx, %edx
 ; X86-NEXT:    subl %esi, %edx
 ; X86-NEXT:    popl %esi
+; X86-NEXT:   .cfi_def_cfa_offset 4
 ; X86-NEXT:    retl
 entry:
 	%tmp3 = mul i64 %a, -33
@@ -382,9 +380,7 @@ define i64 @testOverflow(i64 %a) {
 ; X86-LABEL: testOverflow:
 ; X86:       # BB#0: # %entry
 ; X86-NEXT:    pushl %esi
-; X86-NEXT:  .Lcfi4:
 ; X86-NEXT:    .cfi_def_cfa_offset 8
-; X86-NEXT:  .Lcfi5:
 ; X86-NEXT:    .cfi_offset %esi, -8
 ; X86-NEXT:    movl {{[0-9]+}}(%esp), %ecx
 ; X86-NEXT:    movl $-1, %edx
@@ -396,6 +392,7 @@ define i64 @testOverflow(i64 %a) {
 ; X86-NEXT:    addl %esi, %edx
 ; X86-NEXT:    subl {{[0-9]+}}(%esp), %edx
 ; X86-NEXT:    popl %esi
+; X86-NEXT:   .cfi_def_cfa_offset 4
 ; X86-NEXT:    retl
 entry:
 	%tmp3 = mul i64 %a, 9223372036854775807

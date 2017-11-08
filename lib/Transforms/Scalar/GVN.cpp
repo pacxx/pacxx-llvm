@@ -20,39 +20,64 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CFG.h"
-#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InstructionSimplify.h"
-#include "llvm/Analysis/Loads.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
-#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/PHITransAddr.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Dominators.h"
-#include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
 #include "llvm/Transforms/Utils/VNCoercion.h"
-
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <utility>
 #include <vector>
+
 using namespace llvm;
 using namespace llvm::gvn;
 using namespace llvm::VNCoercion;
@@ -80,10 +105,10 @@ MaxRecurseDepth("max-recurse-depth", cl::Hidden, cl::init(1000), cl::ZeroOrMore,
 struct llvm::GVN::Expression {
   uint32_t opcode;
   Type *type;
-  bool commutative;
+  bool commutative = false;
   SmallVector<uint32_t, 4> varargs;
 
-  Expression(uint32_t o = ~2U) : opcode(o), commutative(false) {}
+  Expression(uint32_t o = ~2U) : opcode(o) {}
 
   bool operator==(const Expression &other) const {
     if (opcode != other.opcode)
@@ -105,20 +130,23 @@ struct llvm::GVN::Expression {
 };
 
 namespace llvm {
+
 template <> struct DenseMapInfo<GVN::Expression> {
   static inline GVN::Expression getEmptyKey() { return ~0U; }
-
   static inline GVN::Expression getTombstoneKey() { return ~1U; }
 
   static unsigned getHashValue(const GVN::Expression &e) {
     using llvm::hash_value;
+
     return static_cast<unsigned>(hash_value(e));
   }
+
   static bool isEqual(const GVN::Expression &LHS, const GVN::Expression &RHS) {
     return LHS == RHS;
   }
 };
-} // End llvm namespace.
+
+} // end namespace llvm
 
 /// Represents a particular available value that we know how to materialize.
 /// Materialization of an AvailableValue never fails.  An AvailableValue is
@@ -217,6 +245,7 @@ struct llvm::gvn::AvailableValueInBlock {
                                    unsigned Offset = 0) {
     return get(BB, AvailableValue::get(V, Offset));
   }
+
   static AvailableValueInBlock getUndef(BasicBlock *BB) {
     return get(BB, AvailableValue::getUndef());
   }
@@ -344,7 +373,7 @@ GVN::Expression GVN::ValueTable::createExtractvalueExpr(ExtractValueInst *EI) {
 //                     ValueTable External Functions
 //===----------------------------------------------------------------------===//
 
-GVN::ValueTable::ValueTable() : nextValueNumber(1) {}
+GVN::ValueTable::ValueTable() = default;
 GVN::ValueTable::ValueTable(const ValueTable &) = default;
 GVN::ValueTable::ValueTable(ValueTable &&) = default;
 GVN::ValueTable::~ValueTable() = default;
@@ -456,7 +485,6 @@ uint32_t GVN::ValueTable::lookupOrAddCall(CallInst *C) {
     uint32_t v = lookupOrAdd(cdep);
     valueNumbering[C] = v;
     return v;
-
   } else {
     valueNumbering[C] = nextValueNumber;
     return nextValueNumber++;
@@ -710,9 +738,6 @@ SpeculationFailure:
   return false;
 }
 
-
-
-
 /// Given a set of loads specified by ValuesPerBlock,
 /// construct SSA form, allowing us to eliminate LI.  This returns the value
 /// that should be used at LI's definition site.
@@ -806,6 +831,7 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
                                    DominatorTree *DT,
                                    OptimizationRemarkEmitter *ORE) {
   using namespace ore;
+
   User *OtherAccess = nullptr;
 
   OptimizationRemarkMissed R(DEBUG_TYPE, "LoadClobbered", LI);
@@ -834,7 +860,6 @@ static void reportMayClobberedLoad(LoadInst *LI, MemDepResult DepInfo,
 
 bool GVN::AnalyzeLoadAvailability(LoadInst *LI, MemDepResult DepInfo,
                                   Value *Address, AvailableValue &Res) {
-
   assert((DepInfo.isDef() || DepInfo.isClobber()) &&
          "expected a local dependence");
   assert(LI->isUnordered() && "rules below are incorrect for ordered access");
@@ -896,8 +921,7 @@ bool GVN::AnalyzeLoadAvailability(LoadInst *LI, MemDepResult DepInfo,
       Instruction *I = DepInfo.getInst();
       dbgs() << " is clobbered by " << *I << '\n';
     );
-
-    if (ORE->allowExtraAnalysis())
+    if (ORE->allowExtraAnalysis(DEBUG_TYPE))
       reportMayClobberedLoad(LI, DepInfo, DT, ORE);
 
     return false;
@@ -966,7 +990,6 @@ bool GVN::AnalyzeLoadAvailability(LoadInst *LI, MemDepResult DepInfo,
 void GVN::AnalyzeLoadAvailability(LoadInst *LI, LoadDepVect &Deps,
                                   AvailValInBlkVect &ValuesPerBlock,
                                   UnavailBlkVect &UnavailableBlocks) {
-
   // Filter out useless results (non-locals, etc).  Keep track of the blocks
   // where we have a value available in repl, also keep track of whether we see
   // dependencies that produce an unknown value for the load (such as a call
@@ -1026,7 +1049,32 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
   // backwards through predecessors if needed.
   BasicBlock *LoadBB = LI->getParent();
   BasicBlock *TmpBB = LoadBB;
+  bool IsSafeToSpeculativelyExecute = isSafeToSpeculativelyExecute(LI);
 
+  // Check that there is no implicit control flow instructions above our load in
+  // its block. If there is an instruction that doesn't always pass the
+  // execution to the following instruction, then moving through it may become
+  // invalid. For example:
+  //
+  // int arr[LEN];
+  // int index = ???;
+  // ...
+  // guard(0 <= index && index < LEN);
+  // use(arr[index]);
+  //
+  // It is illegal to move the array access to any point above the guard,
+  // because if the index is out of bounds we should deoptimize rather than
+  // access the array.
+  // Check that there is no guard in this block above our intruction.
+  if (!IsSafeToSpeculativelyExecute) {
+    auto It = FirstImplicitControlFlowInsts.find(TmpBB);
+    if (It != FirstImplicitControlFlowInsts.end()) {
+      assert(It->second->getParent() == TmpBB &&
+             "Implicit control flow map broken?");
+      if (OI->dominates(It->second, LI))
+        return false;
+    }
+  }
   while (TmpBB->getSinglePredecessor()) {
     TmpBB = TmpBB->getSinglePredecessor();
     if (TmpBB == LoadBB) // Infinite (unreachable) loop.
@@ -1040,6 +1088,11 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
     // above this block would be adding the load to execution paths along
     // which it was not previously executed.
     if (TmpBB->getTerminator()->getNumSuccessors() != 1)
+      return false;
+
+    // Check that there is no implicit control flow in a block above.
+    if (!IsSafeToSpeculativelyExecute &&
+        FirstImplicitControlFlowInsts.count(TmpBB))
       return false;
   }
 
@@ -1145,8 +1198,7 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
   if (!CanDoPRE) {
     while (!NewInsts.empty()) {
       Instruction *I = NewInsts.pop_back_val();
-      if (MD) MD->removeInstruction(I);
-      I->eraseFromParent();
+      markInstructionForDeletion(I);
     }
     // HINT: Don't revert the edge-splitting as following transformation may
     // also need to split these critical edges.
@@ -1223,8 +1275,10 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
   if (V->getType()->isPtrOrPtrVectorTy())
     MD->invalidateCachedPointerInfo(V);
   markInstructionForDeletion(LI);
-  ORE->emit(OptimizationRemark(DEBUG_TYPE, "LoadPRE", LI)
-            << "load eliminated by PRE");
+  ORE->emit([&]() {
+    return OptimizationRemark(DEBUG_TYPE, "LoadPRE", LI)
+           << "load eliminated by PRE";
+  });
   ++NumPRELoad;
   return true;
 }
@@ -1232,10 +1286,13 @@ bool GVN::PerformLoadPRE(LoadInst *LI, AvailValInBlkVect &ValuesPerBlock,
 static void reportLoadElim(LoadInst *LI, Value *AvailableValue,
                            OptimizationRemarkEmitter *ORE) {
   using namespace ore;
-  ORE->emit(OptimizationRemark(DEBUG_TYPE, "LoadElim", LI)
-            << "load of type " << NV("Type", LI->getType()) << " eliminated"
-            << setExtraArgs() << " in favor of "
-            << NV("InfavorOfValue", AvailableValue));
+
+  ORE->emit([&]() {
+    return OptimizationRemark(DEBUG_TYPE, "LoadElim", LI)
+           << "load of type " << NV("Type", LI->getType()) << " eliminated"
+           << setExtraArgs() << " in favor of "
+           << NV("InfavorOfValue", AvailableValue);
+  });
 }
 
 /// Attempt to eliminate a load whose dependencies are
@@ -1338,6 +1395,11 @@ bool GVN::processAssumeIntrinsic(IntrinsicInst *IntrinsicI) {
                     IntrinsicI);
     }
     markInstructionForDeletion(IntrinsicI);
+    return false;
+  } else if (isa<Constant>(V)) {
+    // If it's not false, and constant, it must evaluate to true. This means our
+    // assume is assume(true), and thus, pointless, and we don't want to do
+    // anything more here.
     return false;
   }
 
@@ -1613,14 +1675,12 @@ static bool isOnlyReachableViaThisEdge(const BasicBlockEdge &E,
   return Pred != nullptr;
 }
 
-
 void GVN::assignBlockRPONumber(Function &F) {
   uint32_t NextBlockNumber = 1;
   ReversePostOrderTraversal<Function *> RPOT(&F);
   for (BasicBlock *BB : RPOT)
     BlockRPONumber[BB] = NextBlockNumber++;
 }
-
 
 // Tries to replace instruction with const, using information from
 // ReplaceWithConstMap.
@@ -1953,6 +2013,8 @@ bool GVN::runImpl(Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
   TLI = &RunTLI;
   VN.setAliasAnalysis(&RunAA);
   MD = RunMD;
+  OrderedInstructions OrderedInstrs(DT);
+  OI = &OrderedInstrs;
   VN.setMemDep(MD);
   ORE = RunORE;
 
@@ -2035,14 +2097,26 @@ bool GVN::processBlock(BasicBlock *BB) {
     if (!AtStart)
       --BI;
 
-    for (SmallVectorImpl<Instruction *>::iterator I = InstrsToErase.begin(),
-         E = InstrsToErase.end(); I != E; ++I) {
-      DEBUG(dbgs() << "GVN removed: " << **I << '\n');
-      if (MD) MD->removeInstruction(*I);
-      DEBUG(verifyRemoved(*I));
-      (*I)->eraseFromParent();
+    bool InvalidateImplicitCF = false;
+    const Instruction *MaybeFirstICF = FirstImplicitControlFlowInsts.lookup(BB);
+    for (auto *I : InstrsToErase) {
+      assert(I->getParent() == BB && "Removing instruction from wrong block?");
+      DEBUG(dbgs() << "GVN removed: " << *I << '\n');
+      if (MD) MD->removeInstruction(I);
+      DEBUG(verifyRemoved(I));
+      if (MaybeFirstICF == I) {
+        // We have erased the first ICF in block. The map needs to be updated.
+        InvalidateImplicitCF = true;
+        // Do not keep dangling pointer on the erased instruction.
+        MaybeFirstICF = nullptr;
+      }
+      I->eraseFromParent();
     }
+
+    OI->invalidateBlock(BB);
     InstrsToErase.clear();
+    if (InvalidateImplicitCF)
+      fillImplicitControlFlowInfo(BB);
 
     if (AtStart)
       BI = BB->begin();
@@ -2145,7 +2219,7 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
     // when CurInst has operand defined in CurrentBlock (so it may be defined
     // by phi in the loop header).
     if (BlockRPONumber[P] >= BlockRPONumber[CurrentBlock] &&
-        any_of(CurInst->operands(), [&](const Use &U) {
+        llvm::any_of(CurInst->operands(), [&](const Use &U) {
           if (auto *Inst = dyn_cast<Instruction>(U.get()))
             return Inst->getParent() == CurrentBlock;
           return false;
@@ -2205,7 +2279,7 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
 
   // Either we should have filled in the PRE instruction, or we should
   // not have needed insertions.
-  assert (PREInstr != nullptr || NumWithout == 0);
+  assert(PREInstr != nullptr || NumWithout == 0);
 
   ++NumGVNPRE;
 
@@ -2236,7 +2310,14 @@ bool GVN::performScalarPRE(Instruction *CurInst) {
   if (MD)
     MD->removeInstruction(CurInst);
   DEBUG(verifyRemoved(CurInst));
+  bool InvalidateImplicitCF =
+      FirstImplicitControlFlowInsts.lookup(CurInst->getParent()) == CurInst;
+  // FIXME: Intended to be markInstructionForDeletion(CurInst), but it causes
+  // some assertion failures.
+  OI->invalidateBlock(CurrentBlock);
   CurInst->eraseFromParent();
+  if (InvalidateImplicitCF)
+    fillImplicitControlFlowInfo(CurrentBlock);
   ++NumGVNInstr;
 
   return true;
@@ -2303,6 +2384,9 @@ bool GVN::iterateOnFunction(Function &F) {
   // RPOT walks the graph in its constructor and will not be invalidated during
   // processBlock.
   ReversePostOrderTraversal<Function *> RPOT(&F);
+
+  for (BasicBlock *BB : RPOT)
+    fillImplicitControlFlowInfo(BB);
   for (BasicBlock *BB : RPOT)
     Changed |= processBlock(BB);
 
@@ -2314,6 +2398,48 @@ void GVN::cleanupGlobalSets() {
   LeaderTable.clear();
   BlockRPONumber.clear();
   TableAllocator.Reset();
+  FirstImplicitControlFlowInsts.clear();
+}
+
+void
+GVN::fillImplicitControlFlowInfo(BasicBlock *BB) {
+  // Make sure that all marked instructions are actually deleted by this point,
+  // so that we don't need to care about omitting them.
+  assert(InstrsToErase.empty() && "Filling before removed all marked insns?");
+  auto MayNotTransferExecutionToSuccessor = [&](const Instruction *I) {
+    // If a block's instruction doesn't always pass the control to its successor
+    // instruction, mark the block as having implicit control flow. We use them
+    // to avoid wrong assumptions of sort "if A is executed and B post-dominates
+    // A, then B is also executed". This is not true is there is an implicit
+    // control flow instruction (e.g. a guard) between them.
+    //
+    // TODO: Currently, isGuaranteedToTransferExecutionToSuccessor returns false
+    // for volatile stores and loads because they can trap. The discussion on
+    // whether or not it is correct is still ongoing. We might want to get rid
+    // of this logic in the future. Anyways, trapping instructions shouldn't
+    // introduce implicit control flow, so we explicitly allow them here. This
+    // must be removed once isGuaranteedToTransferExecutionToSuccessor is fixed.
+    if (isGuaranteedToTransferExecutionToSuccessor(I))
+      return false;
+    if (isa<LoadInst>(I)) {
+      assert(cast<LoadInst>(I)->isVolatile() &&
+             "Non-volatile load should transfer execution to successor!");
+      return false;
+    }
+    if (isa<StoreInst>(I)) {
+      assert(cast<StoreInst>(I)->isVolatile() &&
+             "Non-volatile store should transfer execution to successor!");
+      return false;
+    }
+    return true;
+  };
+  FirstImplicitControlFlowInsts.erase(BB);
+
+  for (auto &I : *BB)
+    if (MayNotTransferExecutionToSuccessor(&I)) {
+      FirstImplicitControlFlowInsts[BB] = &I;
+      break;
+    }
 }
 
 /// Verify that the specified instruction does not occur in our
@@ -2461,6 +2587,7 @@ void GVN::assignValNumForDeadCode() {
 class llvm::gvn::GVNLegacyPass : public FunctionPass {
 public:
   static char ID; // Pass identification, replacement for typeid
+
   explicit GVNLegacyPass(bool NoLoads = false)
       : FunctionPass(ID), NoLoads(NoLoads) {
     initializeGVNLegacyPassPass(*PassRegistry::getPassRegistry());
@@ -2504,11 +2631,6 @@ private:
 
 char GVNLegacyPass::ID = 0;
 
-// The public interface to this file...
-FunctionPass *llvm::createGVNPass(bool NoLoads) {
-  return new GVNLegacyPass(NoLoads);
-}
-
 INITIALIZE_PASS_BEGIN(GVNLegacyPass, "gvn", "Global Value Numbering", false, false)
 INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass)
@@ -2518,3 +2640,8 @@ INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(OptimizationRemarkEmitterWrapperPass)
 INITIALIZE_PASS_END(GVNLegacyPass, "gvn", "Global Value Numbering", false, false)
+
+// The public interface to this file...
+FunctionPass *llvm::createGVNPass(bool NoLoads) {
+  return new GVNLegacyPass(NoLoads);
+}

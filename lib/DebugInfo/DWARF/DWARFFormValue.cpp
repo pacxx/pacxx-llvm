@@ -276,7 +276,8 @@ bool DWARFFormValue::isFormClass(DWARFFormValue::FormClass FC) const {
 }
 
 bool DWARFFormValue::extractValue(const DWARFDataExtractor &Data,
-                                  uint32_t *OffsetPtr, const DWARFUnit *CU) {
+                                  uint32_t *OffsetPtr, DWARFFormParams FP,
+                                  const DWARFUnit *CU) {
   U = CU;
   bool Indirect = false;
   bool IsBlock = false;
@@ -288,10 +289,8 @@ bool DWARFFormValue::extractValue(const DWARFDataExtractor &Data,
     switch (Form) {
     case DW_FORM_addr:
     case DW_FORM_ref_addr: {
-      if (!U)
-        return false;
-      uint16_t Size = (Form == DW_FORM_addr) ? U->getAddressByteSize()
-                                             : U->getRefAddrByteSize();
+      uint16_t Size =
+          (Form == DW_FORM_addr) ? FP.AddrSize : FP.getRefAddrByteSize();
       Value.uval = Data.getRelocatedValue(Size, OffsetPtr, &Value.SectionIndex);
       break;
     }
@@ -360,10 +359,8 @@ bool DWARFFormValue::extractValue(const DWARFDataExtractor &Data,
     case DW_FORM_GNU_strp_alt:
     case DW_FORM_line_strp:
     case DW_FORM_strp_sup: {
-      if (!U)
-        return false;
       Value.uval =
-          Data.getRelocatedValue(U->getDwarfOffsetByteSize(), OffsetPtr);
+          Data.getRelocatedValue(FP.getDwarfOffsetByteSize(), OffsetPtr);
       break;
     }
     case DW_FORM_flag_present:
@@ -481,7 +478,7 @@ void DWARFFormValue::dump(raw_ostream &OS, DIDumpOptions DumpOpts) const {
     OS << Value.uval;
     break;
   case DW_FORM_strp:
-    if (!DumpOpts.Brief)
+    if (DumpOpts.Verbose)
       OS << format(" .debug_str[0x%8.8x] = ", (uint32_t)UValue);
     dumpString(OS);
     break;
@@ -541,7 +538,7 @@ void DWARFFormValue::dump(raw_ostream &OS, DIDumpOptions DumpOpts) const {
     break;
   }
 
-  if (CURelativeOffset && !DumpOpts.Brief) {
+  if (CURelativeOffset && DumpOpts.Verbose) {
     OS << " => {";
     WithColor(OS, syntax::Address).get()
         << format("0x%8.8" PRIx64, UValue + (U ? U->getOffset() : 0));

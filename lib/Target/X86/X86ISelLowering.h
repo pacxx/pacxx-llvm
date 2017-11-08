@@ -254,7 +254,9 @@ namespace llvm {
       /// Note that these typically require refinement
       /// in order to obtain suitable precision.
       FRSQRT, FRCP,
-      FRSQRTS, FRCPS,
+
+      // AVX-512 reciprocal approximations with a little more precision.
+      RSQRT14, RSQRT14S, RCP14, RCP14S,
 
       // Thread Local Storage.
       TLSADDR,
@@ -346,9 +348,6 @@ namespace llvm {
       ADD, SUB, ADC, SBB, SMUL,
       INC, DEC, OR, XOR, AND,
 
-      // Bit field extract.
-      BEXTR,
-
       // LOW, HI, FLAGS = umul LHS, RHS.
       UMUL,
 
@@ -397,7 +396,6 @@ namespace llvm {
       MOVSHDUP,
       MOVSLDUP,
       MOVLHPS,
-      MOVLHPD,
       MOVHLPS,
       MOVLPS,
       MOVLPD,
@@ -451,8 +449,6 @@ namespace llvm {
       /// SSE4A Extraction and Insertion.
       EXTRQI, INSERTQI,
 
-      // XOP variable/immediate rotations.
-      VPROT, VPROTI,
       // XOP arithmetic/logical shifts.
       VPSHA, VPSHL,
       // XOP signed/unsigned integer comparisons.
@@ -471,6 +467,10 @@ namespace llvm {
 
       // Multiply and Add Packed Integers.
       VPMADDUBSW, VPMADDWD,
+
+      // AVX512IFMA multiply and add.
+      // NOTE: These are different than the instruction and perform
+      // op0 x op1 + op2.
       VPMADD52L, VPMADD52H,
 
       // FMA nodes.
@@ -488,6 +488,12 @@ namespace llvm {
       FNMSUB_RND,
       FMADDSUB_RND,
       FMSUBADD_RND,
+
+      // Scalar intrinsic FMA.
+      FMADDS1, FMADDS3,
+      FNMADDS1, FNMADDS3,
+      FMSUBS1, FMSUBS3,
+      FNMSUBS1, FNMSUBS3,
 
       // Scalar intrinsic FMA with rounding mode.
       // Two versions, passthru bits on op1 or op3.
@@ -557,7 +563,7 @@ namespace llvm {
       RSQRT28, RSQRT28S, RCP28, RCP28S, EXP2,
 
       // Conversions between float and half-float.
-      CVTPS2PH, CVTPH2PS,
+      CVTPS2PH, CVTPH2PS, CVTPH2PS_RND,
 
       // LWP insert record.
       LWPINS,
@@ -571,7 +577,7 @@ namespace llvm {
 
       /// LOCK-prefixed arithmetic read-modify-write instructions.
       /// EFLAGS, OUTCHAIN = LADD(INCHAIN, PTR, RHS)
-      LADD, LSUB, LOR, LXOR, LAND,
+      LADD, LSUB, LOR, LXOR, LAND, LINC, LDEC,
 
       // Load, scalar_to_vector, and zero extend.
       VZEXT_LOAD,
@@ -628,46 +634,6 @@ namespace llvm {
 
   /// Define some predicates that are used for node matching.
   namespace X86 {
-    /// Return true if the specified
-    /// EXTRACT_SUBVECTOR operand specifies a vector extract that is
-    /// suitable for input to VEXTRACTF128, VEXTRACTI128 instructions.
-    bool isVEXTRACT128Index(SDNode *N);
-
-    /// Return true if the specified
-    /// INSERT_SUBVECTOR operand specifies a subvector insert that is
-    /// suitable for input to VINSERTF128, VINSERTI128 instructions.
-    bool isVINSERT128Index(SDNode *N);
-
-    /// Return true if the specified
-    /// EXTRACT_SUBVECTOR operand specifies a vector extract that is
-    /// suitable for input to VEXTRACTF64X4, VEXTRACTI64X4 instructions.
-    bool isVEXTRACT256Index(SDNode *N);
-
-    /// Return true if the specified
-    /// INSERT_SUBVECTOR operand specifies a subvector insert that is
-    /// suitable for input to VINSERTF64X4, VINSERTI64X4 instructions.
-    bool isVINSERT256Index(SDNode *N);
-
-    /// Return the appropriate
-    /// immediate to extract the specified EXTRACT_SUBVECTOR index
-    /// with VEXTRACTF128, VEXTRACTI128 instructions.
-    unsigned getExtractVEXTRACT128Immediate(SDNode *N);
-
-    /// Return the appropriate
-    /// immediate to insert at the specified INSERT_SUBVECTOR index
-    /// with VINSERTF128, VINSERT128 instructions.
-    unsigned getInsertVINSERT128Immediate(SDNode *N);
-
-    /// Return the appropriate
-    /// immediate to extract the specified EXTRACT_SUBVECTOR index
-    /// with VEXTRACTF64X4, VEXTRACTI64x4 instructions.
-    unsigned getExtractVEXTRACT256Immediate(SDNode *N);
-
-    /// Return the appropriate
-    /// immediate to insert at the specified INSERT_SUBVECTOR index
-    /// with VINSERTF64x4, VINSERTI64x4 instructions.
-    unsigned getInsertVINSERT256Immediate(SDNode *N);
-
     /// Returns true if Elt is a constant zero or floating point constant +0.0.
     bool isZeroNode(SDValue Elt);
 
@@ -766,19 +732,6 @@ namespace llvm {
                             SelectionDAG &DAG) const override;
 
     SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
-
-    // Return true if it is profitable to combine a BUILD_VECTOR to a TRUNCATE
-    // for given operand and result types.
-    // Example of such a combine:
-    // v4i32 build_vector((extract_elt V, 0),
-    //                    (extract_elt V, 2),
-    //                    (extract_elt V, 4),
-    //                    (extract_elt V, 6))
-    //  -->
-    // v4i32 truncate (bitcast V to v4i64)
-    bool isDesirableToCombineBuildVectorToTruncate() const override {
-      return true;
-    }
 
     // Return true if it is profitable to combine a BUILD_VECTOR with a
     // stride-pattern to a shuffle and a truncate.
@@ -1040,6 +993,13 @@ namespace llvm {
     bool isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,
                                  unsigned Index) const override;
 
+    bool storeOfVectorConstantIsCheap(EVT MemVT, unsigned NumElem,
+                                      unsigned AddrSpace) const override {
+      // If we can replace more than 2 scalar stores, there will be a reduction
+      // in instructions even after we add a vector constant load.
+      return NumElem > 2;
+    }
+
     /// Intel processors have a unified instruction and data cache
     const char * getClearCacheBuiltinName() const override {
       return nullptr; // nothing to do, move along.
@@ -1203,8 +1163,6 @@ namespace llvm {
     SDValue lowerUINT_TO_FP_vec(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerToBT(SDValue And, ISD::CondCode CC, const SDLoc &dl,
-                      SelectionDAG &DAG) const;
     SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSETCCCARRY(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSELECT(SDValue Op, SelectionDAG &DAG) const;
@@ -1226,6 +1184,7 @@ namespace llvm {
     SDValue LowerWin64_i128OP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerGC_TRANSITION_START(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerGC_TRANSITION_END(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue
     LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,

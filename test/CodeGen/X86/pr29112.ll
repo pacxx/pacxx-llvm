@@ -9,7 +9,6 @@ define <4 x float> @bar(<4 x float>* %a1p, <4 x float>* %a2p, <4 x float> %a3, <
 ; CHECK-LABEL: bar:
 ; CHECK:       # BB#0:
 ; CHECK-NEXT:    subq $88, %rsp
-; CHECK-NEXT:  .Lcfi0:
 ; CHECK-NEXT:    .cfi_def_cfa_offset 96
 ; CHECK-NEXT:    vmovaps %xmm1, {{[0-9]+}}(%rsp) # 16-byte Spill
 ; CHECK-NEXT:    vextractf128 $1, %ymm3, %xmm1
@@ -66,6 +65,7 @@ define <4 x float> @bar(<4 x float>* %a1p, <4 x float>* %a2p, <4 x float> %a3, <
 ; CHECK-NEXT:    vaddps {{[0-9]+}}(%rsp), %xmm1, %xmm1 # 16-byte Folded Reload
 ; CHECK-NEXT:    vaddps %xmm0, %xmm1, %xmm0
 ; CHECK-NEXT:    addq $88, %rsp
+; CHECK-NEXT:    .cfi_def_cfa_offset 8
 ; CHECK-NEXT:    retq
   %a1 = shufflevector <16 x float>%c1, <16 x float>%c2, <4 x i32> <i32 4, i32 20, i32 1, i32 17>
 

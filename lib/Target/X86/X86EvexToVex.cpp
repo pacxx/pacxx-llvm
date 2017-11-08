@@ -1,4 +1,4 @@
-//===----------------------- X86EvexToVex.cpp ----------------------------===//
+//===- X86EvexToVex.cpp ---------------------------------------------------===//
 // Compress EVEX instructions to VEX encoding when possible to reduce code size
 //
 //                     The LLVM Compiler Infrastructure
@@ -6,18 +6,19 @@
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
 //
-//===---------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
+//
 /// \file
 /// This file defines the pass that goes over all AVX-512 instructions which
 /// are encoded using the EVEX prefix and if possible replaces them by their
 /// corresponding VEX encoding which is usually shorter by 2 bytes.
 /// EVEX instructions may be encoded via the VEX prefix when the AVX-512
 /// instruction has a corresponding AVX/AVX2 opcode and when it does not
-/// use the xmm or the mask registers or xmm/ymm registers wuith indexes
+/// use the xmm or the mask registers or xmm/ymm registers with indexes
 /// higher than 15.
 /// The pass applies code reduction on the generated code for AVX-512 instrs.
-///
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
 
 #include "InstPrinter/X86InstComments.h"
 #include "MCTargetDesc/X86BaseInfo.h"
@@ -54,7 +55,7 @@ namespace {
 class EvexToVexInstPass : public MachineFunctionPass {
 
   /// X86EvexToVexCompressTable - Evex to Vex encoding opcode map.
-  typedef DenseMap<unsigned, uint16_t> EvexToVexTableType;
+  using EvexToVexTableType = DenseMap<unsigned, uint16_t>;
   EvexToVexTableType EvexToVex128Table;
   EvexToVexTableType EvexToVex256Table;
 
@@ -101,9 +102,9 @@ private:
   const X86InstrInfo *TII;
 };
 
-char EvexToVexInstPass::ID = 0;
-
 } // end anonymous namespace
+
+char EvexToVexInstPass::ID = 0;
 
 bool EvexToVexInstPass::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getSubtarget<X86Subtarget>().getInstrInfo();
@@ -130,6 +131,75 @@ void EvexToVexInstPass::AddTableEntry(EvexToVexTableType &EvexToVexTable,
                                       uint16_t EvexOp, uint16_t VexOp) {
   EvexToVexTable[EvexOp] = VexOp;
 }
+
+static bool usesExtendedRegister(const MachineInstr &MI) {
+  auto isHiRegIdx = [](unsigned Reg) {
+    // Check for XMM register with indexes between 16 - 31.
+    if (Reg >= X86::XMM16 && Reg <= X86::XMM31)
+      return true;
+
+    // Check for YMM register with indexes between 16 - 31.
+    if (Reg >= X86::YMM16 && Reg <= X86::YMM31)
+      return true;
+
+    return false;
+  };
+
+  // Check that operands are not ZMM regs or
+  // XMM/YMM regs with hi indexes between 16 - 31.
+  for (const MachineOperand &MO : MI.explicit_operands()) {
+    if (!MO.isReg())
+      continue;
+
+    unsigned Reg = MO.getReg();
+
+    assert(!(Reg >= X86::ZMM0 && Reg <= X86::ZMM31) &&
+           "ZMM instructions should not be in the EVEX->VEX tables");
+
+    if (isHiRegIdx(Reg))
+      return true;
+  }
+
+  return false;
+}
+
+// Do any custom cleanup needed to finalize the conversion.
+static void performCustomAdjustments(MachineInstr &MI, unsigned NewOpc) {
+  (void)NewOpc;
+  unsigned Opc = MI.getOpcode();
+  switch (Opc) {
+  case X86::VALIGNDZ128rri:
+  case X86::VALIGNDZ128rmi:
+  case X86::VALIGNQZ128rri:
+  case X86::VALIGNQZ128rmi: {
+    assert((NewOpc == X86::VPALIGNRrri || NewOpc == X86::VPALIGNRrmi) &&
+           "Unexpected new opcode!");
+    unsigned Scale = (Opc == X86::VALIGNQZ128rri ||
+                      Opc == X86::VALIGNQZ128rmi) ? 8 : 4;
+    MachineOperand &Imm = MI.getOperand(MI.getNumExplicitOperands()-1);
+    Imm.setImm(Imm.getImm() * Scale);
+    break;
+  }
+  case X86::VSHUFF32X4Z256rmi:
+  case X86::VSHUFF32X4Z256rri:
+  case X86::VSHUFF64X2Z256rmi:
+  case X86::VSHUFF64X2Z256rri:
+  case X86::VSHUFI32X4Z256rmi:
+  case X86::VSHUFI32X4Z256rri:
+  case X86::VSHUFI64X2Z256rmi:
+  case X86::VSHUFI64X2Z256rri: {
+    assert((NewOpc == X86::VPERM2F128rr || NewOpc == X86::VPERM2I128rr ||
+            NewOpc == X86::VPERM2F128rm || NewOpc == X86::VPERM2I128rm) &&
+           "Unexpected new opcode!");
+    MachineOperand &Imm = MI.getOperand(MI.getNumExplicitOperands()-1);
+    int64_t ImmVal = Imm.getImm();
+    // Set bit 5, move bit 1 to bit 4, copy bit 0.
+    Imm.setImm(0x20 | ((ImmVal & 2) << 3) | (ImmVal & 1));
+    break;
+  }
+  }
+}
+
 
 // For EVEX instructions that can be encoded using VEX encoding
 // replace them by the VEX encoding in order to reduce size.
@@ -176,7 +246,6 @@ bool EvexToVexInstPass::CompressEvexToVexImpl(MachineInstr &MI) const {
     if (It != EvexToVex256Table.end())
       NewOpc = It->second;
   }
-
   // Check for EVEX_V128 or Scalar instructions.
   else if (IsEVEX_V128) {
     // Search for opcode in the EvexToVex128 table.
@@ -188,34 +257,12 @@ bool EvexToVexInstPass::CompressEvexToVexImpl(MachineInstr &MI) const {
   if (!NewOpc)
     return false;
 
-  auto isHiRegIdx = [](unsigned Reg) {
-    // Check for XMM register with indexes between 16 - 31.
-    if (Reg >= X86::XMM16 && Reg <= X86::XMM31)
-      return true;
-
-    // Check for YMM register with indexes between 16 - 31.
-    if (Reg >= X86::YMM16 && Reg <= X86::YMM31)
-      return true;
-
+  if (usesExtendedRegister(MI))
     return false;
-  };
 
-  // Check that operands are not ZMM regs or
-  // XMM/YMM regs with hi indexes between 16 - 31.
-  for (const MachineOperand &MO : MI.explicit_operands()) {
-    if (!MO.isReg())
-      continue;
+  performCustomAdjustments(MI, NewOpc);
 
-    unsigned Reg = MO.getReg();
-
-    assert (!(Reg >= X86::ZMM0 && Reg <= X86::ZMM31));
-
-    if (isHiRegIdx(Reg))
-      return false;
-  }
-
-  const MCInstrDesc &MCID = TII->get(NewOpc);
-  MI.setDesc(MCID);
+  MI.setDesc(TII->get(NewOpc));
   MI.setAsmPrinterFlag(AC_EVEX_2_VEX);
   return true;
 }

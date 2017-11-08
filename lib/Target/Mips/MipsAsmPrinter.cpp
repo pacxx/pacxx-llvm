@@ -108,7 +108,7 @@ bool MipsAsmPrinter::lowerOperand(const MachineOperand &MO, MCOperand &MCOp) {
 #include "MipsGenMCPseudoLowering.inc"
 
 // Lower PseudoReturn/PseudoIndirectBranch/PseudoIndirectBranch64 to JR, JR_MM,
-// JALR, or JALR64 as appropriate for the target
+// JALR, or JALR64 as appropriate for the target.
 void MipsAsmPrinter::emitPseudoIndirectBranch(MCStreamer &OutStreamer,
                                               const MachineInstr *MI) {
   bool HasLinkReg = false;
@@ -417,6 +417,7 @@ void MipsAsmPrinter::EmitFunctionBodyEnd() {
 }
 
 void MipsAsmPrinter::EmitBasicBlockEnd(const MachineBasicBlock &MBB) {
+  AsmPrinter::EmitBasicBlockEnd(MBB);
   MipsTargetStreamer &TS = getTargetStreamer();
   if (MBB.empty())
     TS.emitDirectiveInsn();
@@ -1080,16 +1081,16 @@ void MipsAsmPrinter::EmitSled(const MachineInstr &MI, SledKind Kind) {
   // be patching over the full 48 bytes (12 instructions) with the following
   // pattern:
   //
-  //   ADDIU	SP, SP, -8
+  //   ADDIU    SP, SP, -8
   //   NOP
-  //   SW	RA, 4(SP)
+  //   SW       RA, 4(SP)
   //   SW       T9, 0(SP)
   //   LUI      T9, %hi(__xray_FunctionEntry/Exit)
   //   ORI      T9, T9, %lo(__xray_FunctionEntry/Exit)
   //   LUI      T0, %hi(function_id)
-  //   JALR	T9
-  //   ORI	T0, T0, %lo(function_id)
-  //   LW	T9, 0(SP)
+  //   JALR     T9
+  //   ORI      T0, T0, %lo(function_id)
+  //   LW       T9, 0(SP)
   //   LW       RA, 4(SP)
   //   ADDIU    SP, SP, 8
   //

@@ -476,6 +476,14 @@ declare cc93 void @f.cc93()
 ; CHECK: declare amdgpu_hs void @f.cc93()
 declare amdgpu_hs void @f.amdgpu_hs()
 ; CHECK: declare amdgpu_hs void @f.amdgpu_hs()
+declare cc95 void @f.cc95()
+; CHECK: declare amdgpu_ls void @f.cc95()
+declare amdgpu_ls void @f.amdgpu_ls()
+; CHECK: declare amdgpu_ls void @f.amdgpu_ls()
+declare cc96 void @f.cc96()
+; CHECK: declare amdgpu_es void @f.cc96()
+declare amdgpu_es void @f.amdgpu_es()
+; CHECK: declare amdgpu_es void @f.amdgpu_es()
 declare cc1023 void @f.cc1023()
 ; CHECK: declare cc1023 void @f.cc1023()
 
@@ -767,6 +775,10 @@ define void @fastmathflags(float %op1, float %op2) {
   ; CHECK: %f.arcp = fadd arcp float %op1, %op2
   %f.contract = fadd contract float %op1, %op2
   ; CHECK: %f.contract = fadd contract float %op1, %op2
+  %f.afn = fadd afn float %op1, %op2
+  ; CHECK: %f.afn = fadd afn float %op1, %op2
+  %f.reassoc = fadd reassoc float %op1, %op2
+  ; CHECK: %f.reassoc = fadd reassoc float %op1, %op2
   %f.fast = fadd fast float %op1, %op2
   ; CHECK: %f.fast = fadd fast float %op1, %op2
   ret void

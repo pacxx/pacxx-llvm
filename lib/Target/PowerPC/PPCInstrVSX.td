@@ -47,6 +47,13 @@ def vssrc : RegisterOperand<VSSRC> {
   let ParserMatchClass = PPCRegVSSRCAsmOperand;
 }
 
+def PPCRegSPILLTOVSRRCAsmOperand : AsmOperandClass {
+  let Name = "RegSPILLTOVSRRC"; let PredicateMethod = "isVSRegNumber";
+}
+
+def spilltovsrrc : RegisterOperand<SPILLTOVSRRC> {
+  let ParserMatchClass = PPCRegSPILLTOVSRRCAsmOperand;
+}
 // Little-endian-specific nodes.
 def SDT_PPClxvd2x : SDTypeProfile<1, 1, [
   SDTCisVT<0, v2f64>, SDTCisPtrTy<1>
@@ -2588,6 +2595,13 @@ let AddedComplexity = 400, Predicates = [HasP9Vector] in {
            (f64 (COPY_TO_REGCLASS (XVCVSXWDP (XXSPLTW $A, 3)), VSFRC))>;
   }
 
+  // Alternate patterns for PPCmtvsrz where the output is v8i16 or v16i8 instead
+  // of f64
+  def : Pat<(v8i16 (PPCmtvsrz i32:$A)),
+            (v8i16 (SUBREG_TO_REG (i64 1), (MTVSRWZ $A), sub_64))>;
+  def : Pat<(v16i8 (PPCmtvsrz i32:$A)),
+            (v16i8 (SUBREG_TO_REG (i64 1), (MTVSRWZ $A), sub_64))>;
+
   // Patterns for which instructions from ISA 3.0 are a better match
   let Predicates = [IsLittleEndian, HasP9Vector] in {
   def : Pat<(f32 (PPCfcfidus (PPCmtvsrz (i32 (extractelt v4i32:$A, 0))))),
@@ -2863,6 +2877,23 @@ let AddedComplexity = 400, Predicates = [HasP9Vector] in {
             (f32 (DFLOADf32 ixaddr:$src))>;
 } // end HasP9Vector, AddedComplexity
 
+let Predicates = [HasP9Vector] in {
+  let isPseudo = 1 in {
+    let mayStore = 1 in {
+      def SPILLTOVSR_STX : Pseudo<(outs), (ins spilltovsrrc:$XT, memrr:$dst),
+                                "#SPILLTOVSR_STX", []>;
+      def SPILLTOVSR_ST : Pseudo<(outs), (ins spilltovsrrc:$XT, memrix:$dst),
+                                "#SPILLTOVSR_ST", []>;
+    }
+    let mayLoad = 1 in {
+      def SPILLTOVSR_LDX : Pseudo<(outs spilltovsrrc:$XT), (ins memrr:$src),
+                                "#SPILLTOVSR_LDX", []>;
+      def SPILLTOVSR_LD : Pseudo<(outs spilltovsrrc:$XT), (ins memrix:$src),
+                                "#SPILLTOVSR_LD", []>;
+
+    }
+  }
+}
 // Integer extend helper dags 32 -> 64
 def AnyExts {
   dag A = (INSERT_SUBREG (i64 (IMPLICIT_DEF)), $A, sub_32);

@@ -121,7 +121,7 @@ registers:
   - { id: 4, class: gpr, preferred-register: '' }
   - { id: 5, class: gpr, preferred-register: '' }
 # ALL-LABEL: bb.3.cond.end:
-# ALL:          %5 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
+# ALL:          %5:gr8 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
 # ALL-NEXT:     %al = COPY %5
 # ALL-NEXT:     RET 0, implicit %al
 body:             |
@@ -130,7 +130,7 @@ body:             |
     liveins: %edi, %edx, %esi
 
     %0(s32) = COPY %edi
-    %1(s8) = COPY %esi
+    %1(s8) = COPY %sil
     %2(s8) = COPY %edx
     %3(s32) = G_CONSTANT i32 0
     %4(s1) = G_ICMP intpred(sgt), %0(s32), %3
@@ -174,7 +174,7 @@ registers:
   - { id: 4, class: gpr, preferred-register: '' }
   - { id: 5, class: gpr, preferred-register: '' }
 # ALL-LABEL: bb.3.cond.end:
-# ALL:          %5 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
+# ALL:          %5:gr16 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
 # ALL-NEXT:     %ax = COPY %5
 # ALL-NEXT:     RET 0, implicit %ax
 body:             |
@@ -183,7 +183,7 @@ body:             |
     liveins: %edi, %edx, %esi
 
     %0(s32) = COPY %edi
-    %1(s16) = COPY %esi
+    %1(s16) = COPY %si
     %2(s16) = COPY %edx
     %3(s32) = G_CONSTANT i32 0
     %4(s1) = G_ICMP intpred(sgt), %0(s32), %3
@@ -227,7 +227,7 @@ registers:
   - { id: 4, class: gpr, preferred-register: '' }
   - { id: 5, class: gpr, preferred-register: '' }
 # ALL-LABEL: bb.3.cond.end:
-# ALL:          %5 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
+# ALL:          %5:gr32 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
 # ALL-NEXT:     %eax = COPY %5
 # ALL-NEXT:     RET 0, implicit %eax
 body:             |
@@ -280,7 +280,7 @@ registers:
   - { id: 4, class: gpr, preferred-register: '' }
   - { id: 5, class: gpr, preferred-register: '' }
 # ALL-LABEL: bb.3.cond.end:
-# ALL:          %5 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
+# ALL:          %5:gr64 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
 # ALL-NEXT:     %rax = COPY %5
 # ALL-NEXT:     RET 0, implicit %rax
 body:             |
@@ -337,7 +337,7 @@ fixedStack:
 stack:
 constants:
 # ALL-LABEL: bb.3.cond.end:
-# ALL:          %5 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
+# ALL:          %5:fr32 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
 # ALL-NEXT:     %xmm0 = COPY %5
 # ALL-NEXT:     RET 0, implicit %xmm0
 body:             |
@@ -390,7 +390,7 @@ registers:
   - { id: 4, class: gpr, preferred-register: '' }
   - { id: 5, class: vecr, preferred-register: '' }
 # ALL-LABEL: bb.3.cond.end:
-# ALL:          %5 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
+# ALL:          %5:fr64 = PHI %1, %bb.1.cond.true, %2, %bb.2.cond.false
 # ALL-NEXT:     %xmm0 = COPY %5
 # ALL-NEXT:     RET 0, implicit %xmm0
 body:             |

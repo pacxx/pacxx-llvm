@@ -179,12 +179,14 @@ public:
     WatchOS,    // Apple watchOS
     Mesa3D,
     Contiki,
-    LastOSType = Contiki
+    AMDPAL,     // AMD PAL Runtime
+    LastOSType = AMDPAL
   };
   enum EnvironmentType {
     UnknownEnvironment,
 
     GNU,
+    GNUABIN32,
     GNUABI64,
     GNUEABI,
     GNUEABIHF,
@@ -203,7 +205,8 @@ public:
     AMDOpenCL,
     CoreCLR,
     OpenCL,
-    LastEnvironmentType = OpenCL
+    Simulator,  // Simulator variants of other systems, e.g., Apple's iOS
+    LastEnvironmentType = Simulator
   };
   enum ObjectFormatType {
     UnknownObjectFormat,
@@ -468,6 +471,10 @@ public:
     return isMacOSX() || isiOS() || isWatchOS();
   }
 
+  bool isSimulatorEnvironment() const {
+    return getEnvironment() == Triple::Simulator;
+  }
+
   bool isOSNetBSD() const {
     return getOS() == Triple::NetBSD;
   }
@@ -494,11 +501,13 @@ public:
     return getOS() == Triple::ELFIAMCU;
   }
 
+  bool isOSUnknown() const { return getOS() == Triple::UnknownOS; }
+
   bool isGNUEnvironment() const {
     EnvironmentType Env = getEnvironment();
-    return Env == Triple::GNU || Env == Triple::GNUABI64 ||
-           Env == Triple::GNUEABI || Env == Triple::GNUEABIHF ||
-           Env == Triple::GNUX32;
+    return Env == Triple::GNU || Env == Triple::GNUABIN32 ||
+           Env == Triple::GNUABI64 || Env == Triple::GNUEABI ||
+           Env == Triple::GNUEABIHF || Env == Triple::GNUX32;
   }
 
   bool isOSContiki() const {
@@ -644,6 +653,11 @@ public:
   /// Tests whether the target is ARM (little and big endian).
   bool isARM() const {
     return getArch() == Triple::arm || getArch() == Triple::armeb;
+  }
+
+  /// Tests whether the target is AArch64 (little and big endian).
+  bool isAArch64() const {
+    return getArch() == Triple::aarch64 || getArch() == Triple::aarch64_be;
   }
 
   /// Tests wether the target supports comdat

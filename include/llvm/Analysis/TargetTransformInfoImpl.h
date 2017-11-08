@@ -188,6 +188,8 @@ public:
   }
 
   bool isLoweredToCall(const Function *F) {
+    assert(F && "A concrete function must be provided to this routine.");
+
     // FIXME: These should almost certainly not be handled here, and instead
     // handled with the help of TLI or the target itself. This was largely
     // ported from existing analysis heuristics here so that such refactorings
@@ -253,6 +255,8 @@ public:
 
   bool hasDivRemOp(Type *DataType, bool IsSigned) { return false; }
 
+  bool hasVolatileVariant(Instruction *I, unsigned AddrSpace) { return false; }
+
   bool prefersVectorizedAddressing() { return true; }
 
   int getScalingFactorCost(Type *Ty, GlobalValue *BaseGV, int64_t BaseOffset,
@@ -290,7 +294,10 @@ public:
 
   bool enableAggressiveInterleaving(bool LoopHasReductions) { return false; }
 
-  bool expandMemCmp(Instruction *I, unsigned &MaxLoadSize) { return false; }
+  const TTI::MemCmpExpansionOptions *enableMemCmpExpansion(
+      bool IsZeroCmp) const {
+    return nullptr;
+  }
 
   bool enableInterleavedAccessVectorization() { return false; }
 
@@ -674,7 +681,9 @@ public:
       BaseGV = dyn_cast<GlobalValue>(Ptr->stripPointerCasts());
     }
     bool HasBaseReg = (BaseGV == nullptr);
-    int64_t BaseOffset = 0;
+
+    auto PtrSizeBits = DL.getPointerTypeSizeInBits(Ptr->getType());
+    APInt BaseOffset(PtrSizeBits, 0);
     int64_t Scale = 0;
 
     auto GTI = gep_type_begin(PointeeType, Operands);
@@ -700,9 +709,10 @@ public:
         BaseOffset += DL.getStructLayout(STy)->getElementOffset(Field);
       } else {
         int64_t ElementSize = DL.getTypeAllocSize(GTI.getIndexedType());
-        if (ConstIdx)
-          BaseOffset += ConstIdx->getSExtValue() * ElementSize;
-        else {
+        if (ConstIdx) {
+          BaseOffset +=
+              ConstIdx->getValue().sextOrTrunc(PtrSizeBits) * ElementSize;
+        } else {
           // Needs scale register.
           if (Scale != 0)
             // No addressing mode takes two scale registers.
@@ -715,9 +725,10 @@ public:
     // Assumes the address space is 0 when Ptr is nullptr.
     unsigned AS =
         (Ptr == nullptr ? 0 : Ptr->getType()->getPointerAddressSpace());
+
     if (static_cast<T *>(this)->isLegalAddressingMode(
-            TargetType, const_cast<GlobalValue *>(BaseGV), BaseOffset,
-            HasBaseReg, Scale, AS))
+            TargetType, const_cast<GlobalValue *>(BaseGV),
+            BaseOffset.sextOrTrunc(64).getSExtValue(), HasBaseReg, Scale, AS))
       return TTI::TCC_Free;
     return TTI::TCC_Basic;
   }
@@ -739,6 +750,11 @@ public:
   unsigned getUserCost(const User *U, ArrayRef<const Value *> Operands) {
     if (isa<PHINode>(U))
       return TTI::TCC_Free; // Model all PHI nodes as free.
+
+    // Static alloca doesn't generate target instructions.
+    if (auto *A = dyn_cast<AllocaInst>(U))
+      if (A->isStaticAlloca())
+        return TTI::TCC_Free;
 
     if (const GEPOperator *GEP = dyn_cast<GEPOperator>(U)) {
       return static_cast<T *>(this)->getGEPCost(GEP->getSourceElementType(),
@@ -775,19 +791,32 @@ public:
   }
 
   int getInstructionLatency(const Instruction *I) {
-    if (isa<PHINode>(I))
+    SmallVector<const Value *, 4> Operands(I->value_op_begin(),
+                                           I->value_op_end());
+    if (getUserCost(I, Operands) == TTI::TCC_Free)
       return 0;
-
-    if (isa<CallInst>(I))
-      return 40;
 
     if (isa<LoadInst>(I))
       return 4;
 
-    Type *dstTy = I->getType();
-    if (VectorType *VectorTy = dyn_cast<VectorType>(dstTy))
-      dstTy = VectorTy->getElementType();
-    if (dstTy->isFloatingPointTy())
+    Type *DstTy = I->getType();
+
+    // Usually an intrinsic is a simple instruction.
+    // A real function call is much slower.
+    if (auto *CI = dyn_cast<CallInst>(I)) {
+      const Function *F = CI->getCalledFunction();
+      if (!F || static_cast<T *>(this)->isLoweredToCall(F))
+        return 40;
+      // Some intrinsics return a value and a flag, we use the value type
+      // to decide its latency.
+      if (StructType* StructTy = dyn_cast<StructType>(DstTy))
+        DstTy = StructTy->getElementType(0);
+      // Fall through to simple instructions.
+    }
+
+    if (VectorType *VectorTy = dyn_cast<VectorType>(DstTy))
+      DstTy = VectorTy->getElementType();
+    if (DstTy->isFloatingPointTy())
       return 3;
 
     return 1;

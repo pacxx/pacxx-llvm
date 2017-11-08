@@ -27,7 +27,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Printable.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <cassert>
@@ -41,11 +41,14 @@ TargetRegisterInfo::TargetRegisterInfo(const TargetRegisterInfoDesc *ID,
                              regclass_iterator RCB, regclass_iterator RCE,
                              const char *const *SRINames,
                              const LaneBitmask *SRILaneMasks,
-                             LaneBitmask SRICoveringLanes)
+                             LaneBitmask SRICoveringLanes,
+                             const RegClassInfo *const RCIs,
+                             unsigned Mode)
   : InfoDesc(ID), SubRegIndexNames(SRINames),
     SubRegIndexLaneMasks(SRILaneMasks),
     RegClassBegin(RCB), RegClassEnd(RCE),
-    CoveringLanes(SRICoveringLanes) {
+    CoveringLanes(SRICoveringLanes),
+    RCInfos(RCIs), HwMode(Mode) {
 }
 
 TargetRegisterInfo::~TargetRegisterInfo() = default;

@@ -97,6 +97,8 @@ private:
   using const_probability_iterator =
       std::vector<BranchProbability>::const_iterator;
 
+  Optional<uint64_t> IrrLoopHeaderWeight;
+
   /// Keep track of the physical registers that are livein of the basicblock.
   using LiveInVector = std::vector<RegisterMaskPair>;
   LiveInVector LiveIns;
@@ -729,6 +731,14 @@ public:
   /// Return the MCSymbol for this basic block.
   MCSymbol *getSymbol() const;
 
+  Optional<uint64_t> getIrrLoopHeaderWeight() const {
+    return IrrLoopHeaderWeight;
+  }
+
+  void setIrrLoopHeaderWeight(uint64_t Weight) {
+    IrrLoopHeaderWeight = Weight;
+  }
+
 private:
   /// Return probability iterator corresponding to the I successor iterator.
   probability_iterator getProbabilityIterator(succ_iterator I);
@@ -762,8 +772,8 @@ private:
 raw_ostream& operator<<(raw_ostream &OS, const MachineBasicBlock &MBB);
 
 // This is useful when building IndexedMaps keyed on basic block pointers.
-struct MBB2NumberFunctor :
-  public std::unary_function<const MachineBasicBlock*, unsigned> {
+struct MBB2NumberFunctor {
+  using argument_type = const MachineBasicBlock *;
   unsigned operator()(const MachineBasicBlock *MBB) const {
     return MBB->getNumber();
   }

@@ -3252,34 +3252,22 @@ define <16 x i16> @load_sext_16i1_to_16i16(<16 x i1> *%ptr) {
 ; AVX1-LABEL: load_sext_16i1_to_16i16:
 ; AVX1:       # BB#0: # %entry
 ; AVX1-NEXT:    pushq %rbp
-; AVX1-NEXT:  .Lcfi0:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 16
 ; AVX1-NEXT:    pushq %r15
-; AVX1-NEXT:  .Lcfi1:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 24
 ; AVX1-NEXT:    pushq %r14
-; AVX1-NEXT:  .Lcfi2:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 32
 ; AVX1-NEXT:    pushq %r13
-; AVX1-NEXT:  .Lcfi3:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 40
 ; AVX1-NEXT:    pushq %r12
-; AVX1-NEXT:  .Lcfi4:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 48
 ; AVX1-NEXT:    pushq %rbx
-; AVX1-NEXT:  .Lcfi5:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 56
-; AVX1-NEXT:  .Lcfi6:
 ; AVX1-NEXT:    .cfi_offset %rbx, -56
-; AVX1-NEXT:  .Lcfi7:
 ; AVX1-NEXT:    .cfi_offset %r12, -48
-; AVX1-NEXT:  .Lcfi8:
 ; AVX1-NEXT:    .cfi_offset %r13, -40
-; AVX1-NEXT:  .Lcfi9:
 ; AVX1-NEXT:    .cfi_offset %r14, -32
-; AVX1-NEXT:  .Lcfi10:
 ; AVX1-NEXT:    .cfi_offset %r15, -24
-; AVX1-NEXT:  .Lcfi11:
 ; AVX1-NEXT:    .cfi_offset %rbp, -16
 ; AVX1-NEXT:    movswq (%rdi), %rax
 ; AVX1-NEXT:    movq %rax, %rcx
@@ -3345,44 +3333,38 @@ define <16 x i16> @load_sext_16i1_to_16i16(<16 x i1> *%ptr) {
 ; AVX1-NEXT:    vpinsrw $7, %ebp, %xmm1, %xmm1
 ; AVX1-NEXT:    vinsertf128 $1, %xmm0, %ymm1, %ymm0
 ; AVX1-NEXT:    popq %rbx
+; AVX1-NEXT:    .cfi_def_cfa_offset 48
 ; AVX1-NEXT:    popq %r12
+; AVX1-NEXT:    .cfi_def_cfa_offset 40
 ; AVX1-NEXT:    popq %r13
+; AVX1-NEXT:    .cfi_def_cfa_offset 32
 ; AVX1-NEXT:    popq %r14
+; AVX1-NEXT:    .cfi_def_cfa_offset 24
 ; AVX1-NEXT:    popq %r15
+; AVX1-NEXT:    .cfi_def_cfa_offset 16
 ; AVX1-NEXT:    popq %rbp
+; AVX1-NEXT:    .cfi_def_cfa_offset 8
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: load_sext_16i1_to_16i16:
 ; AVX2:       # BB#0: # %entry
 ; AVX2-NEXT:    pushq %rbp
-; AVX2-NEXT:  .Lcfi0:
 ; AVX2-NEXT:    .cfi_def_cfa_offset 16
 ; AVX2-NEXT:    pushq %r15
-; AVX2-NEXT:  .Lcfi1:
 ; AVX2-NEXT:    .cfi_def_cfa_offset 24
 ; AVX2-NEXT:    pushq %r14
-; AVX2-NEXT:  .Lcfi2:
 ; AVX2-NEXT:    .cfi_def_cfa_offset 32
 ; AVX2-NEXT:    pushq %r13
-; AVX2-NEXT:  .Lcfi3:
 ; AVX2-NEXT:    .cfi_def_cfa_offset 40
 ; AVX2-NEXT:    pushq %r12
-; AVX2-NEXT:  .Lcfi4:
 ; AVX2-NEXT:    .cfi_def_cfa_offset 48
 ; AVX2-NEXT:    pushq %rbx
-; AVX2-NEXT:  .Lcfi5:
 ; AVX2-NEXT:    .cfi_def_cfa_offset 56
-; AVX2-NEXT:  .Lcfi6:
 ; AVX2-NEXT:    .cfi_offset %rbx, -56
-; AVX2-NEXT:  .Lcfi7:
 ; AVX2-NEXT:    .cfi_offset %r12, -48
-; AVX2-NEXT:  .Lcfi8:
 ; AVX2-NEXT:    .cfi_offset %r13, -40
-; AVX2-NEXT:  .Lcfi9:
 ; AVX2-NEXT:    .cfi_offset %r14, -32
-; AVX2-NEXT:  .Lcfi10:
 ; AVX2-NEXT:    .cfi_offset %r15, -24
-; AVX2-NEXT:  .Lcfi11:
 ; AVX2-NEXT:    .cfi_offset %rbp, -16
 ; AVX2-NEXT:    movswq (%rdi), %rax
 ; AVX2-NEXT:    movq %rax, %rcx
@@ -3448,11 +3430,17 @@ define <16 x i16> @load_sext_16i1_to_16i16(<16 x i1> *%ptr) {
 ; AVX2-NEXT:    vpinsrw $7, %ebp, %xmm1, %xmm1
 ; AVX2-NEXT:    vinserti128 $1, %xmm0, %ymm1, %ymm0
 ; AVX2-NEXT:    popq %rbx
+; AVX2-NEXT:    .cfi_def_cfa_offset 48
 ; AVX2-NEXT:    popq %r12
+; AVX2-NEXT:    .cfi_def_cfa_offset 40
 ; AVX2-NEXT:    popq %r13
+; AVX2-NEXT:    .cfi_def_cfa_offset 32
 ; AVX2-NEXT:    popq %r14
+; AVX2-NEXT:    .cfi_def_cfa_offset 24
 ; AVX2-NEXT:    popq %r15
+; AVX2-NEXT:    .cfi_def_cfa_offset 16
 ; AVX2-NEXT:    popq %rbp
+; AVX2-NEXT:    .cfi_def_cfa_offset 8
 ; AVX2-NEXT:    retq
 ;
 ; AVX512F-LABEL: load_sext_16i1_to_16i16:
@@ -4844,11 +4832,11 @@ define i32 @sext_2i8_to_i32(<16 x i8> %A) nounwind uwtable readnone ssp {
 ; X32-SSE41-LABEL: sext_2i8_to_i32:
 ; X32-SSE41:       # BB#0: # %entry
 ; X32-SSE41-NEXT:    pushl %eax
-; X32-SSE41-NEXT:  .Lcfi0:
 ; X32-SSE41-NEXT:    .cfi_def_cfa_offset 8
 ; X32-SSE41-NEXT:    pmovsxbw %xmm0, %xmm0
 ; X32-SSE41-NEXT:    movd %xmm0, %eax
 ; X32-SSE41-NEXT:    popl %ecx
+; X32-SSE41-NEXT:    .cfi_def_cfa_offset 4
 ; X32-SSE41-NEXT:    retl
 entry:
   %Shuf = shufflevector <16 x i8> %A, <16 x i8> undef, <2 x i32> <i32 0, i32 1>
@@ -5079,3 +5067,51 @@ define <32 x i8> @sext_32xi1_to_32xi8(<32 x i16> %c1, <32 x i16> %c2)nounwind {
   %b = sext <32 x i1> %a to <32 x i8>
   ret <32 x i8> %b
 }
+
+define <2 x i32> @sext_2i8_to_2i32(<2 x i8>* %addr) {
+; SSE2-LABEL: sext_2i8_to_2i32:
+; SSE2:       # BB#0:
+; SSE2-NEXT:    movzwl (%rdi), %eax
+; SSE2-NEXT:    movd %eax, %xmm0
+; SSE2-NEXT:    punpcklbw {{.*#+}} xmm0 = xmm0[0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7]
+; SSE2-NEXT:    punpcklwd {{.*#+}} xmm0 = xmm0[0,0,1,1,2,2,3,3]
+; SSE2-NEXT:    psrad $24, %xmm0
+; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,1,1,3]
+; SSE2-NEXT:    paddq %xmm0, %xmm0
+; SSE2-NEXT:    retq
+;
+; SSSE3-LABEL: sext_2i8_to_2i32:
+; SSSE3:       # BB#0:
+; SSSE3-NEXT:    movzwl (%rdi), %eax
+; SSSE3-NEXT:    movd %eax, %xmm0
+; SSSE3-NEXT:    punpcklbw {{.*#+}} xmm0 = xmm0[0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7]
+; SSSE3-NEXT:    punpcklwd {{.*#+}} xmm0 = xmm0[0,0,1,1,2,2,3,3]
+; SSSE3-NEXT:    psrad $24, %xmm0
+; SSSE3-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,1,1,3]
+; SSSE3-NEXT:    paddq %xmm0, %xmm0
+; SSSE3-NEXT:    retq
+;
+; SSE41-LABEL: sext_2i8_to_2i32:
+; SSE41:       # BB#0:
+; SSE41-NEXT:    pmovsxbq (%rdi), %xmm0
+; SSE41-NEXT:    paddq %xmm0, %xmm0
+; SSE41-NEXT:    retq
+;
+; AVX-LABEL: sext_2i8_to_2i32:
+; AVX:       # BB#0:
+; AVX-NEXT:    vpmovsxbq (%rdi), %xmm0
+; AVX-NEXT:    vpaddq %xmm0, %xmm0, %xmm0
+; AVX-NEXT:    retq
+;
+; X32-SSE41-LABEL: sext_2i8_to_2i32:
+; X32-SSE41:       # BB#0:
+; X32-SSE41-NEXT:    movl {{[0-9]+}}(%esp), %eax
+; X32-SSE41-NEXT:    pmovsxbq (%eax), %xmm0
+; X32-SSE41-NEXT:    paddq %xmm0, %xmm0
+; X32-SSE41-NEXT:    retl
+  %x = load <2 x i8>, <2 x i8>* %addr, align 1
+  %y = sext <2 x i8> %x to <2 x i32>
+  %z = add <2 x i32>%y, %y
+  ret <2 x i32>%z
+}
+

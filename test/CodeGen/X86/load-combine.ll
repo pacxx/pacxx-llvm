@@ -360,9 +360,7 @@ define i32 @load_i32_by_i8_bswap_uses(i32* %arg) {
 ; CHECK-LABEL: load_i32_by_i8_bswap_uses:
 ; CHECK:       # BB#0:
 ; CHECK-NEXT:    pushl %esi
-; CHECK-NEXT:  .Lcfi0:
 ; CHECK-NEXT:    .cfi_def_cfa_offset 8
-; CHECK-NEXT:  .Lcfi1:
 ; CHECK-NEXT:    .cfi_offset %esi, -8
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; CHECK-NEXT:    movzbl (%eax), %ecx
@@ -378,6 +376,7 @@ define i32 @load_i32_by_i8_bswap_uses(i32* %arg) {
 ; CHECK-NEXT:    orl %ecx, %eax
 ; CHECK-NEXT:    orl %edx, %eax
 ; CHECK-NEXT:    popl %esi
+; CHECK-NEXT:   .cfi_def_cfa_offset 4
 ; CHECK-NEXT:    retl
 ;
 ; CHECK64-LABEL: load_i32_by_i8_bswap_uses:
@@ -482,9 +481,7 @@ define i32 @load_i32_by_i8_bswap_store_in_between(i32* %arg, i32* %arg1) {
 ; CHECK-LABEL: load_i32_by_i8_bswap_store_in_between:
 ; CHECK:       # BB#0:
 ; CHECK-NEXT:    pushl %esi
-; CHECK-NEXT:  .Lcfi2:
 ; CHECK-NEXT:    .cfi_def_cfa_offset 8
-; CHECK-NEXT:  .Lcfi3:
 ; CHECK-NEXT:    .cfi_offset %esi, -8
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; CHECK-NEXT:    movl {{[0-9]+}}(%esp), %ecx
@@ -500,6 +497,7 @@ define i32 @load_i32_by_i8_bswap_store_in_between(i32* %arg, i32* %arg1) {
 ; CHECK-NEXT:    movzbl 3(%ecx), %eax
 ; CHECK-NEXT:    orl %edx, %eax
 ; CHECK-NEXT:    popl %esi
+; CHECK-NEXT:   .cfi_def_cfa_offset 4
 ; CHECK-NEXT:    retl
 ;
 ; CHECK64-LABEL: load_i32_by_i8_bswap_store_in_between:

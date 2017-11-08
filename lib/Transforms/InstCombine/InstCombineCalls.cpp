@@ -16,16 +16,20 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -40,18 +44,26 @@
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/Statepoint.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/InstCombine/InstCombineWorklist.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SimplifyLibCalls.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -94,8 +106,8 @@ static Constant *getNegativeIsTrueBoolVec(ConstantDataVector *V) {
   return ConstantVector::get(BoolVec);
 }
 
-Instruction *InstCombiner::SimplifyElementUnorderedAtomicMemCpy(
-    ElementUnorderedAtomicMemCpyInst *AMI) {
+Instruction *
+InstCombiner::SimplifyElementUnorderedAtomicMemCpy(AtomicMemCpyInst *AMI) {
   // Try to unfold this intrinsic into sequence of explicit atomic loads and
   // stores.
   // First check that number of elements is compile time constant.
@@ -515,7 +527,7 @@ static Value *simplifyX86varShift(const IntrinsicInst &II,
   // If all elements out of range or UNDEF, return vector of zeros/undefs.
   // ArithmeticShift should only hit this if they are all UNDEF.
   auto OutOfRange = [&](int Idx) { return (Idx < 0) || (BitWidth <= Idx); };
-  if (all_of(ShiftAmts, OutOfRange)) {
+  if (llvm::all_of(ShiftAmts, OutOfRange)) {
     SmallVector<Constant *, 8> ConstantVec;
     for (int Idx : ShiftAmts) {
       if (Idx < 0) {
@@ -1094,72 +1106,6 @@ static Value *simplifyX86vpermv(const IntrinsicInst &II,
   return Builder.CreateShuffleVector(V1, V2, ShuffleMask);
 }
 
-/// The shuffle mask for a perm2*128 selects any two halves of two 256-bit
-/// source vectors, unless a zero bit is set. If a zero bit is set,
-/// then ignore that half of the mask and clear that half of the vector.
-static Value *simplifyX86vperm2(const IntrinsicInst &II,
-                                InstCombiner::BuilderTy &Builder) {
-  auto *CInt = dyn_cast<ConstantInt>(II.getArgOperand(2));
-  if (!CInt)
-    return nullptr;
-
-  VectorType *VecTy = cast<VectorType>(II.getType());
-  ConstantAggregateZero *ZeroVector = ConstantAggregateZero::get(VecTy);
-
-  // The immediate permute control byte looks like this:
-  //    [1:0] - select 128 bits from sources for low half of destination
-  //    [2]   - ignore
-  //    [3]   - zero low half of destination
-  //    [5:4] - select 128 bits from sources for high half of destination
-  //    [6]   - ignore
-  //    [7]   - zero high half of destination
-
-  uint8_t Imm = CInt->getZExtValue();
-
-  bool LowHalfZero = Imm & 0x08;
-  bool HighHalfZero = Imm & 0x80;
-
-  // If both zero mask bits are set, this was just a weird way to
-  // generate a zero vector.
-  if (LowHalfZero && HighHalfZero)
-    return ZeroVector;
-
-  // If 0 or 1 zero mask bits are set, this is a simple shuffle.
-  unsigned NumElts = VecTy->getNumElements();
-  unsigned HalfSize = NumElts / 2;
-  SmallVector<uint32_t, 8> ShuffleMask(NumElts);
-
-  // The high bit of the selection field chooses the 1st or 2nd operand.
-  bool LowInputSelect = Imm & 0x02;
-  bool HighInputSelect = Imm & 0x20;
-
-  // The low bit of the selection field chooses the low or high half
-  // of the selected operand.
-  bool LowHalfSelect = Imm & 0x01;
-  bool HighHalfSelect = Imm & 0x10;
-
-  // Determine which operand(s) are actually in use for this instruction.
-  Value *V0 = LowInputSelect ? II.getArgOperand(1) : II.getArgOperand(0);
-  Value *V1 = HighInputSelect ? II.getArgOperand(1) : II.getArgOperand(0);
-
-  // If needed, replace operands based on zero mask.
-  V0 = LowHalfZero ? ZeroVector : V0;
-  V1 = HighHalfZero ? ZeroVector : V1;
-
-  // Permute low half of result.
-  unsigned StartIndex = LowHalfSelect ? HalfSize : 0;
-  for (unsigned i = 0; i < HalfSize; ++i)
-    ShuffleMask[i] = StartIndex + i;
-
-  // Permute high half of result.
-  StartIndex = HighHalfSelect ? HalfSize : 0;
-  StartIndex += NumElts;
-  for (unsigned i = 0; i < HalfSize; ++i)
-    ShuffleMask[i + HalfSize] = StartIndex + i;
-
-  return Builder.CreateShuffleVector(V0, V1, ShuffleMask);
-}
-
 /// Decode XOP integer vector comparison intrinsics.
 static Value *simplifyX86vpcom(const IntrinsicInst &II,
                                InstCombiner::BuilderTy &Builder,
@@ -1650,7 +1596,6 @@ static Instruction *SimplifyNVVMIntrinsic(IntrinsicInst *II, InstCombiner &IC) {
   // IntrinsicInstr with target-generic LLVM IR.
   const SimplifyAction Action = [II]() -> SimplifyAction {
     switch (II->getIntrinsicID()) {
-
     // NVVM intrinsics that map directly to LLVM intrinsics.
     case Intrinsic::nvvm_ceil_d:
       return {Intrinsic::ceil, FTZ_Any};
@@ -1932,7 +1877,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     if (Changed) return II;
   }
 
-  if (auto *AMI = dyn_cast<ElementUnorderedAtomicMemCpyInst>(II)) {
+  if (auto *AMI = dyn_cast<AtomicMemCpyInst>(II)) {
     if (Constant *C = dyn_cast<Constant>(AMI->getLength()))
       if (C->isNullValue())
         return eraseInstFromFunction(*AMI);
@@ -2072,7 +2017,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
   case Intrinsic::fmuladd: {
     // Canonicalize fast fmuladd to the separate fmul + fadd.
-    if (II->hasUnsafeAlgebra()) {
+    if (II->isFast()) {
       BuilderTy::FastMathFlagGuard Guard(Builder);
       Builder.setFastMathFlags(II->getFastMathFlags());
       Value *Mul = Builder.CreateFMul(II->getArgOperand(0),
@@ -2379,11 +2324,10 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_sse2_pmovmskb_128:
   case Intrinsic::x86_avx_movmsk_pd_256:
   case Intrinsic::x86_avx_movmsk_ps_256:
-  case Intrinsic::x86_avx2_pmovmskb: {
+  case Intrinsic::x86_avx2_pmovmskb:
     if (Value *V = simplifyX86movmsk(*II))
       return replaceInstUsesWith(*II, V);
     break;
-  }
 
   case Intrinsic::x86_sse_comieq_ss:
   case Intrinsic::x86_sse_comige_ss:
@@ -3018,14 +2962,6 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     }
     break;
 
-  case Intrinsic::x86_avx_vperm2f128_pd_256:
-  case Intrinsic::x86_avx_vperm2f128_ps_256:
-  case Intrinsic::x86_avx_vperm2f128_si_256:
-  case Intrinsic::x86_avx2_vperm2i128:
-    if (Value *V = simplifyX86vperm2(*II, Builder))
-      return replaceInstUsesWith(*II, V);
-    break;
-
   case Intrinsic::x86_avx_maskload_ps:
   case Intrinsic::x86_avx_maskload_pd:
   case Intrinsic::x86_avx_maskload_ps_256:
@@ -3445,7 +3381,6 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       return II;
 
     break;
-
   }
   case Intrinsic::amdgcn_fmed3: {
     // Note this does not preserve proper sNaN behavior if IEEE-mode is enabled
@@ -3605,6 +3540,21 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     }
 
     break;
+  }
+  case Intrinsic::amdgcn_wqm_vote: {
+    // wqm_vote is identity when the argument is constant.
+    if (!isa<Constant>(II->getArgOperand(0)))
+      break;
+
+    return replaceInstUsesWith(*II, II->getArgOperand(0));
+  }
+  case Intrinsic::amdgcn_kill: {
+    const ConstantInt *C = dyn_cast<ConstantInt>(II->getArgOperand(0));
+    if (!C || !C->getZExtValue())
+      break;
+
+    // amdgcn.kill(i1 1) is a no-op
+    return eraseInstFromFunction(CI);
   }
   case Intrinsic::stackrestore: {
     // If the save is right next to the restore, remove the restore.  This can
@@ -3786,7 +3736,6 @@ Instruction *InstCombiner::visitFenceInst(FenceInst &FI) {
 }
 
 // InvokeInst simplification
-//
 Instruction *InstCombiner::visitInvokeInst(InvokeInst &II) {
   return visitCallSite(&II);
 }
@@ -3899,7 +3848,6 @@ static IntrinsicInst *findInitTrampolineFromBB(IntrinsicInst *AdjustTramp,
 // Given a call to llvm.adjust.trampoline, find and return the corresponding
 // call to llvm.init.trampoline if the call to the trampoline can be optimized
 // to a direct call to a function.  Otherwise return NULL.
-//
 static IntrinsicInst *findInitTrampoline(Value *Callee) {
   Callee = Callee->stripPointerCasts();
   IntrinsicInst *AdjustTramp = dyn_cast<IntrinsicInst>(Callee);
@@ -4067,7 +4015,6 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
   // Okay, this is a cast from a function to a different type.  Unless doing so
   // would cause a type conversion of one of our arguments, change this call to
   // be a direct call with arguments casted to the appropriate types.
-  //
   FunctionType *FT = Callee->getFunctionType();
   Type *OldRetTy = Caller->getType();
   Type *NewRetTy = FT->getReturnType();

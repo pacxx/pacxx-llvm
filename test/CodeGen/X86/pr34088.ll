@@ -11,12 +11,9 @@ define i32 @pr34088() local_unnamed_addr {
 ; CHECK-LABEL: pr34088:
 ; CHECK:       # BB#0: # %entry
 ; CHECK-NEXT:    pushl %ebp
-; CHECK-NEXT:  .Lcfi0:
 ; CHECK-NEXT:    .cfi_def_cfa_offset 8
-; CHECK-NEXT:  .Lcfi1:
 ; CHECK-NEXT:    .cfi_offset %ebp, -8
 ; CHECK-NEXT:    movl %esp, %ebp
-; CHECK-NEXT:  .Lcfi2:
 ; CHECK-NEXT:    .cfi_def_cfa_register %ebp
 ; CHECK-NEXT:    andl $-16, %esp
 ; CHECK-NEXT:    subl $32, %esp
@@ -30,6 +27,7 @@ define i32 @pr34088() local_unnamed_addr {
 ; CHECK-NEXT:    movsd %xmm0, {{[0-9]+}}(%esp)
 ; CHECK-NEXT:    movl %ebp, %esp
 ; CHECK-NEXT:    popl %ebp
+; CHECK-NEXT:    .cfi_def_cfa %esp, 4
 ; CHECK-NEXT:    retl
 entry:
   %foo = alloca %struct.Foo, align 4

@@ -409,16 +409,19 @@ namespace llvm {
   /// This pass frees the memory occupied by the MachineFunction.
   FunctionPass *createFreeMachineFunctionPass();
 
-  /// This pass combine basic blocks guarded by the same branch.
-  extern char &BranchCoalescingID;
-
   /// This pass performs outlining on machine instructions directly before
   /// printing assembly.
-  ModulePass *createMachineOutlinerPass();
+  ModulePass *createMachineOutlinerPass(bool OutlineFromLinkOnceODRs = false);
 
   /// This pass expands the experimental reduction intrinsics into sequences of
   /// shuffles.
   FunctionPass *createExpandReductionsPass();
+
+  // This pass expands memcmp() to load/stores.
+  FunctionPass *createExpandMemCmpPass();
+
+  /// Creates CFI Instruction Inserter pass. \see CFIInstrInserter.cpp
+  FunctionPass *createCFIInstrInserter();
 
 } // End llvm namespace
 

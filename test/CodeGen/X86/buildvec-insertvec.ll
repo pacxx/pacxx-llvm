@@ -39,11 +39,11 @@ define <4 x float> @test_negative_zero_1(<4 x float> %A) {
 ; SSE2:       # BB#0: # %entry
 ; SSE2-NEXT:    movaps %xmm0, %xmm1
 ; SSE2-NEXT:    movhlps {{.*#+}} xmm1 = xmm1[1,1]
-; SSE2-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
-; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm2[0],xmm0[1],xmm2[1]
 ; SSE2-NEXT:    xorps %xmm2, %xmm2
 ; SSE2-NEXT:    movss {{.*#+}} xmm2 = xmm1[0],xmm2[1,2,3]
-; SSE2-NEXT:    unpcklpd {{.*#+}} xmm0 = xmm0[0],xmm2[0]
+; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
+; SSE2-NEXT:    movlhps {{.*#+}} xmm0 = xmm0[0],xmm2[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSE41-LABEL: test_negative_zero_1:
@@ -60,11 +60,20 @@ entry:
   ret <4 x float> %5
 }
 
+; FIXME: This could be 'movhpd {{.*#+}} xmm0 = xmm0[0],mem[0]'.
+
 define <2 x double> @test_negative_zero_2(<2 x double> %A) {
-; CHECK-LABEL: test_negative_zero_2:
-; CHECK:       # BB#0: # %entry
-; CHECK-NEXT:    movhpd {{.*#+}} xmm0 = xmm0[0],mem[0]
-; CHECK-NEXT:    retq
+; SSE2-LABEL: test_negative_zero_2:
+; SSE2:       # BB#0: # %entry
+; SSE2-NEXT:    movapd {{.*#+}} xmm1 = <u,-0>
+; SSE2-NEXT:    movsd {{.*#+}} xmm1 = xmm0[0],xmm1[1]
+; SSE2-NEXT:    movapd %xmm1, %xmm0
+; SSE2-NEXT:    retq
+;
+; SSE41-LABEL: test_negative_zero_2:
+; SSE41:       # BB#0: # %entry
+; SSE41-NEXT:    blendpd {{.*#+}} xmm0 = xmm0[0],mem[1]
+; SSE41-NEXT:    retq
 entry:
   %0 = extractelement <2 x double> %A, i32 0
   %1 = insertelement <2 x double> undef, double %0, i32 0
@@ -77,7 +86,7 @@ define <4 x float> @test_buildvector_v4f32_register(float %f0, float %f1, float 
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm3[0],xmm2[1],xmm3[1]
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
-; SSE2-NEXT:    unpcklpd {{.*#+}} xmm0 = xmm0[0],xmm2[0]
+; SSE2-NEXT:    movlhps {{.*#+}} xmm0 = xmm0[0],xmm2[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSE41-LABEL: test_buildvector_v4f32_register:
@@ -102,7 +111,7 @@ define <4 x float> @test_buildvector_v4f32_load(float* %p0, float* %p1, float* %
 ; SSE2-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm2[0],xmm0[1],xmm2[1]
-; SSE2-NEXT:    unpcklpd {{.*#+}} xmm0 = xmm0[0],xmm1[0]
+; SSE2-NEXT:    movlhps {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSE41-LABEL: test_buildvector_v4f32_load:
@@ -129,7 +138,7 @@ define <4 x float> @test_buildvector_v4f32_partial_load(float %f0, float %f1, fl
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
 ; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm2 = xmm2[0],xmm1[0],xmm2[1],xmm1[1]
-; SSE2-NEXT:    unpcklpd {{.*#+}} xmm0 = xmm0[0],xmm2[0]
+; SSE2-NEXT:    movlhps {{.*#+}} xmm0 = xmm0[0],xmm2[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSE41-LABEL: test_buildvector_v4f32_partial_load:

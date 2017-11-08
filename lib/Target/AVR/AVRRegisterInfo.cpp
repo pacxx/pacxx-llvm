@@ -18,7 +18,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/IR/Function.h"
-#include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/CodeGen/TargetFrameLowering.h"
 
 #include "AVR.h"
 #include "AVRInstrInfo.h"
@@ -203,7 +203,7 @@ void AVRRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // If the offset is too big we have to adjust and restore the frame pointer
   // to materialize a valid load/store with displacement.
   //:TODO: consider using only one adiw/sbiw chain for more than one frame index
-  if (Offset > 63) {
+  if (Offset > 62) {
     unsigned AddOpc = AVR::ADIWRdK, SubOpc = AVR::SBIWRdK;
     int AddOffset = Offset - 63 + 1;
 

@@ -285,9 +285,7 @@ define <8 x i32> @test11b(<8 x i1> %mask, <8 x i32>* %addr, <8 x i32> %dst) {
 ; AVX512F-NEXT:    ## kill: %YMM1<def> %YMM1<kill> %ZMM1<def>
 ; AVX512F-NEXT:    vpmovsxwq %xmm0, %zmm0
 ; AVX512F-NEXT:    vpsllq $63, %zmm0, %zmm0
-; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k0
-; AVX512F-NEXT:    kshiftlw $8, %k0, %k0
-; AVX512F-NEXT:    kshiftrw $8, %k0, %k1
+; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k1
 ; AVX512F-NEXT:    vpblendmd (%rdi), %zmm1, %zmm0 {%k1}
 ; AVX512F-NEXT:    ## kill: %YMM0<def> %YMM0<kill> %ZMM0<kill>
 ; AVX512F-NEXT:    retq
@@ -327,9 +325,7 @@ define <8 x float> @test11c(<8 x i1> %mask, <8 x float>* %addr) {
 ; AVX512F:       ## BB#0:
 ; AVX512F-NEXT:    vpmovsxwq %xmm0, %zmm0
 ; AVX512F-NEXT:    vpsllq $63, %zmm0, %zmm0
-; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k0
-; AVX512F-NEXT:    kshiftlw $8, %k0, %k0
-; AVX512F-NEXT:    kshiftrw $8, %k0, %k1
+; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k1
 ; AVX512F-NEXT:    vmovups (%rdi), %zmm0 {%k1} {z}
 ; AVX512F-NEXT:    ## kill: %YMM0<def> %YMM0<kill> %ZMM0<kill>
 ; AVX512F-NEXT:    retq
@@ -369,9 +365,7 @@ define <8 x i32> @test11d(<8 x i1> %mask, <8 x i32>* %addr) {
 ; AVX512F:       ## BB#0:
 ; AVX512F-NEXT:    vpmovsxwq %xmm0, %zmm0
 ; AVX512F-NEXT:    vpsllq $63, %zmm0, %zmm0
-; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k0
-; AVX512F-NEXT:    kshiftlw $8, %k0, %k0
-; AVX512F-NEXT:    kshiftrw $8, %k0, %k1
+; AVX512F-NEXT:    vptestmq %zmm0, %zmm0, %k1
 ; AVX512F-NEXT:    vmovdqu32 (%rdi), %zmm0 {%k1} {z}
 ; AVX512F-NEXT:    ## kill: %YMM0<def> %YMM0<kill> %ZMM0<kill>
 ; AVX512F-NEXT:    retq
@@ -477,7 +471,7 @@ define void @test15(<2 x i32> %trigger, <2 x i32>* %addr, <2 x i32> %val) {
 ; AVX1-NEXT:    vpblendw {{.*#+}} xmm0 = xmm0[0,1],xmm2[2,3],xmm0[4,5],xmm2[6,7]
 ; AVX1-NEXT:    vpcmpeqq %xmm2, %xmm0, %xmm0
 ; AVX1-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0,2],zero,zero
-; AVX1-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,2,2,3]
+; AVX1-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[0,2,2,3]
 ; AVX1-NEXT:    vmaskmovps %xmm1, %xmm0, (%rdi)
 ; AVX1-NEXT:    retq
 ;
@@ -564,7 +558,7 @@ define <2 x i32> @test17(<2 x i32> %trigger, <2 x i32>* %addr, <2 x i32> %dst) {
 ; AVX1-NEXT:    vpcmpeqq %xmm2, %xmm0, %xmm0
 ; AVX1-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0,2],zero,zero
 ; AVX1-NEXT:    vmaskmovps (%rdi), %xmm0, %xmm2
-; AVX1-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,2,2,3]
+; AVX1-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[0,2,2,3]
 ; AVX1-NEXT:    vblendvps %xmm0, %xmm2, %xmm1, %xmm0
 ; AVX1-NEXT:    vpmovsxdq %xmm0, %xmm0
 ; AVX1-NEXT:    retq
@@ -576,7 +570,7 @@ define <2 x i32> @test17(<2 x i32> %trigger, <2 x i32>* %addr, <2 x i32> %dst) {
 ; AVX2-NEXT:    vpcmpeqq %xmm2, %xmm0, %xmm0
 ; AVX2-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0,2],zero,zero
 ; AVX2-NEXT:    vpmaskmovd (%rdi), %xmm0, %xmm2
-; AVX2-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,2,2,3]
+; AVX2-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[0,2,2,3]
 ; AVX2-NEXT:    vblendvps %xmm0, %xmm2, %xmm1, %xmm0
 ; AVX2-NEXT:    vpmovsxdq %xmm0, %xmm0
 ; AVX2-NEXT:    retq
@@ -588,7 +582,7 @@ define <2 x i32> @test17(<2 x i32> %trigger, <2 x i32>* %addr, <2 x i32> %dst) {
 ; AVX512F-NEXT:    vpcmpeqq %xmm2, %xmm0, %xmm0
 ; AVX512F-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0,2],zero,zero
 ; AVX512F-NEXT:    vpmaskmovd (%rdi), %xmm0, %xmm2
-; AVX512F-NEXT:    vpshufd {{.*#+}} xmm1 = xmm1[0,2,2,3]
+; AVX512F-NEXT:    vpermilps {{.*#+}} xmm1 = xmm1[0,2,2,3]
 ; AVX512F-NEXT:    vblendvps %xmm0, %xmm2, %xmm1, %xmm0
 ; AVX512F-NEXT:    vpmovsxdq %xmm0, %xmm0
 ; AVX512F-NEXT:    retq
@@ -1126,7 +1120,7 @@ define <8 x double> @load_one_mask_bit_set5(<8 x double>* %addr, <8 x double> %v
 ; AVX:       ## BB#0:
 ; AVX-NEXT:    vextractf128 $1, %ymm1, %xmm2
 ; AVX-NEXT:    vmovsd {{.*#+}} xmm3 = mem[0],zero
-; AVX-NEXT:    vunpcklpd {{.*#+}} xmm2 = xmm2[0],xmm3[0]
+; AVX-NEXT:    vmovlhps {{.*#+}} xmm2 = xmm2[0],xmm3[0]
 ; AVX-NEXT:    vinsertf128 $1, %xmm2, %ymm1, %ymm1
 ; AVX-NEXT:    retq
 ;
@@ -1140,21 +1134,18 @@ define <8 x double> @load_one_mask_bit_set5(<8 x double>* %addr, <8 x double> %v
   ret <8 x double> %res
 }
 
-; FIXME: The mask bit for each data element is the most significant bit of the mask operand, so a compare isn't needed.
+; The mask bit for each data element is the most significant bit of the mask operand, so a compare isn't needed.
+; FIXME: The AVX512 code should be improved to use 'vpmovd2m'. Add tests for 512-bit vectors when implementing that.
 
 define void @trunc_mask(<4 x float> %x, <4 x float>* %ptr, <4 x float> %y, <4 x i32> %mask) {
 ; AVX-LABEL: trunc_mask:
 ; AVX:       ## BB#0:
-; AVX-NEXT:    vpxor %xmm1, %xmm1, %xmm1
-; AVX-NEXT:    vpcmpgtd %xmm2, %xmm1, %xmm1
-; AVX-NEXT:    vmaskmovps %xmm0, %xmm1, (%rdi)
+; AVX-NEXT:    vmaskmovps %xmm0, %xmm2, (%rdi)
 ; AVX-NEXT:    retq
 ;
 ; AVX512F-LABEL: trunc_mask:
 ; AVX512F:       ## BB#0:
-; AVX512F-NEXT:    vpxor %xmm1, %xmm1, %xmm1
-; AVX512F-NEXT:    vpcmpgtd %xmm2, %xmm1, %xmm1
-; AVX512F-NEXT:    vmaskmovps %xmm0, %xmm1, (%rdi)
+; AVX512F-NEXT:    vmaskmovps %xmm0, %xmm2, (%rdi)
 ; AVX512F-NEXT:    retq
 ;
 ; SKX-LABEL: trunc_mask:

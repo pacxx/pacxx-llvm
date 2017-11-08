@@ -15,7 +15,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/GlobalISel/CallLowering.h"
 #include "llvm/CodeGen/LowLevelType.h"
@@ -54,7 +54,7 @@
 #include "llvm/Support/LowLevelTypeImpl.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/CodeGen/TargetFrameLowering.h"
 #include "llvm/Target/TargetIntrinsicInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
@@ -1291,14 +1291,18 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
       if (translate(Inst))
         continue;
 
-      std::string InstStrStorage;
-      raw_string_ostream InstStr(InstStrStorage);
-      InstStr << Inst;
-
       OptimizationRemarkMissed R("gisel-irtranslator", "GISelFailure",
                                  Inst.getDebugLoc(), &BB);
-      R << "unable to translate instruction: " << ore::NV("Opcode", &Inst)
-        << ": '" << InstStr.str() << "'";
+      R << "unable to translate instruction: " << ore::NV("Opcode", &Inst);
+
+      if (ORE->allowExtraAnalysis("gisel-irtranslator")) {
+        std::string InstStrStorage;
+        raw_string_ostream InstStr(InstStrStorage);
+        InstStr << Inst;
+
+        R << ": '" << InstStr.str() << "'";
+      }
+
       reportTranslationError(*MF, *TPC, *ORE, R);
       return false;
     }
