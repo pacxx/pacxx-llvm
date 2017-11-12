@@ -157,3 +157,21 @@ Contributions are always welcome. If you want to contribute to PACXX just open a
 
 # Publications 
 
+Haidl M, Gorlatch S. 2014. ‘[PACXX: Towards a Unified Programming Model for Programming Accelerators using C++14][1].’ Contributed to the The LLVM Compiler Infrastructure in HPC Workshop at Supercomputing '14, New Orleans. doi: 10.1109/LLVM-HPC.2014.9.
+
+Haidl M, Hagedorn B, Gorlatch S. 2016. ‘[Programming GPUs with C++14 and Just-In-Time Compilation][2].’ Contributed to the Advances in Parallel Computing: On the Road to Exascale, ParCo2015, Edinburgh, Schottland. doi: 10.3233/978-1-61499-621-7-247.
+
+Haidl M, Steuwer M, Humernbrum T, Gorlatch S. 2016. ‘[Multi-Stage Programming for GPUs in Modern C++ using PACXX][3].’ Contributed to the The 9th Annual Workshop on General Purpose Processing Using Graphics Processing Unit, GPGPU '16, Barcelona, Spain. doi: 10.1145/2884045.2884049.
+
+Haidl M, Gorlatch S. 2017. ‘[High-Level Programming for Many-Cores using C++14 and the STL][4].’ International Journal of Parallel Programming 2017. doi: 10.1007/s10766-017-0497-y.
+
+Haidl M, Steuwer M, Dirks H, Humernbrum T, Gorlatch S. 2017. ‘[Towards Composable GPU Programming: Programming GPUs with Eager Actions and Lazy Views][5].’ In Proceedings of the 8th International Workshop on Programming Models and Applications for Multicores and Manycores, edited by Chen Q, Huang Z, 58-67. New York, NY: ACM. doi: 10.1145/3026937.3026942.
+
+Haidl M, Moll S, Klein L, Sun H, Hack S, Gorlatch S. 2017 '[PACXXv2 + RV: An LLVM-based Portable High-Performance Programming Model][6].' In Proceedings of the 4th of the Fourth Workshop on the LLVM Compiler Infrastructure in HPC at Supercomputing '17, Denver, ACM doi: 10.1145/3148173.3148185
+
+[1]:http://ieeexplore.ieee.org/document/7069296/
+[2]:http://ebooks.iospress.nl/publication/42662
+[3]:https://dl.acm.org/citation.cfm?doid=2884045.2884049
+[4]:https://link.springer.com/article/10.1007%2Fs10766-017-0497-y
+[5]:https://dl.acm.org/citation.cfm?doid=3026937.3026942
+[6]:https://dl.acm.org/citation.cfm?id=3148185
