@@ -22,7 +22,7 @@ git clone --recursive https://github.com/pacxx/pacxx-llvm llvm
 ``` bash
 mkdir build && cd build
 
-cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_CXX_FLAGS_RELEASE="-O3"
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3"
 
 make -j<number of cores>
 ```
@@ -148,8 +148,10 @@ Executor.h:99: note: VERBOSE: destroying executor 0
 
 # Known Issues
 
-- Nvidia's libdevice must be linked manually to get all math functions in device code.
-- SLEEF fails to compile on AVX2 architectures due to missing intrinsics in llvm 6.0.  
+- Nvidia's libdevice must be linked manually to get all math functions in device code. This will be fixed in a future update. 
+- Atomic Operations are more or less a bad hack.
+- Missing support for constant memory regions on GPUs.
+- SLEEF fails to compile on AVX2 architectures due to missing intrinsics in llvm 6.0. (currently under investigation)  
 - Documentation. Well yes the only available documentation on the PACXX runtime and the programming model itself is source code.
 
 # Want to contribute? 
