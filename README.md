@@ -151,7 +151,6 @@ Executor.h:99: note: VERBOSE: destroying executor 0
 - Nvidia's libdevice must be linked manually to get all math functions in device code. This will be fixed in a future update. 
 - Atomic Operations are more or less a bad hack.
 - Missing support for constant memory regions on GPUs.
-- SLEEF fails to compile on AVX2 architectures due to missing intrinsics in llvm 6.0. (currently under investigation)  
 - Documentation. Well yes the only available documentation on the PACXX runtime and the programming model itself is source code.
 
 # Want to contribute? 
@@ -177,3 +176,4 @@ Haidl M, Moll S, Klein L, Sun H, Hack S, Gorlatch S. 2017 '[PACXXv2 + RV: An LLV
 [4]:https://link.springer.com/article/10.1007%2Fs10766-017-0497-y
 [5]:https://dl.acm.org/citation.cfm?doid=3026937.3026942
 [6]:https://dl.acm.org/citation.cfm?id=3148185
+

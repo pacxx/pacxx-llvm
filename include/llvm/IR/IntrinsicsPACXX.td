@@ -1,14 +1,7 @@
 
-
 let TargetPrefix = "pacxx" in {
-// Accessing special registers.
+// Accessing special variables.
 multiclass PACXXIDIntrinsic_v4i32<string regname> {
-// FIXME: Do we need the 128-bit integer type version?
-//    def _r64   : Intrinsic<[llvm_i128_ty],   [], [IntrNoMem]>;
-
-// FIXME: Enable this once v4i32 support is enabled in back-end.
-//    def _v4i16 : Intrinsic<[llvm_v4i32_ty], [], [IntrNoMem]>;
-
   def _x     : Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>,
                GCCBuiltin<"__pacxx_read_" # regname # "_x">;
   def _y     : Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>,
@@ -35,6 +28,9 @@ defm int_pacxx_read_nctaid : PACXXIDIntrinsic_v4i32<"nctaid">;
 
 def int_pacxx_barrier0 : GCCBuiltin<"__pacxx_syncthreads">,
   Intrinsic<[], [], [IntrConvergent]>;
+
+def int_pacxx_backend_id : GCCBuiltin<"__pacxx_backend_id">,
+  Intrinsic<[LLVMType<i32>], [], [IntrNoMem]>;
 
 def int_pacxx_offload : GCCBuiltin<"__pacxx_offload">,
   Intrinsic<[], [], [IntrConvergent]>;
