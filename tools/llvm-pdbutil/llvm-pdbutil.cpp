@@ -727,8 +727,9 @@ static void yamlToPdb(StringRef Path) {
   auto &TpiBuilder = Builder.getTpiBuilder();
   const auto &Tpi = YamlObj.TpiStream.getValueOr(DefaultTpiStream);
   TpiBuilder.setVersionHeader(Tpi.Version);
+  TypeTableBuilder TS(Allocator);
   for (const auto &R : Tpi.Records) {
-    CVType Type = R.toCodeViewRecord(Allocator);
+    CVType Type = R.toCodeViewRecord(TS);
     TpiBuilder.addTypeRecord(Type.RecordData, None);
   }
 
@@ -736,7 +737,7 @@ static void yamlToPdb(StringRef Path) {
   auto &IpiBuilder = Builder.getIpiBuilder();
   IpiBuilder.setVersionHeader(Ipi.Version);
   for (const auto &R : Ipi.Records) {
-    CVType Type = R.toCodeViewRecord(Allocator);
+    CVType Type = R.toCodeViewRecord(TS);
     IpiBuilder.addTypeRecord(Type.RecordData, None);
   }
 
@@ -1019,11 +1020,11 @@ static void mergePdbs() {
 
   auto &DestTpi = Builder.getTpiBuilder();
   auto &DestIpi = Builder.getIpiBuilder();
-  MergedTpi.ForEachRecord([&DestTpi](TypeIndex TI, ArrayRef<uint8_t> Data) {
-    DestTpi.addTypeRecord(Data, None);
+  MergedTpi.ForEachRecord([&DestTpi](TypeIndex TI, const CVType &Type) {
+    DestTpi.addTypeRecord(Type.RecordData, None);
   });
-  MergedIpi.ForEachRecord([&DestIpi](TypeIndex TI, ArrayRef<uint8_t> Data) {
-    DestIpi.addTypeRecord(Data, None);
+  MergedIpi.ForEachRecord([&DestIpi](TypeIndex TI, const CVType &Type) {
+    DestIpi.addTypeRecord(Type.RecordData, None);
   });
   Builder.getInfoBuilder().addFeature(PdbRaw_FeatureSig::VC140);
 

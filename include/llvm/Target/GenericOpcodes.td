@@ -469,7 +469,7 @@ def G_FLOG2 : Instruction {
 // Generic load. Expects a MachineMemOperand in addition to explicit operands.
 def G_LOAD : Instruction {
   let OutOperandList = (outs type0:$dst);
-  let InOperandList = (ins type1:$addr);
+  let InOperandList = (ins ptype1:$addr);
   let hasSideEffects = 0;
   let mayLoad = 1;
 }
@@ -477,8 +477,106 @@ def G_LOAD : Instruction {
 // Generic store. Expects a MachineMemOperand in addition to explicit operands.
 def G_STORE : Instruction {
   let OutOperandList = (outs);
-  let InOperandList = (ins type0:$src, type1:$addr);
+  let InOperandList = (ins type0:$src, ptype1:$addr);
   let hasSideEffects = 0;
+  let mayStore = 1;
+}
+
+// Generic atomic cmpxchg. Expects a MachineMemOperand in addition to explicit
+// operands.
+def G_ATOMIC_CMPXCHG : Instruction {
+  let OutOperandList = (outs type0:$oldval);
+  let InOperandList = (ins ptype1:$addr, type0:$cmpval, type0:$newval);
+  let hasSideEffects = 0;
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+
+// Generic atomicrmw. Expects a MachineMemOperand in addition to explicit
+// operands.
+class G_ATOMICRMW_OP : Instruction {
+  let OutOperandList = (outs type0:$oldval);
+  let InOperandList = (ins ptype1:$addr, type0:$val);
+  let hasSideEffects = 0;
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+
+def G_ATOMICRMW_XCHG : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_ADD : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_SUB : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_AND : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_NAND : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_OR : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_XOR : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_MAX : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_MIN : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_UMAX : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+def G_ATOMICRMW_UMIN : G_ATOMICRMW_OP {
+  // FIXME: This include is surrounded by a 'let mayLoad = 0, mayStore = 0 in {}'
+  //        block which overrides the value inherited from G_ATOMICRMW_OP. Work
+  //        around this for now. See http://reviews.llvm.org/D40096
+  let mayLoad = 1;
   let mayStore = 1;
 }
 

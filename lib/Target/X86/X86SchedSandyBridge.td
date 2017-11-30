@@ -276,11 +276,12 @@ def : WriteRes<WriteMicrocoded, [SBPort015]> { let Latency = 100; }
 def : WriteRes<WriteFence, [SBPort23, SBPort4]>;
 def : WriteRes<WriteNop, []>;
 
-// AVX2 is not supported on that architecture, but we should define the basic
+// AVX2/FMA is not supported on that architecture, but we should define the basic
 // scheduling resources anyway.
 defm : SBWriteResPair<WriteFShuffle256, SBPort0,  1>;
 defm : SBWriteResPair<WriteShuffle256, SBPort0,  1>;
 defm : SBWriteResPair<WriteVarVecShift, SBPort0,  1>;
+defm : SBWriteResPair<WriteFMA, SBPort01,  5>;
 
 // Remaining SNB instrs.
 
@@ -1550,7 +1551,7 @@ def SBWriteResGroup49 : SchedWriteRes<[SBPort5,SBPort23]> {
   let ResourceCycles = [1,1];
 }
 def: InstRW<[SBWriteResGroup49], (instregex "JMP(16|32|64)m")>;
-def: InstRW<[SBWriteResGroup49], (instregex "MOV64sm")>;
+def: InstRW<[SBWriteResGroup49], (instregex "MOV16sm")>;
 
 def SBWriteResGroup50 : SchedWriteRes<[SBPort23,SBPort05]> {
   let Latency = 6;
