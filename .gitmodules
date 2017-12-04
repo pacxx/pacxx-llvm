@@ -11,5 +11,5 @@
 	path = tools/rv
 	url = ../pacxx-rv.git
 [submodule "tools/lld"]
-	path = tools/lld
+	path = projects/lld
 	url = https://github.com/llvm-mirror/lld
