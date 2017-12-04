@@ -47,8 +47,9 @@ using namespace llvm;
 #include "X86GenInstrInfo.inc"
 
 static cl::opt<bool>
-NoFusing("disable-spill-fusing",
-         cl::desc("Disable fusing of spill code into instructions"));
+    NoFusing("disable-spill-fusing",
+             cl::desc("Disable fusing of spill code into instructions"),
+             cl::Hidden);
 static cl::opt<bool>
 PrintFailedFusing("print-failed-fuse-candidates",
                   cl::desc("Print instructions that the allocator wants to"
@@ -5255,7 +5256,11 @@ MachineInstr *X86InstrInfo::commuteInstructionImpl(MachineInstr &MI, bool NewMI,
                                                    OpIdx1, OpIdx2);
   }
   case X86::PCLMULQDQrr:
-  case X86::VPCLMULQDQrr:{
+  case X86::VPCLMULQDQrr:
+  case X86::VPCLMULQDQYrr:
+  case X86::VPCLMULQDQZrr:
+  case X86::VPCLMULQDQZ128rr:
+  case X86::VPCLMULQDQZ256rr: {
     // SRC1 64bits = Imm[0] ? SRC1[127:64] : SRC1[63:0]
     // SRC2 64bits = Imm[4] ? SRC2[127:64] : SRC2[63:0]
     unsigned Imm = MI.getOperand(3).getImm();
@@ -7471,6 +7476,7 @@ bool X86InstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
       }
       if (OldCC == X86::COND_INVALID) return false;
     }
+    X86::CondCode ReplacementCC = X86::COND_INVALID;
     if (IsCmpZero) {
       switch (OldCC) {
       default: break;
@@ -7490,31 +7496,32 @@ bool X86InstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
         default:
           return false;
         case X86::COND_E:
+          ReplacementCC = NewCC;
           break;
         case X86::COND_NE:
-          NewCC = GetOppositeBranchCondition(NewCC);
+          ReplacementCC = GetOppositeBranchCondition(NewCC);
           break;
         }
     } else if (IsSwapped) {
       // If we have SUB(r1, r2) and CMP(r2, r1), the condition code needs
       // to be changed from r2 > r1 to r1 < r2, from r2 < r1 to r1 > r2, etc.
       // We swap the condition code and synthesize the new opcode.
-      NewCC = getSwappedCondition(OldCC);
-      if (NewCC == X86::COND_INVALID) return false;
+      ReplacementCC = getSwappedCondition(OldCC);
+      if (ReplacementCC == X86::COND_INVALID) return false;
     }
 
-    if ((ShouldUpdateCC || IsSwapped) && NewCC != OldCC) {
+    if ((ShouldUpdateCC || IsSwapped) && ReplacementCC != OldCC) {
       // Synthesize the new opcode.
       bool HasMemoryOperand = Instr.hasOneMemOperand();
       unsigned NewOpc;
       if (Instr.isBranch())
-        NewOpc = GetCondBranchFromCond(NewCC);
+        NewOpc = GetCondBranchFromCond(ReplacementCC);
       else if(OpcIsSET)
-        NewOpc = getSETFromCond(NewCC, HasMemoryOperand);
+        NewOpc = getSETFromCond(ReplacementCC, HasMemoryOperand);
       else {
         unsigned DstReg = Instr.getOperand(0).getReg();
         const TargetRegisterClass *DstRC = MRI->getRegClass(DstReg);
-        NewOpc = getCMovFromCond(NewCC, TRI->getRegSizeInBits(*DstRC)/8,
+        NewOpc = getCMovFromCond(ReplacementCC, TRI->getRegSizeInBits(*DstRC)/8,
                                  HasMemoryOperand);
       }
 
@@ -7755,6 +7762,18 @@ static void expandLoadStackGuard(MachineInstrBuilder &MIB,
   MIB.addReg(Reg, RegState::Kill).addImm(1).addReg(0).addImm(0).addReg(0);
 }
 
+static bool expandXorFP(MachineInstrBuilder &MIB, const TargetInstrInfo &TII) {
+  MachineBasicBlock &MBB = *MIB->getParent();
+  MachineFunction &MF = *MBB.getParent();
+  const X86Subtarget &Subtarget = MF.getSubtarget<X86Subtarget>();
+  const X86RegisterInfo *TRI = Subtarget.getRegisterInfo();
+  unsigned XorOp =
+      MIB->getOpcode() == X86::XOR64_FP ? X86::XOR64rr : X86::XOR32rr;
+  MIB->setDesc(TII.get(XorOp));
+  MIB.addReg(TRI->getFrameRegister(MF), RegState::Undef);
+  return true;
+}
+
 // This is used to handle spills for 128/256-bit registers when we have AVX512,
 // but not VLX. If it uses an extended register we need to use an instruction
 // that loads the lower 128/256-bit, but is available with only AVX512F.
@@ -7949,6 +7968,9 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case TargetOpcode::LOAD_STACK_GUARD:
     expandLoadStackGuard(MIB, *this);
     return true;
+  case X86::XOR64_FP:
+  case X86::XOR32_FP:
+    return expandXorFP(MIB, *this);
   }
   return false;
 }
@@ -10873,7 +10895,7 @@ X86InstrInfo::getOutliningType(MachineInstr &MI) const {
   // FIXME: There are instructions which are being manually built without
   // explicit uses/defs so we also have to check the MCInstrDesc. We should be
   // able to remove the extra checks once those are fixed up. For example,
-  // sometimes we might get something like %RAX<def> = POP64r 1. This won't be
+  // sometimes we might get something like %rax<def> = POP64r 1. This won't be
   // caught by modifiesRegister or readsRegister even though the instruction
   // really ought to be formed so that modifiesRegister/readsRegister would
   // catch it.

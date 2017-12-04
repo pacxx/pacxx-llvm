@@ -190,7 +190,7 @@ EnableTypePromotionMerge("cgp-type-promotion-merge", cl::Hidden,
     " the other."), cl::init(true));
 
 static cl::opt<bool> DisableComplexAddrModes(
-    "disable-complex-addr-modes", cl::Hidden, cl::init(true),
+    "disable-complex-addr-modes", cl::Hidden, cl::init(false),
     cl::desc("Disables combining addressing modes with different parts "
              "in optimizeMemoryInst."));
 
@@ -201,6 +201,22 @@ AddrSinkNewPhis("addr-sink-new-phis", cl::Hidden, cl::init(false),
 static cl::opt<bool>
 AddrSinkNewSelects("addr-sink-new-select", cl::Hidden, cl::init(false),
                    cl::desc("Allow creation of selects in Address sinking."));
+
+static cl::opt<bool> AddrSinkCombineBaseReg(
+    "addr-sink-combine-base-reg", cl::Hidden, cl::init(true),
+    cl::desc("Allow combining of BaseReg field in Address sinking."));
+
+static cl::opt<bool> AddrSinkCombineBaseGV(
+    "addr-sink-combine-base-gv", cl::Hidden, cl::init(true),
+    cl::desc("Allow combining of BaseGV field in Address sinking."));
+
+static cl::opt<bool> AddrSinkCombineBaseOffs(
+    "addr-sink-combine-base-offs", cl::Hidden, cl::init(true),
+    cl::desc("Allow combining of BaseOffs field in Address sinking."));
+
+static cl::opt<bool> AddrSinkCombineScaledReg(
+    "addr-sink-combine-scaled-reg", cl::Hidden, cl::init(true),
+    cl::desc("Allow combining of ScaledReg field in Address sinking."));
 
 namespace {
 
@@ -229,8 +245,10 @@ class TypePromotionTransaction;
 
     /// Keeps track of non-local addresses that have been sunk into a block.
     /// This allows us to avoid inserting duplicate code for blocks with
-    /// multiple load/stores of the same address.
-    ValueMap<Value*, Value*> SunkAddrs;
+    /// multiple load/stores of the same address. The usage of WeakTrackingVH
+    /// enables SunkAddrs to be treated as a cache whose entries can be
+    /// invalidated if a sunken address computation has been erased.
+    ValueMap<Value*, WeakTrackingVH> SunkAddrs;
 
     /// Keeps track of all instructions inserted for the current function.
     SetOfInstrs InsertedInsts;
@@ -2062,16 +2080,67 @@ struct ExtAddrMode : public TargetLowering::AddrMode {
       return static_cast<FieldName>(Result);
   }
 
-  // AddrModes with a baseReg or gv where the reg/gv is
-  // the only populated field are trivial.
+  // An AddrMode is trivial if it involves no calculation i.e. it is just a base
+  // with no offset.
   bool isTrivial() {
-    if (BaseGV && !BaseOffs && !Scale && !BaseReg)
-      return true;
+    // An AddrMode is (BaseGV + BaseReg + BaseOffs + ScaleReg * Scale) so it is
+    // trivial if at most one of these terms is nonzero, except that BaseGV and
+    // BaseReg both being zero actually means a null pointer value, which we
+    // consider to be 'non-zero' here.
+    return !BaseOffs && !Scale && !(BaseGV && BaseReg);
+  }
 
-    if (!BaseGV && !BaseOffs && !Scale && BaseReg)
-      return true;
+  Value *GetFieldAsValue(FieldName Field, Type *IntPtrTy) {
+    switch (Field) {
+    default:
+      return nullptr;
+    case BaseRegField:
+      return BaseReg;
+    case BaseGVField:
+      return BaseGV;
+    case ScaledRegField:
+      return ScaledReg;
+    case BaseOffsField:
+      return ConstantInt::get(IntPtrTy, BaseOffs);
+    }
+  }
 
-    return false;
+  void SetCombinedField(FieldName Field, Value *V,
+                        const SmallVectorImpl<ExtAddrMode> &AddrModes) {
+    switch (Field) {
+    default:
+      llvm_unreachable("Unhandled fields are expected to be rejected earlier");
+      break;
+    case ExtAddrMode::BaseRegField:
+      BaseReg = V;
+      break;
+    case ExtAddrMode::BaseGVField:
+      // A combined BaseGV is an Instruction, not a GlobalValue, so it goes
+      // in the BaseReg field.
+      assert(BaseReg == nullptr);
+      BaseReg = V;
+      BaseGV = nullptr;
+      break;
+    case ExtAddrMode::ScaledRegField:
+      ScaledReg = V;
+      // If we have a mix of scaled and unscaled addrmodes then we want scale
+      // to be the scale and not zero.
+      if (!Scale)
+        for (const ExtAddrMode &AM : AddrModes)
+          if (AM.Scale) {
+            Scale = AM.Scale;
+            break;
+          }
+      break;
+    case ExtAddrMode::BaseOffsField:
+      // The offset is no longer a constant, so it goes in ScaledReg with a
+      // scale of 1.
+      assert(ScaledReg == nullptr);
+      ScaledReg = V;
+      Scale = 1;
+      BaseOffs = 0;
+      break;
+    }
   }
 };
 
@@ -2800,16 +2869,14 @@ public:
     else if (DifferentField != ThisDifferentField)
       DifferentField = ExtAddrMode::MultipleFields;
 
-    // If this AddrMode is the same as all the others then everything is fine
-    // (which should only happen when there is actually only one AddrMode).
-    if (DifferentField == ExtAddrMode::NoField) {
-      assert(AddrModes.size() == 1);
-      return true;
-    }
-
-    // If NewAddrMode differs in only one dimension then we can handle it by
-    // inserting a phi/select later on.
-    if (DifferentField != ExtAddrMode::MultipleFields) {
+    // If NewAddrMode differs in only one dimension, and that dimension isn't
+    // the amount that ScaledReg is scaled by, then we can handle it by
+    // inserting a phi/select later on. Even if NewAddMode is the same
+    // we still need to collect it due to original value is different.
+    // And later we will need all original values as anchors during
+    // finding the common Phi node.
+    if (DifferentField != ExtAddrMode::MultipleFields &&
+        DifferentField != ExtAddrMode::ScaleField) {
       AddrModes.emplace_back(NewAddrMode);
       return true;
     }
@@ -2829,7 +2896,7 @@ public:
       return false;
 
     // A single AddrMode can trivially be combined.
-    if (AddrModes.size() == 1)
+    if (AddrModes.size() == 1 || DifferentField == ExtAddrMode::NoField)
       return true;
 
     // If the AddrModes we collected are all just equal to the value they are
@@ -2837,22 +2904,19 @@ public:
     if (AllAddrModesTrivial)
       return false;
 
-    if (DisableComplexAddrModes)
-      return false;
-
-    // For now we support only different base registers.
-    // TODO: enable others.
-    if (DifferentField != ExtAddrMode::BaseRegField)
+    if (!addrModeCombiningAllowed())
       return false;
 
     // Build a map between <original value, basic block where we saw it> to
     // value of base register.
+    // Bail out if there is no common type.
     FoldAddrToValueMapping Map;
-    initializeMap(Map);
+    if (!initializeMap(Map))
+      return false;
 
     Value *CommonValue = findCommon(Map);
     if (CommonValue)
-      AddrModes[0].BaseReg = CommonValue;
+      AddrModes[0].SetCombinedField(DifferentField, CommonValue, AddrModes);
     return CommonValue != nullptr;
   }
 
@@ -2862,23 +2926,23 @@ private:
   /// If address is not an instruction than basic block is set to null.
   /// At the same time we find a common type for different field we will
   /// use to create new Phi/Select nodes. Keep it in CommonType field.
-  void initializeMap(FoldAddrToValueMapping &Map) {
+  /// Return false if there is no common type found.
+  bool initializeMap(FoldAddrToValueMapping &Map) {
     // Keep track of keys where the value is null. We will need to replace it
     // with constant null when we know the common type.
     SmallVector<ValueInBB, 2> NullValue;
+    Type *IntPtrTy = SQ.DL.getIntPtrType(AddrModes[0].OriginalValue->getType());
     for (auto &AM : AddrModes) {
       BasicBlock *BB = nullptr;
       if (Instruction *I = dyn_cast<Instruction>(AM.OriginalValue))
         BB = I->getParent();
 
-      // For now we support only base register as different field.
-      // TODO: Enable others.
-      Value *DV = AM.BaseReg;
+      Value *DV = AM.GetFieldAsValue(DifferentField, IntPtrTy);
       if (DV) {
-        if (CommonType)
-          assert(CommonType == DV->getType() && "Different types detected!");
-        else
-          CommonType = DV->getType();
+        auto *Type = DV->getType();
+        if (CommonType && CommonType != Type)
+          return false;
+        CommonType = Type;
         Map[{ AM.OriginalValue, BB }] = DV;
       } else {
         NullValue.push_back({ AM.OriginalValue, BB });
@@ -2887,6 +2951,7 @@ private:
     assert(CommonType && "At least one non-null value must be!");
     for (auto VIBB : NullValue)
       Map[VIBB] = Constant::getNullValue(CommonType);
+    return true;
   }
 
   /// \brief We have mapping between value A and basic block where value A
@@ -3184,6 +3249,23 @@ private:
         for (auto B : predecessors(CurrentBlock))
           Worklist.push_back({ CurrentPhi->getIncomingValueForBlock(B), B });
       }
+    }
+  }
+
+  bool addrModeCombiningAllowed() {
+    if (DisableComplexAddrModes)
+      return false;
+    switch (DifferentField) {
+    default:
+      return false;
+    case ExtAddrMode::BaseRegField:
+      return AddrSinkCombineBaseReg;
+    case ExtAddrMode::BaseGVField:
+      return AddrSinkCombineBaseGV;
+    case ExtAddrMode::BaseOffsField:
+      return AddrSinkCombineBaseOffs;
+    case ExtAddrMode::ScaledRegField:
+      return AddrSinkCombineScaledReg;
     }
   }
 };
@@ -4358,9 +4440,13 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
 
   // Now that we determined the addressing expression we want to use and know
   // that we have to sink it into this block.  Check to see if we have already
-  // done this for some other load/store instr in this block.  If so, reuse the
-  // computation.
-  Value *&SunkAddr = SunkAddrs[Addr];
+  // done this for some other load/store instr in this block.  If so, reuse
+  // the computation.  Before attempting reuse, check if the address is valid
+  // as it may have been erased.
+
+  WeakTrackingVH SunkAddrVH = SunkAddrs[Addr];
+
+  Value * SunkAddr = SunkAddrVH.pointsToAliveValue() ? SunkAddrVH : nullptr;
   if (SunkAddr) {
     DEBUG(dbgs() << "CGP: Reusing nonlocal addrmode: " << AddrMode << " for "
                  << *MemoryInst << "\n");
@@ -4585,6 +4671,9 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
   }
 
   MemoryInst->replaceUsesOfWith(Repl, SunkAddr);
+  // Store the newly computed address into the cache. In the case we reused a
+  // value, this should be idempotent.
+  SunkAddrs[Addr] = WeakTrackingVH(SunkAddr);
 
   // If we have no uses, recursively delete the value and all dead instructions
   // using it.

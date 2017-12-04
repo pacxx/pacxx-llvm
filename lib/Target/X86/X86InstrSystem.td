@@ -175,11 +175,7 @@ def MOV64rs : RI<0x8C, MRMDestReg, (outs GR64:$dst), (ins SEGMENT_REG:$src),
                  "mov{q}\t{$src, $dst|$dst, $src}", [], IIC_MOV_REG_SR>;
 let mayStore = 1 in {
 def MOV16ms : I<0x8C, MRMDestMem, (outs), (ins i16mem:$dst, SEGMENT_REG:$src),
-                "mov{w}\t{$src, $dst|$dst, $src}", [], IIC_MOV_MEM_SR>, OpSize16;
-def MOV32ms : I<0x8C, MRMDestMem, (outs), (ins i32mem:$dst, SEGMENT_REG:$src),
-                "mov{l}\t{$src, $dst|$dst, $src}", [], IIC_MOV_MEM_SR>, OpSize32;
-def MOV64ms : RI<0x8C, MRMDestMem, (outs), (ins i64mem:$dst, SEGMENT_REG:$src),
-                 "mov{q}\t{$src, $dst|$dst, $src}", [], IIC_MOV_MEM_SR>;
+                "mov{w}\t{$src, $dst|$dst, $src}", [], IIC_MOV_MEM_SR>, OpSizeIgnore;
 }
 def MOV16sr : I<0x8E, MRMSrcReg, (outs SEGMENT_REG:$dst), (ins GR16:$src),
                 "mov{w}\t{$src, $dst|$dst, $src}", [], IIC_MOV_SR_REG>, OpSize16;
@@ -189,11 +185,7 @@ def MOV64sr : RI<0x8E, MRMSrcReg, (outs SEGMENT_REG:$dst), (ins GR64:$src),
                  "mov{q}\t{$src, $dst|$dst, $src}", [], IIC_MOV_SR_REG>;
 let mayLoad = 1 in {
 def MOV16sm : I<0x8E, MRMSrcMem, (outs SEGMENT_REG:$dst), (ins i16mem:$src),
-                "mov{w}\t{$src, $dst|$dst, $src}", [], IIC_MOV_SR_MEM>, OpSize16;
-def MOV32sm : I<0x8E, MRMSrcMem, (outs SEGMENT_REG:$dst), (ins i32mem:$src),
-                "mov{l}\t{$src, $dst|$dst, $src}", [], IIC_MOV_SR_MEM>, OpSize32;
-def MOV64sm : RI<0x8E, MRMSrcMem, (outs SEGMENT_REG:$dst), (ins i64mem:$src),
-                 "mov{q}\t{$src, $dst|$dst, $src}", [], IIC_MOV_SR_MEM>;
+                "mov{w}\t{$src, $dst|$dst, $src}", [], IIC_MOV_SR_MEM>, OpSizeIgnore;
 }
 } // SchedRW
 
@@ -487,6 +479,64 @@ let SchedRW = [WriteSystem] in {
 def INVD : I<0x08, RawFrm, (outs), (ins), "invd", [], IIC_INVD>, TB;
 def WBINVD : I<0x09, RawFrm, (outs), (ins), "wbinvd", [], IIC_INVD>, TB;
 } // SchedRW
+
+//===----------------------------------------------------------------------===//
+// CET instructions
+let SchedRW = [WriteSystem], Predicates = [HasSHSTK]  in{
+  let Uses = [SSP] in {
+    let Defs = [SSP] in {
+      def INCSSPD : I<0xAE, MRM5r, (outs), (ins GR32:$src), "incsspd\t$src",
+                       [(int_x86_incsspd GR32:$src)]>, XS;
+      def INCSSPQ : RI<0xAE, MRM5r, (outs), (ins GR64:$src), "incsspq\t$src",
+                       [(int_x86_incsspq GR64:$src)]>, XS, 
+                       Requires<[In64BitMode]>;
+    } // Defs SSP
+
+    let Constraints = "$src = $dst" in {
+      def RDSSPD : I<0x1E, MRM1r, (outs GR32:$dst), (ins GR32:$src), 
+                     "rdsspd\t$dst",
+                     [(set GR32:$dst, (int_x86_rdsspd GR32:$src))]>, XS;
+      def RDSSPQ : RI<0x1E, MRM1r, (outs GR64:$dst), (ins GR64:$src), 
+                     "rdsspq\t$dst", 
+                     [(set GR64:$dst, (int_x86_rdsspq GR64:$src))]>, XS, 
+                     Requires<[In64BitMode]>;
+    }
+
+    let Defs = [SSP] in {
+      def SAVEPREVSSP : I<0x01, MRM_EA, (outs), (ins), "saveprevssp",
+                       [(int_x86_saveprevssp)]>, XS;
+      def RSTORSSP : I<0x01, MRM5m, (outs), (ins i32mem:$src), 
+                       "rstorssp\t$src",
+                       [(int_x86_rstorssp addr:$src)]>, XS;
+    } // Defs SSP
+  } // Uses SSP
+
+  def WRSSD : I<0xF6, MRMDestMem, (outs), (ins i32mem:$dst, GR32:$src),
+                "wrssd\t{$src, $dst|$dst, $src}",
+                [(int_x86_wrssd GR32:$src, addr:$dst)]>, T8;
+  def WRSSQ : RI<0xF6, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src),
+                 "wrssq\t{$src, $dst|$dst, $src}",
+                 [(int_x86_wrssq GR64:$src, addr:$dst)]>, T8, 
+                 Requires<[In64BitMode]>;
+  def WRUSSD : I<0xF5, MRMDestMem, (outs), (ins i32mem:$dst, GR32:$src),
+                 "wrussd\t{$src, $dst|$dst, $src}",
+                 [(int_x86_wrussd GR32:$src, addr:$dst)]>, T8PD;
+  def WRUSSQ : RI<0xF5, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src), 
+                  "wrussq\t{$src, $dst|$dst, $src}",
+                  [(int_x86_wrussq GR64:$src, addr:$dst)]>, T8PD, 
+                  Requires<[In64BitMode]>;
+
+  let Defs = [SSP] in {
+    let Uses = [SSP] in {
+        def SETSSBSY : I<0x01, MRM_E8, (outs), (ins), "setssbsy",
+                         [(int_x86_setssbsy)]>, XS;
+    } // Uses SSP
+
+    def CLRSSBSY : I<0xAE, MRM6m, (outs), (ins i32mem:$src), 
+                     "clrssbsy\t$src",
+                     [(int_x86_clrssbsy addr:$src)]>, XS;
+  } // Defs SSP
+} // SchedRW && HasSHSTK
 
 //===----------------------------------------------------------------------===//
 // XSAVE instructions
