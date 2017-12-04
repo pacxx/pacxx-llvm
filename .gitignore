@@ -58,7 +58,7 @@ runtimes/*
 # LLDB, which is tracked independently.
 tools/lldb
 # lld, which is tracked independently.
-tools/lld
+!tools/lld
 # llgo, which is tracked independently.
 tools/llgo
 # Polly, which is tracked independently.
@@ -80,3 +80,9 @@ bindings/go/llvm/workdir
 .idea/
 projects/
 tools/clang/
+/x64/Release
+/CMakeSettings.json
+/pacxx-llvm.sln
+/pacxx-llvm.vcxproj
+/pacxx-llvm.vcxproj.filters
+/pacxx-llvm.vcxproj.user
