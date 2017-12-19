@@ -128,11 +128,11 @@ using namespace llvm;
 static unsigned LimitFloatPrecision;
 
 static cl::opt<unsigned, true>
-LimitFPPrecision("limit-float-precision",
-                 cl::desc("Generate low-precision inline sequences "
-                          "for some float libcalls"),
-                 cl::location(LimitFloatPrecision),
-                 cl::init(0));
+    LimitFPPrecision("limit-float-precision",
+                     cl::desc("Generate low-precision inline sequences "
+                              "for some float libcalls"),
+                     cl::location(LimitFloatPrecision), cl::Hidden,
+                     cl::init(0));
 
 static cl::opt<unsigned> SwitchPeelThreshold(
     "switch-peel-threshold", cl::Hidden, cl::init(66),
@@ -1472,7 +1472,9 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
     // Leave Outs empty so that LowerReturn won't try to load return
     // registers the usual way.
     SmallVector<EVT, 1> PtrValueVTs;
-    ComputeValueVTs(TLI, DL, PointerType::getUnqual(F->getReturnType()),
+    ComputeValueVTs(TLI, DL,
+                    F->getReturnType()->getPointerTo(
+                        DAG.getDataLayout().getAllocaAddrSpace()),
                     PtrValueVTs);
 
     SDValue RetPtr = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(),
@@ -1489,10 +1491,10 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
       // An aggregate return value cannot wrap around the address space, so
       // offsets to its parts don't wrap either.
       SDValue Ptr = DAG.getObjectPtrOffset(getCurSDLoc(), RetPtr, Offsets[i]);
-      Chains[i] = DAG.getStore(Chain, getCurSDLoc(),
-                               SDValue(RetOp.getNode(), RetOp.getResNo() + i),
-                               // FIXME: better loc info would be nice.
-                               Ptr, MachinePointerInfo());
+      Chains[i] = DAG.getStore(
+          Chain, getCurSDLoc(), SDValue(RetOp.getNode(), RetOp.getResNo() + i),
+          // FIXME: better loc info would be nice.
+          Ptr, MachinePointerInfo::getUnknownStack(DAG.getMachineFunction()));
     }
 
     Chain = DAG.getNode(ISD::TokenFactor, getCurSDLoc(),
@@ -2146,10 +2148,13 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
   unsigned Align = DL->getPrefTypeAlignment(Type::getInt8PtrTy(M.getContext()));
 
   // Generate code to load the content of the guard slot.
-  SDValue StackSlot = DAG.getLoad(
+  SDValue GuardVal = DAG.getLoad(
       PtrTy, dl, DAG.getEntryNode(), StackSlotPtr,
       MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI), Align,
       MachineMemOperand::MOVolatile);
+
+  if (TLI.useStackGuardXorFP())
+    GuardVal = TLI.emitStackGuardXorFP(DAG, GuardVal, dl);
 
   // Retrieve guard check function, nullptr if instrumentation is inlined.
   if (const Value *GuardCheck = TLI.getSSPStackGuardCheck(M)) {
@@ -2162,7 +2167,7 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
 
     TargetLowering::ArgListTy Args;
     TargetLowering::ArgListEntry Entry;
-    Entry.Node = StackSlot;
+    Entry.Node = GuardVal;
     Entry.Ty = FnTy->getParamType(0);
     if (Fn->hasAttribute(1, Attribute::AttrKind::InReg))
       Entry.IsInReg = true;
@@ -2195,7 +2200,7 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
 
   // Perform the comparison via a subtract/getsetcc.
   EVT VT = Guard.getValueType();
-  SDValue Sub = DAG.getNode(ISD::SUB, dl, VT, Guard, StackSlot);
+  SDValue Sub = DAG.getNode(ISD::SUB, dl, VT, Guard, GuardVal);
 
   SDValue Cmp = DAG.getSetCC(dl, TLI.getSetCCResultType(DAG.getDataLayout(),
                                                         *DAG.getContext(),
@@ -2205,7 +2210,7 @@ void SelectionDAGBuilder::visitSPDescriptorParent(StackProtectorDescriptor &SPD,
   // If the sub is not 0, then we know the guard/stackslot do not equal, so
   // branch to failure MBB.
   SDValue BrCond = DAG.getNode(ISD::BRCOND, dl,
-                               MVT::Other, StackSlot.getOperand(0),
+                               MVT::Other, GuardVal.getOperand(0),
                                Cmp, DAG.getBasicBlock(SPD.getFailureMBB()));
   // Otherwise branch to success MBB.
   SDValue Br = DAG.getNode(ISD::BR, dl,
@@ -5644,6 +5649,8 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
                         MachinePointerInfo(Global, 0), Align,
                         MachineMemOperand::MOVolatile);
     }
+    if (TLI.useStackGuardXorFP())
+      Res = TLI.emitStackGuardXorFP(DAG, Res, sdl);
     DAG.setRoot(Chain);
     setValue(&I, Res);
     return nullptr;
@@ -8590,7 +8597,9 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     // Put in an sret pointer parameter before all the other parameters.
     SmallVector<EVT, 1> ValueVTs;
     ComputeValueVTs(*TLI, DAG.getDataLayout(),
-                    PointerType::getUnqual(F.getReturnType()), ValueVTs);
+                    F.getReturnType()->getPointerTo(
+                        DAG.getDataLayout().getAllocaAddrSpace()),
+                    ValueVTs);
 
     // NOTE: Assuming that a pointer will never break down to more than one VT
     // or one register.
@@ -8744,7 +8753,9 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     // from the sret argument into it.
     SmallVector<EVT, 1> ValueVTs;
     ComputeValueVTs(*TLI, DAG.getDataLayout(),
-                    PointerType::getUnqual(F.getReturnType()), ValueVTs);
+                    F.getReturnType()->getPointerTo(
+                        DAG.getDataLayout().getAllocaAddrSpace()),
+                    ValueVTs);
     MVT VT = ValueVTs[0].getSimpleVT();
     MVT RegVT = TLI->getRegisterType(*CurDAG->getContext(), VT);
     Optional<ISD::NodeType> AssertOp = None;

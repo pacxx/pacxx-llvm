@@ -4056,29 +4056,50 @@ bool SROA::splitAlloca(AllocaInst &AI, AllocaSlices &AS) {
   // to be rewritten into a partition.
   bool IsSorted = true;
 
-  // If a byte boundary is included in any load or store, a slice starting or
-  // ending at the boundary is not splittable.
-  unsigned AllocaSize = DL.getTypeAllocSize(AI.getAllocatedType());
-  SmallBitVector SplittableOffset(AllocaSize+1, true);
-  for (Slice &S : AS)
-    for (unsigned O = S.beginOffset() + 1; O < S.endOffset() && O < AllocaSize;
-         O++)
-      SplittableOffset.reset(O);
+  uint64_t AllocaSize = DL.getTypeAllocSize(AI.getAllocatedType());
+  const uint64_t MaxBitVectorSize = 1024;
+  if (AllocaSize <= MaxBitVectorSize) {
+    // If a byte boundary is included in any load or store, a slice starting or
+    // ending at the boundary is not splittable.
+    SmallBitVector SplittableOffset(AllocaSize + 1, true);
+    for (Slice &S : AS)
+      for (unsigned O = S.beginOffset() + 1;
+           O < S.endOffset() && O < AllocaSize; O++)
+        SplittableOffset.reset(O);
 
-  for (Slice &S : AS) {
-    if (!S.isSplittable())
-      continue;
+    for (Slice &S : AS) {
+      if (!S.isSplittable())
+        continue;
 
-    if ((S.beginOffset() > AllocaSize || SplittableOffset[S.beginOffset()]) &&
-        (S.endOffset() > AllocaSize || SplittableOffset[S.endOffset()]))
-      continue;
+      if ((S.beginOffset() > AllocaSize || SplittableOffset[S.beginOffset()]) &&
+          (S.endOffset() > AllocaSize || SplittableOffset[S.endOffset()]))
+        continue;
 
-    if (isa<LoadInst>(S.getUse()->getUser()) ||
-        isa<StoreInst>(S.getUse()->getUser())) {
-      S.makeUnsplittable();
-      IsSorted = false;
+      if (isa<LoadInst>(S.getUse()->getUser()) ||
+          isa<StoreInst>(S.getUse()->getUser())) {
+        S.makeUnsplittable();
+        IsSorted = false;
+      }
     }
   }
+  else {
+    // We only allow whole-alloca splittable loads and stores
+    // for a large alloca to avoid creating too large BitVector.
+    for (Slice &S : AS) {
+      if (!S.isSplittable())
+        continue;
+
+      if (S.beginOffset() == 0 && S.endOffset() >= AllocaSize)
+        continue;
+
+      if (isa<LoadInst>(S.getUse()->getUser()) ||
+          isa<StoreInst>(S.getUse()->getUser())) {
+        S.makeUnsplittable();
+        IsSorted = false;
+      }
+    }
+  }
+
   if (!IsSorted)
     std::sort(AS.begin(), AS.end());
 
