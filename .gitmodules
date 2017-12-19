@@ -10,6 +10,6 @@
 [submodule "tools/rv"]
 	path = tools/rv
 	url = ../pacxx-rv.git
-[submodule "tools/lld"]
+[submodule "projects/lld"]
 	path = projects/lld
 	url = https://github.com/llvm-mirror/lld
