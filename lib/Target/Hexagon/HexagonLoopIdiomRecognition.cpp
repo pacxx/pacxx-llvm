@@ -1050,14 +1050,11 @@ bool PolynomialMultiplyRecognize::promoteTypes(BasicBlock *LoopB,
   // Check if the exit values have types that are no wider than the type
   // that we want to promote to.
   unsigned DestBW = DestTy->getBitWidth();
-  for (Instruction &In : *ExitB) {
-    PHINode *P = dyn_cast<PHINode>(&In);
-    if (!P)
-      break;
-    if (P->getNumIncomingValues() != 1)
+  for (PHINode &P : ExitB->phis()) {
+    if (P.getNumIncomingValues() != 1)
       return false;
-    assert(P->getIncomingBlock(0) == LoopB);
-    IntegerType *T = dyn_cast<IntegerType>(P->getType());
+    assert(P.getIncomingBlock(0) == LoopB);
+    IntegerType *T = dyn_cast<IntegerType>(P.getType());
     if (!T || T->getBitWidth() > DestBW)
       return false;
   }
@@ -1928,7 +1925,9 @@ mayLoopAccessLocation(Value *Ptr, ModRefInfo Access, Loop *L,
 
   for (auto *B : L->blocks())
     for (auto &I : *B)
-      if (Ignored.count(&I) == 0 && (AA.getModRefInfo(&I, StoreLoc) & Access))
+      if (Ignored.count(&I) == 0 &&
+          isModOrRefSet(
+              intersectModRef(AA.getModRefInfo(&I, StoreLoc), Access)))
         return true;
 
   return false;
@@ -2007,12 +2006,12 @@ CleanupAndExit:
 
   SmallPtrSet<Instruction*, 2> Ignore1;
   Ignore1.insert(SI);
-  if (mayLoopAccessLocation(StoreBasePtr, MRI_ModRef, CurLoop, BECount,
+  if (mayLoopAccessLocation(StoreBasePtr, ModRefInfo::ModRef, CurLoop, BECount,
                             StoreSize, *AA, Ignore1)) {
     // Check if the load is the offending instruction.
     Ignore1.insert(LI);
-    if (mayLoopAccessLocation(StoreBasePtr, MRI_ModRef, CurLoop, BECount,
-                              StoreSize, *AA, Ignore1)) {
+    if (mayLoopAccessLocation(StoreBasePtr, ModRefInfo::ModRef, CurLoop,
+                              BECount, StoreSize, *AA, Ignore1)) {
       // Still bad. Nothing we can do.
       goto CleanupAndExit;
     }
@@ -2054,8 +2053,8 @@ CleanupAndExit:
 
   SmallPtrSet<Instruction*, 2> Ignore2;
   Ignore2.insert(SI);
-  if (mayLoopAccessLocation(LoadBasePtr, MRI_Mod, CurLoop, BECount, StoreSize,
-                            *AA, Ignore2))
+  if (mayLoopAccessLocation(LoadBasePtr, ModRefInfo::Mod, CurLoop, BECount,
+                            StoreSize, *AA, Ignore2))
     goto CleanupAndExit;
 
   // Check the stride.

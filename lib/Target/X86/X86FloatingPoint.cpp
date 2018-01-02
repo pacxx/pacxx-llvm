@@ -349,7 +349,7 @@ bool FPS::runOnMachineFunction(MachineFunction &MF) {
   
   // In regcall convention, some FP registers may not be passed through
   // the stack, so they will need to be assigned to the stack first
-  if ((Entry->getParent()->getFunction()->getCallingConv() ==
+  if ((Entry->getParent()->getFunction().getCallingConv() ==
     CallingConv::X86_RegCall) && (Bundle.Mask && !Bundle.FixCount)) {
     // In the register calling convention, up to one FP argument could be 
     // saved in the first FP register.
@@ -499,7 +499,7 @@ bool FPS::processBasicBlock(MachineFunction &MF, MachineBasicBlock &BB) {
 /// setupBlockStack - Use the live bundles to set up our model of the stack
 /// to match predecessors' live out stack.
 void FPS::setupBlockStack() {
-  DEBUG(dbgs() << "\nSetting up live-ins for BB#" << MBB->getNumber()
+  DEBUG(dbgs() << "\nSetting up live-ins for " << printMBBReference(*MBB)
                << " derived from " << MBB->getName() << ".\n");
   StackTop = 0;
   // Get the live-in bundle for MBB.
@@ -538,7 +538,7 @@ void FPS::finishBlockStack() {
   if (MBB->succ_empty())
     return;
 
-  DEBUG(dbgs() << "Setting up live-outs for BB#" << MBB->getNumber()
+  DEBUG(dbgs() << "Setting up live-outs for " << printMBBReference(*MBB)
                << " derived from " << MBB->getName() << ".\n");
 
   // Get MBB's live-out bundle.
@@ -973,7 +973,7 @@ void FPS::handleCall(MachineBasicBlock::iterator &I) {
     unsigned R = MO.getReg() - X86::FP0;
 
     if (R < 8) {
-      if (MF->getFunction()->getCallingConv() != CallingConv::X86_RegCall) {
+      if (MF->getFunction().getCallingConv() != CallingConv::X86_RegCall) {
         assert(MO.isDef() && MO.isImplicit());
       }
 

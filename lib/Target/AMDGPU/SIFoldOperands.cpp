@@ -14,7 +14,7 @@
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/ADT/DepthFirstIterator.h"
-#include "llvm/CodeGen/LiveIntervalAnalysis.h"
+#include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -926,7 +926,7 @@ bool SIFoldOperands::tryFoldOMod(MachineInstr &MI) {
 }
 
 bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(*MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
     return false;
 
   MRI = &MF.getRegInfo();
@@ -971,9 +971,9 @@ bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
       // Prevent folding operands backwards in the function. For example,
       // the COPY opcode must not be replaced by 1 in this example:
       //
-      //    %3<def> = COPY %vgpr0; VGPR_32:%3
+      //    %3 = COPY %vgpr0; VGPR_32:%3
       //    ...
-      //    %vgpr0<def> = V_MOV_B32_e32 1, %exec<imp-use>
+      //    %vgpr0 = V_MOV_B32_e32 1, implicit %exec
       MachineOperand &Dst = MI.getOperand(0);
       if (Dst.isReg() &&
           !TargetRegisterInfo::isVirtualRegister(Dst.getReg()))

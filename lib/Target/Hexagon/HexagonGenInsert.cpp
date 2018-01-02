@@ -915,7 +915,7 @@ bool HexagonGenInsert::findRecordInsertForms(unsigned VR,
 void HexagonGenInsert::collectInBlock(MachineBasicBlock *B,
       OrderedRegisterList &AVs) {
   if (isDebug())
-    dbgs() << "visiting block BB#" << B->getNumber() << "\n";
+    dbgs() << "visiting block " << printMBBReference(*B) << "\n";
 
   // First, check if this block is reachable at all. If not, the bit tracker
   // will not have any information about registers in it.
@@ -1482,7 +1482,7 @@ bool HexagonGenInsert::removeDeadCode(MachineDomTreeNode *N) {
 }
 
 bool HexagonGenInsert::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(*MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
     return false;
 
   bool Timing = OptTiming, TimingDetail = Timing && OptTimingDetail;

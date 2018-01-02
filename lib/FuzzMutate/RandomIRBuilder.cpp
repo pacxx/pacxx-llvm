@@ -15,7 +15,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Module.h"
 
 using namespace llvm;
 using namespace fuzzerop;
@@ -51,8 +50,10 @@ Value *RandomIRBuilder::newSource(BasicBlock &BB, ArrayRef<Instruction *> Insts,
   if (Ptr) {
     // Create load from the chosen pointer
     auto IP = BB.getFirstInsertionPt();
-    if (auto *I = dyn_cast<Instruction>(Ptr))
+    if (auto *I = dyn_cast<Instruction>(Ptr)) {
       IP = ++I->getIterator();
+      assert(IP != BB.end() && "guaranteed by the findPointer");
+    }
     auto *NewLoad = new LoadInst(Ptr, "L", &*IP);
 
     // Only sample this load if it really matches the descriptor
@@ -133,9 +134,20 @@ Value *RandomIRBuilder::findPointer(BasicBlock &BB,
                                     ArrayRef<Instruction *> Insts,
                                     ArrayRef<Value *> Srcs, SourcePred Pred) {
   auto IsMatchingPtr = [&Srcs, &Pred](Instruction *Inst) {
-    if (auto PtrTy = dyn_cast<PointerType>(Inst->getType()))
+    // Invoke instructions sometimes produce valid pointers but currently
+    // we can't insert loads or stores from them
+    if (isa<TerminatorInst>(Inst))
+      return false;
+
+    if (auto PtrTy = dyn_cast<PointerType>(Inst->getType())) {
+      // We can never generate loads from non first class or non sized types
+      if (!PtrTy->getElementType()->isSized() ||
+          !PtrTy->getElementType()->isFirstClassType())
+        return false;
+
       // TODO: Check if this is horribly expensive.
       return Pred.matches(Srcs, UndefValue::get(PtrTy->getElementType()));
+    }
     return false;
   };
   if (auto RS = makeSampler(Rand, make_filter_range(Insts, IsMatchingPtr)))

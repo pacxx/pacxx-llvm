@@ -28,14 +28,14 @@
 // definitions are predicable, then in the second step, the conditional
 // transfers will then be rewritten as predicated instructions. E.g.
 //   %0 = A2_or %1, %2
-//   %3 = A2_tfrt %99, %0<kill>
+//   %3 = A2_tfrt %99, killed %0
 // will be rewritten as
 //   %3 = A2_port %99, %1, %2
 //
 // This replacement has two variants: "up" and "down". Consider this case:
 //   %0 = A2_or %1, %2
 //   ... [intervening instructions] ...
-//   %3 = A2_tfrt %99, %0<kill>
+//   %3 = A2_tfrt %99, killed %0
 // variant "up":
 //   %3 = A2_port %99, %1, %2
 //   ... [intervening instructions, %0->vreg3] ...
@@ -65,15 +65,15 @@
 // will see both instructions as actual definitions, and will mark the
 // first one as dead. The definition is not actually dead, and this
 // situation will need to be fixed. For example:
-//   %1<def,dead> = A2_tfrt ...  ; marked as dead
-//   %1<def> = A2_tfrf ...
+//   dead %1 = A2_tfrt ...  ; marked as dead
+//   %1 = A2_tfrf ...
 //
 // Since any of the individual predicated transfers may end up getting
 // removed (in case it is an identity copy), some pre-existing def may
 // be marked as dead after live interval recomputation:
-//   %1<def,dead> = ...          ; marked as dead
+//   dead %1 = ...          ; marked as dead
 //   ...
-//   %1<def> = A2_tfrf ...       ; if A2_tfrt is removed
+//   %1 = A2_tfrf ...       ; if A2_tfrt is removed
 // This case happens if %1 was used as a source in A2_tfrt, which means
 // that is it actually live at the A2_tfrf, and so the now dead definition
 // of %1 will need to be updated to non-dead at some point.
@@ -93,7 +93,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/LiveInterval.h"
-#include "llvm/CodeGen/LiveIntervalAnalysis.h"
+#include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -654,7 +654,7 @@ bool HexagonExpandCondsets::split(MachineInstr &MI,
       return false;
     TfrCounter++;
   }
-  DEBUG(dbgs() << "\nsplitting BB#" << MI.getParent()->getNumber() << ": "
+  DEBUG(dbgs() << "\nsplitting " << printMBBReference(*MI.getParent()) << ": "
                << MI);
   MachineOperand &MD = MI.getOperand(0);  // Definition
   MachineOperand &MP = MI.getOperand(1);  // Predicate register
@@ -1243,7 +1243,7 @@ bool HexagonExpandCondsets::coalesceSegments(
 }
 
 bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(*MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
     return false;
 
   HII = static_cast<const HexagonInstrInfo*>(MF.getSubtarget().getInstrInfo());
@@ -1253,7 +1253,7 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
   MRI = &MF.getRegInfo();
 
   DEBUG(LIS->print(dbgs() << "Before expand-condsets\n",
-                   MF.getFunction()->getParent()));
+                   MF.getFunction().getParent()));
 
   bool Changed = false;
   std::set<unsigned> CoalUpd, PredUpd;
@@ -1281,7 +1281,7 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
           KillUpd.insert(Op.getReg());
   updateLiveness(KillUpd, false, true, false);
   DEBUG(LIS->print(dbgs() << "After coalescing\n",
-                   MF.getFunction()->getParent()));
+                   MF.getFunction().getParent()));
 
   // First, simply split all muxes into a pair of conditional transfers
   // and update the live intervals to reflect the new arrangement. The
@@ -1298,7 +1298,7 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
   // (because of predicated defs), so make sure they are left untouched.
   // Predication does not use live intervals.
   DEBUG(LIS->print(dbgs() << "After splitting\n",
-                   MF.getFunction()->getParent()));
+                   MF.getFunction().getParent()));
 
   // Traverse all blocks and collapse predicable instructions feeding
   // conditional transfers into predicated instructions.
@@ -1307,7 +1307,7 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
   for (auto &B : MF)
     Changed |= predicateInBlock(B, PredUpd);
   DEBUG(LIS->print(dbgs() << "After predicating\n",
-                   MF.getFunction()->getParent()));
+                   MF.getFunction().getParent()));
 
   PredUpd.insert(CoalUpd.begin(), CoalUpd.end());
   updateLiveness(PredUpd, true, true, true);
@@ -1315,7 +1315,7 @@ bool HexagonExpandCondsets::runOnMachineFunction(MachineFunction &MF) {
   DEBUG({
     if (Changed)
       LIS->print(dbgs() << "After expand-condsets\n",
-                 MF.getFunction()->getParent());
+                 MF.getFunction().getParent());
   });
 
   return Changed;

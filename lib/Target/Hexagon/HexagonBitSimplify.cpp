@@ -2631,7 +2631,7 @@ bool BitSimplification::processBlock(MachineBasicBlock &B,
 }
 
 bool HexagonBitSimplify::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(*MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
     return false;
 
   auto &HST = MF.getSubtarget<HexagonSubtarget>();
@@ -2977,7 +2977,7 @@ void HexagonLoopRescheduling::moveGroup(InstrGroup &G, MachineBasicBlock &LB,
 }
 
 bool HexagonLoopRescheduling::processLoop(LoopCand &C) {
-  DEBUG(dbgs() << "Processing loop in BB#" << C.LB->getNumber() << "\n");
+  DEBUG(dbgs() << "Processing loop in " << printMBBReference(*C.LB) << "\n");
   std::vector<PhiInfo> Phis;
   for (auto &I : *C.LB) {
     if (!I.isPHI())
@@ -3181,7 +3181,7 @@ bool HexagonLoopRescheduling::processLoop(LoopCand &C) {
 }
 
 bool HexagonLoopRescheduling::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(*MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
     return false;
 
   auto &HST = MF.getSubtarget<HexagonSubtarget>();

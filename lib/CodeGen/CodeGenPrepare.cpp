@@ -18,7 +18,6 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -86,10 +85,8 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/BypassSlowDivision.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SimplifyLibCalls.h"
-#include "llvm/Transforms/Utils/ValueMapper.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -331,7 +328,6 @@ class TypePromotionTransaction;
         SmallVectorImpl<Instruction *> &SpeculativelyMovedExts);
     bool splitBranchCondition(Function &F);
     bool simplifyOffsetableRelocate(Instruction &I);
-    bool splitIndirectCriticalEdges(Function &F);
   };
 
 } // end anonymous namespace
@@ -356,8 +352,6 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
   // Clear per function information.
   InsertedInsts.clear();
   PromotedInsts.clear();
-  BFI.reset();
-  BPI.reset();
 
   ModifiedDT = false;
   if (auto *TPC = getAnalysisIfAvailable<TargetPassConfig>()) {
@@ -369,14 +363,16 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
   TLInfo = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  BPI.reset(new BranchProbabilityInfo(F, *LI));
+  BFI.reset(new BlockFrequencyInfo(F, *BPI, *LI));
   OptSize = F.optForSize();
 
   ProfileSummaryInfo *PSI =
       getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
   if (ProfileGuidedSectionPrefix) {
-    if (PSI->isFunctionHotInCallGraph(&F))
+    if (PSI->isFunctionHotInCallGraph(&F, *BFI))
       F.setSectionPrefix(".hot");
-    else if (PSI->isFunctionColdInCallGraph(&F))
+    else if (PSI->isFunctionColdInCallGraph(&F, *BFI))
       F.setSectionPrefix(".unlikely");
   }
 
@@ -410,7 +406,7 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
 
   // Split some critical edges where one of the sources is an indirect branch,
   // to help generate sane code for PHIs involving such edges.
-  EverMadeChange |= splitIndirectCriticalEdges(F);
+  EverMadeChange |= SplitIndirectBrCriticalEdges(F);
 
   bool MadeChange = true;
   while (MadeChange) {
@@ -555,160 +551,6 @@ BasicBlock *CodeGenPrepare::findDestBlockOfMergeableEmptyBlock(BasicBlock *BB) {
   return DestBB;
 }
 
-// Return the unique indirectbr predecessor of a block. This may return null
-// even if such a predecessor exists, if it's not useful for splitting.
-// If a predecessor is found, OtherPreds will contain all other (non-indirectbr)
-// predecessors of BB.
-static BasicBlock *
-findIBRPredecessor(BasicBlock *BB, SmallVectorImpl<BasicBlock *> &OtherPreds) {
-  // If the block doesn't have any PHIs, we don't care about it, since there's
-  // no point in splitting it.
-  PHINode *PN = dyn_cast<PHINode>(BB->begin());
-  if (!PN)
-    return nullptr;
-
-  // Verify we have exactly one IBR predecessor.
-  // Conservatively bail out if one of the other predecessors is not a "regular"
-  // terminator (that is, not a switch or a br).
-  BasicBlock *IBB = nullptr;
-  for (unsigned Pred = 0, E = PN->getNumIncomingValues(); Pred != E; ++Pred) {
-    BasicBlock *PredBB = PN->getIncomingBlock(Pred);
-    TerminatorInst *PredTerm = PredBB->getTerminator();
-    switch (PredTerm->getOpcode()) {
-    case Instruction::IndirectBr:
-      if (IBB)
-        return nullptr;
-      IBB = PredBB;
-      break;
-    case Instruction::Br:
-    case Instruction::Switch:
-      OtherPreds.push_back(PredBB);
-      continue;
-    default:
-      return nullptr;
-    }
-  }
-
-  return IBB;
-}
-
-// Split critical edges where the source of the edge is an indirectbr
-// instruction. This isn't always possible, but we can handle some easy cases.
-// This is useful because MI is unable to split such critical edges,
-// which means it will not be able to sink instructions along those edges.
-// This is especially painful for indirect branches with many successors, where
-// we end up having to prepare all outgoing values in the origin block.
-//
-// Our normal algorithm for splitting critical edges requires us to update
-// the outgoing edges of the edge origin block, but for an indirectbr this
-// is hard, since it would require finding and updating the block addresses
-// the indirect branch uses. But if a block only has a single indirectbr
-// predecessor, with the others being regular branches, we can do it in a
-// different way.
-// Say we have A -> D, B -> D, I -> D where only I -> D is an indirectbr.
-// We can split D into D0 and D1, where D0 contains only the PHIs from D,
-// and D1 is the D block body. We can then duplicate D0 as D0A and D0B, and
-// create the following structure:
-// A -> D0A, B -> D0A, I -> D0B, D0A -> D1, D0B -> D1
-bool CodeGenPrepare::splitIndirectCriticalEdges(Function &F) {
-  // Check whether the function has any indirectbrs, and collect which blocks
-  // they may jump to. Since most functions don't have indirect branches,
-  // this lowers the common case's overhead to O(Blocks) instead of O(Edges).
-  SmallSetVector<BasicBlock *, 16> Targets;
-  for (auto &BB : F) {
-    auto *IBI = dyn_cast<IndirectBrInst>(BB.getTerminator());
-    if (!IBI)
-      continue;
-
-    for (unsigned Succ = 0, E = IBI->getNumSuccessors(); Succ != E; ++Succ)
-      Targets.insert(IBI->getSuccessor(Succ));
-  }
-
-  if (Targets.empty())
-    return false;
-
-  bool Changed = false;
-  for (BasicBlock *Target : Targets) {
-    SmallVector<BasicBlock *, 16> OtherPreds;
-    BasicBlock *IBRPred = findIBRPredecessor(Target, OtherPreds);
-    // If we did not found an indirectbr, or the indirectbr is the only
-    // incoming edge, this isn't the kind of edge we're looking for.
-    if (!IBRPred || OtherPreds.empty())
-      continue;
-
-    // Don't even think about ehpads/landingpads.
-    Instruction *FirstNonPHI = Target->getFirstNonPHI();
-    if (FirstNonPHI->isEHPad() || Target->isLandingPad())
-      continue;
-
-    BasicBlock *BodyBlock = Target->splitBasicBlock(FirstNonPHI, ".split");
-    // It's possible Target was its own successor through an indirectbr.
-    // In this case, the indirectbr now comes from BodyBlock.
-    if (IBRPred == Target)
-      IBRPred = BodyBlock;
-
-    // At this point Target only has PHIs, and BodyBlock has the rest of the
-    // block's body. Create a copy of Target that will be used by the "direct"
-    // preds.
-    ValueToValueMapTy VMap;
-    BasicBlock *DirectSucc = CloneBasicBlock(Target, VMap, ".clone", &F);
-
-    for (BasicBlock *Pred : OtherPreds) {
-      // If the target is a loop to itself, then the terminator of the split
-      // block needs to be updated.
-      if (Pred == Target)
-        BodyBlock->getTerminator()->replaceUsesOfWith(Target, DirectSucc);
-      else
-        Pred->getTerminator()->replaceUsesOfWith(Target, DirectSucc);
-    }
-
-    // Ok, now fix up the PHIs. We know the two blocks only have PHIs, and that
-    // they are clones, so the number of PHIs are the same.
-    // (a) Remove the edge coming from IBRPred from the "Direct" PHI
-    // (b) Leave that as the only edge in the "Indirect" PHI.
-    // (c) Merge the two in the body block.
-    BasicBlock::iterator Indirect = Target->begin(),
-                         End = Target->getFirstNonPHI()->getIterator();
-    BasicBlock::iterator Direct = DirectSucc->begin();
-    BasicBlock::iterator MergeInsert = BodyBlock->getFirstInsertionPt();
-
-    assert(&*End == Target->getTerminator() &&
-           "Block was expected to only contain PHIs");
-
-    while (Indirect != End) {
-      PHINode *DirPHI = cast<PHINode>(Direct);
-      PHINode *IndPHI = cast<PHINode>(Indirect);
-
-      // Now, clean up - the direct block shouldn't get the indirect value,
-      // and vice versa.
-      DirPHI->removeIncomingValue(IBRPred);
-      Direct++;
-
-      // Advance the pointer here, to avoid invalidation issues when the old
-      // PHI is erased.
-      Indirect++;
-
-      PHINode *NewIndPHI = PHINode::Create(IndPHI->getType(), 1, "ind", IndPHI);
-      NewIndPHI->addIncoming(IndPHI->getIncomingValueForBlock(IBRPred),
-                             IBRPred);
-
-      // Create a PHI in the body block, to merge the direct and indirect
-      // predecessors.
-      PHINode *MergePHI =
-          PHINode::Create(IndPHI->getType(), 2, "merge", &*MergeInsert);
-      MergePHI->addIncoming(NewIndPHI, Target);
-      MergePHI->addIncoming(DirPHI, DirectSucc);
-
-      IndPHI->replaceAllUsesWith(MergePHI);
-      IndPHI->eraseFromParent();
-    }
-
-    Changed = true;
-  }
-
-  return Changed;
-}
-
 /// Eliminate blocks that contain only PHI nodes, debug info directives, and an
 /// unconditional branch. Passes before isel (e.g. LSR/loopsimplify) often split
 /// edges in ways that are non-optimal for isel. Start by eliminating these
@@ -791,16 +633,10 @@ bool CodeGenPrepare::isMergingEmptyBlockProfitable(BasicBlock *BB,
     if (DestBBPred == BB)
       continue;
 
-    bool HasAllSameValue = true;
-    BasicBlock::const_iterator DestBBI = DestBB->begin();
-    while (const PHINode *DestPN = dyn_cast<PHINode>(DestBBI++)) {
-      if (DestPN->getIncomingValueForBlock(BB) !=
-          DestPN->getIncomingValueForBlock(DestBBPred)) {
-        HasAllSameValue = false;
-        break;
-      }
-    }
-    if (HasAllSameValue)
+    if (llvm::all_of(DestBB->phis(), [&](const PHINode &DestPN) {
+          return DestPN.getIncomingValueForBlock(BB) ==
+                 DestPN.getIncomingValueForBlock(DestBBPred);
+        }))
       SameIncomingValueBBs.insert(DestBBPred);
   }
 
@@ -809,13 +645,6 @@ bool CodeGenPrepare::isMergingEmptyBlockProfitable(BasicBlock *BB,
   // Pred already.
   if (SameIncomingValueBBs.count(Pred))
     return true;
-
-  if (!BFI) {
-    Function &F = *BB->getParent();
-    LoopInfo LI{DominatorTree(F)};
-    BPI.reset(new BranchProbabilityInfo(F, LI));
-    BFI.reset(new BlockFrequencyInfo(F, *BPI, LI));
-  }
 
   BlockFrequency PredFreq = BFI->getBlockFreq(Pred);
   BlockFrequency BBFreq = BFI->getBlockFreq(BB);
@@ -837,9 +666,8 @@ bool CodeGenPrepare::canMergeBlocks(const BasicBlock *BB,
   // We only want to eliminate blocks whose phi nodes are used by phi nodes in
   // the successor.  If there are more complex condition (e.g. preheaders),
   // don't mess around with them.
-  BasicBlock::const_iterator BBI = BB->begin();
-  while (const PHINode *PN = dyn_cast<PHINode>(BBI++)) {
-    for (const User *U : PN->users()) {
+  for (const PHINode &PN : BB->phis()) {
+    for (const User *U : PN.users()) {
       const Instruction *UI = cast<Instruction>(U);
       if (UI->getParent() != DestBB || !isa<PHINode>(UI))
         return false;
@@ -878,10 +706,9 @@ bool CodeGenPrepare::canMergeBlocks(const BasicBlock *BB,
   for (unsigned i = 0, e = DestBBPN->getNumIncomingValues(); i != e; ++i) {
     BasicBlock *Pred = DestBBPN->getIncomingBlock(i);
     if (BBPreds.count(Pred)) {   // Common predecessor?
-      BBI = DestBB->begin();
-      while (const PHINode *PN = dyn_cast<PHINode>(BBI++)) {
-        const Value *V1 = PN->getIncomingValueForBlock(Pred);
-        const Value *V2 = PN->getIncomingValueForBlock(BB);
+      for (const PHINode &PN : DestBB->phis()) {
+        const Value *V1 = PN.getIncomingValueForBlock(Pred);
+        const Value *V2 = PN.getIncomingValueForBlock(BB);
 
         // If V2 is a phi node in BB, look up what the mapped value will be.
         if (const PHINode *V2PN = dyn_cast<PHINode>(V2))
@@ -924,11 +751,9 @@ void CodeGenPrepare::eliminateMostlyEmptyBlock(BasicBlock *BB) {
 
   // Otherwise, we have multiple predecessors of BB.  Update the PHIs in DestBB
   // to handle the new incoming edges it is about to have.
-  PHINode *PN;
-  for (BasicBlock::iterator BBI = DestBB->begin();
-       (PN = dyn_cast<PHINode>(BBI)); ++BBI) {
+  for (PHINode &PN : DestBB->phis()) {
     // Remove the incoming value for BB, and remember it.
-    Value *InVal = PN->removeIncomingValue(BB, false);
+    Value *InVal = PN.removeIncomingValue(BB, false);
 
     // Two options: either the InVal is a phi node defined in BB or it is some
     // value that dominates BB.
@@ -936,17 +761,17 @@ void CodeGenPrepare::eliminateMostlyEmptyBlock(BasicBlock *BB) {
     if (InValPhi && InValPhi->getParent() == BB) {
       // Add all of the input values of the input PHI as inputs of this phi.
       for (unsigned i = 0, e = InValPhi->getNumIncomingValues(); i != e; ++i)
-        PN->addIncoming(InValPhi->getIncomingValue(i),
-                        InValPhi->getIncomingBlock(i));
+        PN.addIncoming(InValPhi->getIncomingValue(i),
+                       InValPhi->getIncomingBlock(i));
     } else {
       // Otherwise, add one instance of the dominating value for each edge that
       // we will be adding.
       if (PHINode *BBPN = dyn_cast<PHINode>(BB->begin())) {
         for (unsigned i = 0, e = BBPN->getNumIncomingValues(); i != e; ++i)
-          PN->addIncoming(InVal, BBPN->getIncomingBlock(i));
+          PN.addIncoming(InVal, BBPN->getIncomingBlock(i));
       } else {
         for (pred_iterator PI = pred_begin(BB), E = pred_end(BB); PI != E; ++PI)
-          PN->addIncoming(InVal, *PI);
+          PN.addIncoming(InVal, *PI);
       }
     }
   }
@@ -3146,13 +2971,13 @@ private:
                                               ? CurrentBlock
                                               : nullptr };
         assert(Map.find(TrueItem) != Map.end() && "No True Value!");
-        Select->setTrueValue(Map[TrueItem]);
+        Select->setTrueValue(ST.Get(Map[TrueItem]));
         auto *FalseValue = CurrentSelect->getFalseValue();
         ValueInBB FalseItem = { FalseValue, isa<Instruction>(FalseValue)
                                                 ? CurrentBlock
                                                 : nullptr };
         assert(Map.find(FalseItem) != Map.end() && "No False Value!");
-        Select->setFalseValue(Map[FalseItem]);
+        Select->setFalseValue(ST.Get(Map[FalseItem]));
       } else {
         // Must be a Phi node then.
         PHINode *PHI = cast<PHINode>(V);
@@ -3862,7 +3687,7 @@ bool AddressingModeMatcher::matchOperationAddr(User *AddrInst, unsigned Opcode,
       } else {
         uint64_t TypeSize = DL.getTypeAllocSize(GTI.getIndexedType());
         if (ConstantInt *CI = dyn_cast<ConstantInt>(AddrInst->getOperand(i))) {
-          ConstantOffset += CI->getSExtValue()*TypeSize;
+          ConstantOffset += CI->getSExtValue() * TypeSize;
         } else if (TypeSize) {  // Scales of zero don't do anything.
           // We only allow one variable index at the moment.
           if (VariableOperand != -1)
@@ -6662,22 +6487,16 @@ bool CodeGenPrepare::splitBranchCondition(Function &F) {
       std::swap(TBB, FBB);
 
     // Replace the old BB with the new BB.
-    for (auto &I : *TBB) {
-      PHINode *PN = dyn_cast<PHINode>(&I);
-      if (!PN)
-        break;
+    for (PHINode &PN : TBB->phis()) {
       int i;
-      while ((i = PN->getBasicBlockIndex(&BB)) >= 0)
-        PN->setIncomingBlock(i, TmpBB);
+      while ((i = PN.getBasicBlockIndex(&BB)) >= 0)
+        PN.setIncomingBlock(i, TmpBB);
     }
 
     // Add another incoming edge form the new BB.
-    for (auto &I : *FBB) {
-      PHINode *PN = dyn_cast<PHINode>(&I);
-      if (!PN)
-        break;
-      auto *Val = PN->getIncomingValueForBlock(&BB);
-      PN->addIncoming(Val, TmpBB);
+    for (PHINode &PN : FBB->phis()) {
+      auto *Val = PN.getIncomingValueForBlock(&BB);
+      PN.addIncoming(Val, TmpBB);
     }
 
     // Update the branch weights (from SelectionDAGBuilder::

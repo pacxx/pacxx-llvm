@@ -19,7 +19,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/LiveInterval.h"
-#include "llvm/CodeGen/LiveIntervalAnalysis.h"
+#include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/MachineScheduler.h"
@@ -2050,9 +2050,9 @@ void SIScheduleDAGMI::schedule()
   placeDebugValues();
 
   DEBUG({
-      unsigned BBNum = begin()->getParent()->getNumber();
-      dbgs() << "*** Final schedule for BB#" << BBNum << " ***\n";
-      dumpSchedule();
-      dbgs() << '\n';
-    });
+    dbgs() << "*** Final schedule for "
+           << printMBBReference(*begin()->getParent()) << " ***\n";
+    dumpSchedule();
+    dbgs() << '\n';
+  });
 }

@@ -142,9 +142,14 @@ OpDescriptor llvm::fuzzerop::splitBlockDescriptor(unsigned Weight) {
   auto buildSplitBlock = [](ArrayRef<Value *> Srcs, Instruction *Inst) {
     BasicBlock *Block = Inst->getParent();
     BasicBlock *Next = Block->splitBasicBlock(Inst, "BB");
+
+    // If it was an exception handling block, we are done.
+    if (Block->isEHPad())
+      return nullptr;
+
+    // Loop back on this block by replacing the unconditional forward branch
+    // with a conditional with a backedge.
     if (Block != &Block->getParent()->getEntryBlock()) {
-      // Loop back on this block by replacing the unconditional forward branch
-      // with a conditional with a backedge.
       BranchInst::Create(Block, Next, Srcs[0], Block->getTerminator());
       Block->getTerminator()->eraseFromParent();
 
@@ -172,7 +177,7 @@ OpDescriptor llvm::fuzzerop::gepDescriptor(unsigned Weight) {
   // TODO: Handle aggregates and vectors
   // TODO: Support multiple indices.
   // TODO: Try to avoid meaningless accesses.
-  return {Weight, {anyPtrType(), anyIntType()}, buildGEP};
+  return {Weight, {sizedPtrType(), anyIntType()}, buildGEP};
 }
 
 static uint64_t getAggregateNumElements(Type *T) {

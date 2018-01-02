@@ -336,21 +336,78 @@ static void computeKnownBitsMul(const Value *Op0, const Value *Op1, bool NSW,
     }
   }
 
-  // If low bits are zero in either operand, output low known-0 bits.
-  // Also compute a conservative estimate for high known-0 bits.
-  // More trickiness is possible, but this is sufficient for the
-  // interesting case of alignment computation.
-  unsigned TrailZ = Known.countMinTrailingZeros() +
-                    Known2.countMinTrailingZeros();
+  assert(!Known.hasConflict() && !Known2.hasConflict());
+  // Compute a conservative estimate for high known-0 bits.
   unsigned LeadZ =  std::max(Known.countMinLeadingZeros() +
                              Known2.countMinLeadingZeros(),
                              BitWidth) - BitWidth;
-
-  TrailZ = std::min(TrailZ, BitWidth);
   LeadZ = std::min(LeadZ, BitWidth);
+
+  // The result of the bottom bits of an integer multiply can be
+  // inferred by looking at the bottom bits of both operands and
+  // multiplying them together.
+  // We can infer at least the minimum number of known trailing bits
+  // of both operands. Depending on number of trailing zeros, we can
+  // infer more bits, because (a*b) <=> ((a/m) * (b/n)) * (m*n) assuming
+  // a and b are divisible by m and n respectively.
+  // We then calculate how many of those bits are inferrable and set
+  // the output. For example, the i8 mul:
+  //  a = XXXX1100 (12)
+  //  b = XXXX1110 (14)
+  // We know the bottom 3 bits are zero since the first can be divided by
+  // 4 and the second by 2, thus having ((12/4) * (14/2)) * (2*4).
+  // Applying the multiplication to the trimmed arguments gets:
+  //    XX11 (3)
+  //    X111 (7)
+  // -------
+  //    XX11
+  //   XX11
+  //  XX11
+  // XX11
+  // -------
+  // XXXXX01
+  // Which allows us to infer the 2 LSBs. Since we're multiplying the result
+  // by 8, the bottom 3 bits will be 0, so we can infer a total of 5 bits.
+  // The proof for this can be described as:
+  // Pre: (C1 >= 0) && (C1 < (1 << C5)) && (C2 >= 0) && (C2 < (1 << C6)) &&
+  //      (C7 == (1 << (umin(countTrailingZeros(C1), C5) +
+  //                    umin(countTrailingZeros(C2), C6) +
+  //                    umin(C5 - umin(countTrailingZeros(C1), C5),
+  //                         C6 - umin(countTrailingZeros(C2), C6)))) - 1)
+  // %aa = shl i8 %a, C5
+  // %bb = shl i8 %b, C6
+  // %aaa = or i8 %aa, C1
+  // %bbb = or i8 %bb, C2
+  // %mul = mul i8 %aaa, %bbb
+  // %mask = and i8 %mul, C7
+  //   =>
+  // %mask = i8 ((C1*C2)&C7)
+  // Where C5, C6 describe the known bits of %a, %b
+  // C1, C2 describe the known bottom bits of %a, %b.
+  // C7 describes the mask of the known bits of the result.
+  APInt Bottom0 = Known.One;
+  APInt Bottom1 = Known2.One;
+
+  // How many times we'd be able to divide each argument by 2 (shr by 1).
+  // This gives us the number of trailing zeros on the multiplication result.
+  unsigned TrailBitsKnown0 = (Known.Zero | Known.One).countTrailingOnes();
+  unsigned TrailBitsKnown1 = (Known2.Zero | Known2.One).countTrailingOnes();
+  unsigned TrailZero0 = Known.countMinTrailingZeros();
+  unsigned TrailZero1 = Known2.countMinTrailingZeros();
+  unsigned TrailZ = TrailZero0 + TrailZero1;
+
+  // Figure out the fewest known-bits operand.
+  unsigned SmallestOperand = std::min(TrailBitsKnown0 - TrailZero0,
+                                      TrailBitsKnown1 - TrailZero1);
+  unsigned ResultBitsKnown = std::min(SmallestOperand + TrailZ, BitWidth);
+
+  APInt BottomKnown = Bottom0.getLoBits(TrailBitsKnown0) *
+                      Bottom1.getLoBits(TrailBitsKnown1);
+
   Known.resetAll();
-  Known.Zero.setLowBits(TrailZ);
   Known.Zero.setHighBits(LeadZ);
+  Known.Zero |= (~BottomKnown).getLoBits(ResultBitsKnown);
+  Known.One |= BottomKnown.getLoBits(ResultBitsKnown);
 
   // Only make use of no-wrap flags if we failed to compute the sign bit
   // directly.  This matters if the multiplication always overflows, in
@@ -426,7 +483,7 @@ static bool isEphemeralValueOf(const Instruction *I, const Value *E) {
 }
 
 // Is this an intrinsic that cannot be speculated but also cannot trap?
-static bool isAssumeLikeIntrinsic(const Instruction *I) {
+bool llvm::isAssumeLikeIntrinsic(const Instruction *I) {
   if (const CallInst *CI = dyn_cast<CallInst>(I))
     if (Function *F = CI->getCalledFunction())
       switch (F->getIntrinsicID()) {
@@ -548,7 +605,7 @@ static void computeKnownBitsFromAssume(const Value *V, KnownBits &Known,
                            m_BitCast(m_Specific(V))));
 
     CmpInst::Predicate Pred;
-    ConstantInt *C;
+    uint64_t C;
     // assume(v = a)
     if (match(Arg, m_c_ICmp(Pred, m_V, m_Value(A))) &&
         Pred == ICmpInst::ICMP_EQ && isValidAssumeForContext(I, Q.CxtI, Q.DT)) {
@@ -650,51 +707,55 @@ static void computeKnownBitsFromAssume(const Value *V, KnownBits &Known,
     } else if (match(Arg, m_c_ICmp(Pred, m_Shl(m_V, m_ConstantInt(C)),
                                    m_Value(A))) &&
                Pred == ICmpInst::ICMP_EQ &&
-               isValidAssumeForContext(I, Q.CxtI, Q.DT)) {
+               isValidAssumeForContext(I, Q.CxtI, Q.DT) &&
+               C < BitWidth) {
       KnownBits RHSKnown(BitWidth);
       computeKnownBits(A, RHSKnown, Depth+1, Query(Q, I));
       // For those bits in RHS that are known, we can propagate them to known
       // bits in V shifted to the right by C.
-      RHSKnown.Zero.lshrInPlace(C->getZExtValue());
+      RHSKnown.Zero.lshrInPlace(C);
       Known.Zero |= RHSKnown.Zero;
-      RHSKnown.One.lshrInPlace(C->getZExtValue());
+      RHSKnown.One.lshrInPlace(C);
       Known.One  |= RHSKnown.One;
     // assume(~(v << c) = a)
     } else if (match(Arg, m_c_ICmp(Pred, m_Not(m_Shl(m_V, m_ConstantInt(C))),
                                    m_Value(A))) &&
                Pred == ICmpInst::ICMP_EQ &&
-               isValidAssumeForContext(I, Q.CxtI, Q.DT)) {
+               isValidAssumeForContext(I, Q.CxtI, Q.DT) &&
+               C < BitWidth) {
       KnownBits RHSKnown(BitWidth);
       computeKnownBits(A, RHSKnown, Depth+1, Query(Q, I));
       // For those bits in RHS that are known, we can propagate them inverted
       // to known bits in V shifted to the right by C.
-      RHSKnown.One.lshrInPlace(C->getZExtValue());
+      RHSKnown.One.lshrInPlace(C);
       Known.Zero |= RHSKnown.One;
-      RHSKnown.Zero.lshrInPlace(C->getZExtValue());
+      RHSKnown.Zero.lshrInPlace(C);
       Known.One  |= RHSKnown.Zero;
     // assume(v >> c = a)
     } else if (match(Arg,
                      m_c_ICmp(Pred, m_Shr(m_V, m_ConstantInt(C)),
                               m_Value(A))) &&
                Pred == ICmpInst::ICMP_EQ &&
-               isValidAssumeForContext(I, Q.CxtI, Q.DT)) {
+               isValidAssumeForContext(I, Q.CxtI, Q.DT) &&
+               C < BitWidth) {
       KnownBits RHSKnown(BitWidth);
       computeKnownBits(A, RHSKnown, Depth+1, Query(Q, I));
       // For those bits in RHS that are known, we can propagate them to known
       // bits in V shifted to the right by C.
-      Known.Zero |= RHSKnown.Zero << C->getZExtValue();
-      Known.One  |= RHSKnown.One  << C->getZExtValue();
+      Known.Zero |= RHSKnown.Zero << C;
+      Known.One  |= RHSKnown.One  << C;
     // assume(~(v >> c) = a)
     } else if (match(Arg, m_c_ICmp(Pred, m_Not(m_Shr(m_V, m_ConstantInt(C))),
                                    m_Value(A))) &&
                Pred == ICmpInst::ICMP_EQ &&
-               isValidAssumeForContext(I, Q.CxtI, Q.DT)) {
+               isValidAssumeForContext(I, Q.CxtI, Q.DT) &&
+               C < BitWidth) {
       KnownBits RHSKnown(BitWidth);
       computeKnownBits(A, RHSKnown, Depth+1, Query(Q, I));
       // For those bits in RHS that are known, we can propagate them inverted
       // to known bits in V shifted to the right by C.
-      Known.Zero |= RHSKnown.One  << C->getZExtValue();
-      Known.One  |= RHSKnown.Zero << C->getZExtValue();
+      Known.Zero |= RHSKnown.One  << C;
+      Known.One  |= RHSKnown.Zero << C;
     // assume(v >=_s c) where c is non-negative
     } else if (match(Arg, m_ICmp(Pred, m_V, m_Value(A))) &&
                Pred == ICmpInst::ICMP_SGE &&
@@ -795,14 +856,16 @@ static void computeKnownBitsFromAssume(const Value *V, KnownBits &Known,
 static void computeKnownBitsFromShiftOperator(
     const Operator *I, KnownBits &Known, KnownBits &Known2,
     unsigned Depth, const Query &Q,
-    function_ref<KnownBits(KnownBits, unsigned)> KBF) {
+    function_ref<APInt(const APInt &, unsigned)> KZF,
+    function_ref<APInt(const APInt &, unsigned)> KOF) {
   unsigned BitWidth = Known.getBitWidth();
 
   if (auto *SA = dyn_cast<ConstantInt>(I->getOperand(1))) {
     unsigned ShiftAmt = SA->getLimitedValue(BitWidth-1);
 
     computeKnownBits(I->getOperand(0), Known, Depth + 1, Q);
-    Known = KBF(Known, ShiftAmt);
+    Known.Zero = KZF(Known.Zero, ShiftAmt);
+    Known.One  = KOF(Known.One, ShiftAmt);
     // If the known bits conflict, this must be an overflowing left shift, so
     // the shift result is poison. We can return anything we want. Choose 0 for
     // the best folding opportunity.
@@ -867,9 +930,8 @@ static void computeKnownBitsFromShiftOperator(
         continue;
     }
 
-    Known2 = KBF(Known2, ShiftAmt);
-    Known.Zero &= Known2.Zero;
-    Known.One  &= Known2.One;
+    Known.Zero &= KZF(Known2.Zero, ShiftAmt);
+    Known.One  &= KOF(Known2.One, ShiftAmt);
   }
 
   // If the known bits conflict, the result is poison. Return a 0 and hope the
@@ -1067,46 +1129,53 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
   case Instruction::Shl: {
     // (shl X, C1) & C2 == 0   iff   (X & C2 >>u C1) == 0
     bool NSW = cast<OverflowingBinaryOperator>(I)->hasNoSignedWrap();
-    auto KBF = [NSW](const KnownBits &Known, unsigned ShiftAmt) {
-      KnownBits Result;
-      Result.Zero = Known.Zero << ShiftAmt;
-      Result.Zero.setLowBits(ShiftAmt); // Low bits known 0.
-      Result.One = Known.One << ShiftAmt;
+    auto KZF = [NSW](const APInt &KnownZero, unsigned ShiftAmt) {
+      APInt KZResult = KnownZero << ShiftAmt;
+      KZResult.setLowBits(ShiftAmt); // Low bits known 0.
       // If this shift has "nsw" keyword, then the result is either a poison
       // value or has the same sign bit as the first operand.
-      if (NSW && Known.isNonNegative())
-        Result.Zero.setSignBit();
-      if (NSW && Known.isNegative())
-        Result.One.setSignBit();
-      return Result;
+      if (NSW && KnownZero.isSignBitSet())
+        KZResult.setSignBit();
+      return KZResult;
     };
 
-    computeKnownBitsFromShiftOperator(I, Known, Known2, Depth, Q, KBF);
+    auto KOF = [NSW](const APInt &KnownOne, unsigned ShiftAmt) {
+      APInt KOResult = KnownOne << ShiftAmt;
+      if (NSW && KnownOne.isSignBitSet())
+        KOResult.setSignBit();
+      return KOResult;
+    };
+
+    computeKnownBitsFromShiftOperator(I, Known, Known2, Depth, Q, KZF, KOF);
     break;
   }
   case Instruction::LShr: {
     // (lshr X, C1) & C2 == 0   iff  (-1 >> C1) & C2 == 0
-    auto KBF = [](const KnownBits &Known, unsigned ShiftAmt) {
-      KnownBits Result;
-      Result.Zero = Known.Zero.lshr(ShiftAmt);
-      Result.Zero.setHighBits(ShiftAmt); // High bits known zero.
-      Result.One = Known.One.lshr(ShiftAmt);
-      return Result;
+    auto KZF = [](const APInt &KnownZero, unsigned ShiftAmt) {
+      APInt KZResult = KnownZero.lshr(ShiftAmt);
+      // High bits known zero.
+      KZResult.setHighBits(ShiftAmt);
+      return KZResult;
     };
 
-    computeKnownBitsFromShiftOperator(I, Known, Known2, Depth, Q, KBF);
+    auto KOF = [](const APInt &KnownOne, unsigned ShiftAmt) {
+      return KnownOne.lshr(ShiftAmt);
+    };
+
+    computeKnownBitsFromShiftOperator(I, Known, Known2, Depth, Q, KZF, KOF);
     break;
   }
   case Instruction::AShr: {
     // (ashr X, C1) & C2 == 0   iff  (-1 >> C1) & C2 == 0
-    auto KBF = [](const KnownBits &Known, unsigned ShiftAmt) {
-      KnownBits Result;
-      Result.Zero = Known.Zero.ashr(ShiftAmt);
-      Result.One = Known.One.ashr(ShiftAmt);
-      return Result;
+    auto KZF = [](const APInt &KnownZero, unsigned ShiftAmt) {
+      return KnownZero.ashr(ShiftAmt);
     };
 
-    computeKnownBitsFromShiftOperator(I, Known, Known2, Depth, Q, KBF);
+    auto KOF = [](const APInt &KnownOne, unsigned ShiftAmt) {
+      return KnownOne.ashr(ShiftAmt);
+    };
+
+    computeKnownBitsFromShiftOperator(I, Known, Known2, Depth, Q, KZF, KOF);
     break;
   }
   case Instruction::Sub: {
@@ -2195,9 +2264,9 @@ static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
     // ashr X, C   -> adds C sign bits.  Vectors too.
     const APInt *ShAmt;
     if (match(U->getOperand(1), m_APInt(ShAmt))) {
-      unsigned ShAmtLimited = ShAmt->getZExtValue();
-      if (ShAmtLimited >= TyBits)
+      if (ShAmt->uge(TyBits))
         break;  // Bad shift.
+      unsigned ShAmtLimited = ShAmt->getZExtValue();
       Tmp += ShAmtLimited;
       if (Tmp > TyBits) Tmp = TyBits;
     }
@@ -2208,9 +2277,9 @@ static unsigned ComputeNumSignBitsImpl(const Value *V, unsigned Depth,
     if (match(U->getOperand(1), m_APInt(ShAmt))) {
       // shl destroys sign bits.
       Tmp = ComputeNumSignBits(U->getOperand(0), Depth + 1, Q);
+      if (ShAmt->uge(TyBits) ||      // Bad shift.
+          ShAmt->uge(Tmp)) break;    // Shifted all sign bits out.
       Tmp2 = ShAmt->getZExtValue();
-      if (Tmp2 >= TyBits ||      // Bad shift.
-          Tmp2 >= Tmp) break;    // Shifted all sign bits out.
       return Tmp - Tmp2;
     }
     break;
@@ -3499,7 +3568,8 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
         // Speculative load may create a race that did not exist in the source.
         LI->getFunction()->hasFnAttribute(Attribute::SanitizeThread) ||
         // Speculative load may load data from dirty regions.
-        LI->getFunction()->hasFnAttribute(Attribute::SanitizeAddress))
+        LI->getFunction()->hasFnAttribute(Attribute::SanitizeAddress) ||
+        LI->getFunction()->hasFnAttribute(Attribute::SanitizeHWAddress))
       return false;
     const DataLayout &DL = LI->getModule()->getDataLayout();
     return isDereferenceableAndAlignedPointer(LI->getPointerOperand(),
@@ -4168,14 +4238,14 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
   LHS = CmpLHS;
   RHS = CmpRHS;
 
-  // If the predicate is an "or-equal"  (FP) predicate, then signed zeroes may
-  // return inconsistent results between implementations.
-  //   (0.0 <= -0.0) ? 0.0 : -0.0 // Returns 0.0
-  //   minNum(0.0, -0.0)          // May return -0.0 or 0.0 (IEEE 754-2008 5.3.1)
-  // Therefore we behave conservatively and only proceed if at least one of the
-  // operands is known to not be zero, or if we don't care about signed zeroes.
+  // Signed zero may return inconsistent results between implementations.
+  //  (0.0 <= -0.0) ? 0.0 : -0.0 // Returns 0.0
+  //  minNum(0.0, -0.0)          // May return -0.0 or 0.0 (IEEE 754-2008 5.3.1)
+  // Therefore, we behave conservatively and only proceed if at least one of the
+  // operands is known to not be zero or if we don't care about signed zero.
   switch (Pred) {
   default: break;
+  // FIXME: Include OGT/OLT/UGT/ULT.
   case CmpInst::FCMP_OGE: case CmpInst::FCMP_OLE:
   case CmpInst::FCMP_UGE: case CmpInst::FCMP_ULE:
     if (!FMF.noSignedZeros() && !isKnownNonZero(CmpLHS) &&
@@ -4423,14 +4493,24 @@ SelectPatternResult llvm::matchSelectPattern(Value *V, Value *&LHS, Value *&RHS,
 
   // Deal with type mismatches.
   if (CastOp && CmpLHS->getType() != TrueVal->getType()) {
-    if (Value *C = lookThroughCast(CmpI, TrueVal, FalseVal, CastOp))
+    if (Value *C = lookThroughCast(CmpI, TrueVal, FalseVal, CastOp)) {
+      // If this is a potential fmin/fmax with a cast to integer, then ignore
+      // -0.0 because there is no corresponding integer value.
+      if (*CastOp == Instruction::FPToSI || *CastOp == Instruction::FPToUI)
+        FMF.setNoSignedZeros();
       return ::matchSelectPattern(Pred, FMF, CmpLHS, CmpRHS,
                                   cast<CastInst>(TrueVal)->getOperand(0), C,
                                   LHS, RHS);
-    if (Value *C = lookThroughCast(CmpI, FalseVal, TrueVal, CastOp))
+    }
+    if (Value *C = lookThroughCast(CmpI, FalseVal, TrueVal, CastOp)) {
+      // If this is a potential fmin/fmax with a cast to integer, then ignore
+      // -0.0 because there is no corresponding integer value.
+      if (*CastOp == Instruction::FPToSI || *CastOp == Instruction::FPToUI)
+        FMF.setNoSignedZeros();
       return ::matchSelectPattern(Pred, FMF, CmpLHS, CmpRHS,
                                   C, cast<CastInst>(FalseVal)->getOperand(0),
                                   LHS, RHS);
+    }
   }
   return ::matchSelectPattern(Pred, FMF, CmpLHS, CmpRHS, TrueVal, FalseVal,
                               LHS, RHS);

@@ -19,6 +19,7 @@ add_llvm_library(LLVMDebugInfoCodeView
   DebugSymbolsSubsection.cpp
   EnumTables.cpp
   Formatters.cpp
+  GlobalTypeTableBuilder.cpp
   LazyRandomTypeCollection.cpp
   Line.cpp
   MergingTypeTableBuilder.cpp
@@ -32,6 +33,7 @@ add_llvm_library(LLVMDebugInfoCodeView
   TypeDumpVisitor.cpp
   TypeIndex.cpp
   TypeIndexDiscovery.cpp
+  TypeHashing.cpp
   TypeRecordMapping.cpp
   TypeStreamMerger.cpp
   TypeTableCollection.cpp

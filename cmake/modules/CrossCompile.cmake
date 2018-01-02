@@ -7,10 +7,16 @@ function(llvm_create_cross_target_internal target_name toolchain buildtype)
   endif(NOT DEFINED LLVM_${target_name}_BUILD)
 
   if (EXISTS ${LLVM_MAIN_SRC_DIR}/cmake/platforms/${toolchain}.cmake)
-    set(CROSS_TOOLCHAIN_FLAGS_${target_name} 
-        -DCMAKE_TOOLCHAIN_FILE=\"${LLVM_MAIN_SRC_DIR}/cmake/platforms/${toolchain}.cmake\"
-        CACHE STRING "Toolchain file for ${target_name}")
+    set(CROSS_TOOLCHAIN_FLAGS_INIT
+      -DCMAKE_TOOLCHAIN_FILE=\"${LLVM_MAIN_SRC_DIR}/cmake/platforms/${toolchain}.cmake\")
+  else()
+    set(CROSS_TOOLCHAIN_FLAGS_INIT
+      -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+      -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      )
   endif()
+  set(CROSS_TOOLCHAIN_FLAGS_${target_name} ${CROSS_TOOLCHAIN_FLAGS_INIT}
+    CACHE STRING "Toolchain configuration for ${target_name}")
 
   if (buildtype)
     set(build_type_flags "-DCMAKE_BUILD_TYPE=${buildtype}")
@@ -30,13 +36,19 @@ function(llvm_create_cross_target_internal target_name toolchain buildtype)
   add_custom_target(CREATE_LLVM_${target_name}
                     DEPENDS ${LLVM_${target_name}_BUILD})
 
+  # Escape semicolons in the targets list so that cmake doesn't expand
+  # them to spaces.
+  string(REPLACE ";" "$<SEMICOLON>" targets_to_build_arg
+         "${LLVM_TARGETS_TO_BUILD}")
+  string(REPLACE ";" "$<SEMICOLON>" experimental_targets_to_build_arg
+         "${LLVM_EXPERIMENTAL_TARGETS_TO_BUILD}")
+
   add_custom_command(OUTPUT ${LLVM_${target_name}_BUILD}/CMakeCache.txt
     COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}"
         ${CROSS_TOOLCHAIN_FLAGS_${target_name}} ${CMAKE_SOURCE_DIR}
         -DLLVM_TARGET_IS_CROSSCOMPILE_HOST=TRUE
-        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-        -DLLVM_TARGETS_TO_BUILD=Native
+        -DLLVM_TARGETS_TO_BUILD="${targets_to_build_arg}"
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="${experimental_targets_to_build_arg}"
         ${build_type_flags} ${linker_flag} ${external_clang_dir}
     WORKING_DIRECTORY ${LLVM_${target_name}_BUILD}
     DEPENDS CREATE_LLVM_${target_name}

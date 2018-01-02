@@ -164,7 +164,7 @@ void LiveRangeCalc::extendToUses(LiveRange &LR, unsigned Reg, LaneBitmask Mask,
   const TargetRegisterInfo &TRI = *MRI->getTargetRegisterInfo();
   for (MachineOperand &MO : MRI->reg_nodbg_operands(Reg)) {
     // Clear all kill flags. They will be reinserted after register allocation
-    // by LiveIntervalAnalysis::addKillFlags().
+    // by LiveIntervals::addKillFlags().
     if (MO.isUse())
       MO.setIsKill(false);
     // MO::readsReg returns "true" for subregister defs. This is for keeping
@@ -377,7 +377,7 @@ bool LiveRangeCalc::findReachingDefs(LiveRange &LR, MachineBasicBlock &UseMBB,
       MBB->getParent()->verify();
       const TargetRegisterInfo *TRI = MRI->getTargetRegisterInfo();
       errs() << "The register " << printReg(PhysReg, TRI)
-             << " needs to be live in to BB#" << MBB->getNumber()
+             << " needs to be live in to " << printMBBReference(*MBB)
              << ", but is missing from the live-in list.\n";
       report_fatal_error("Invalid global physical register");
     }

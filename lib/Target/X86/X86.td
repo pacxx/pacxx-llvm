@@ -137,7 +137,7 @@ def FeatureVPOPCNTDQ : SubtargetFeature<"avx512vpopcntdq", "HasVPOPCNTDQ",
 def FeaturePFI      : SubtargetFeature<"avx512pf", "HasPFI", "true",
                       "Enable AVX-512 PreFetch Instructions",
                                       [FeatureAVX512]>;
-def FeaturePREFETCHWT1  : SubtargetFeature<"prefetchwt1", "HasPFPREFETCHWT1",
+def FeaturePREFETCHWT1  : SubtargetFeature<"prefetchwt1", "HasPREFETCHWT1",
                                    "true",
                                    "Prefetch with Intent to Write and T1 Hint">;
 def FeatureDQI     : SubtargetFeature<"avx512dq", "HasDQI", "true",
@@ -263,6 +263,12 @@ def FeatureSlowIncDec : SubtargetFeature<"slow-incdec", "SlowIncDec", "true",
 def FeatureSoftFloat
     : SubtargetFeature<"soft-float", "UseSoftFloat", "true",
                        "Use software floating point features.">;
+// On recent X86 (port bound) processors, its preferable to combine to a single shuffle
+// using a variable mask over multiple fixed shuffles.
+def FeatureFastVariableShuffle
+    : SubtargetFeature<"fast-variable-shuffle",
+                       "HasFastVariableShuffle",
+                       "true", "Shuffles with variable masks are fast">;
 // On some X86 processors, there is no performance hazard to writing only the
 // lower parts of a YMM or ZMM register without clearing the upper part.
 def FeatureFastPartialYMMorZMMWrite
@@ -324,10 +330,34 @@ def FeatureHasFastGather
                        "Indicates if gather is reasonably fast.">;
 
 //===----------------------------------------------------------------------===//
-// X86 processors supported.
+// Register File Description
+//===----------------------------------------------------------------------===//
+
+include "X86RegisterInfo.td"
+include "X86RegisterBanks.td"
+
+//===----------------------------------------------------------------------===//
+// Instruction Descriptions
 //===----------------------------------------------------------------------===//
 
 include "X86Schedule.td"
+include "X86InstrInfo.td"
+
+def X86InstrInfo : InstrInfo;
+
+//===----------------------------------------------------------------------===//
+// X86 processors supported.
+//===----------------------------------------------------------------------===//
+
+include "X86ScheduleAtom.td"
+include "X86SchedSandyBridge.td"
+include "X86SchedHaswell.td"
+include "X86SchedBroadwell.td"
+include "X86ScheduleSLM.td"
+include "X86ScheduleZnver1.td"
+include "X86ScheduleBtVer2.td"
+include "X86SchedSkylakeClient.td"
+include "X86SchedSkylakeServer.td"
 
 def ProcIntelAtom : SubtargetFeature<"atom", "X86ProcFamily", "IntelAtom",
                     "Intel Atom processors">;
@@ -596,7 +626,8 @@ def HSWFeatures : ProcessorFeatures<IVBFeatures.Value, [
   FeatureERMSB,
   FeatureFMA,
   FeatureLZCNT,
-  FeatureMOVBE
+  FeatureMOVBE,
+  FeatureFastVariableShuffle
 ]>;
 
 class HaswellProc<string Name> : ProcModel<Name, HaswellModel,
@@ -608,7 +639,8 @@ def : HaswellProc<"core-avx2">; // Legacy alias.
 
 def BDWFeatures : ProcessorFeatures<HSWFeatures.Value, [
   FeatureADX,
-  FeatureRDSEED
+  FeatureRDSEED,
+  FeaturePRFCHW
 ]>;
 class BroadwellProc<string Name> : ProcModel<Name, BroadwellModel,
                                              BDWFeatures.Value, [
@@ -645,7 +677,8 @@ def KNLFeatures : ProcessorFeatures<IVBFeatures.Value, [
   FeatureLZCNT,
   FeatureBMI,
   FeatureBMI2,
-  FeatureFMA
+  FeatureFMA,
+  FeaturePRFCHW
 ]>;
 
 // FIXME: define KNL model
@@ -706,7 +739,8 @@ def ICLFeatures : ProcessorFeatures<CNLFeatures.Value, [
   FeatureVNNI,
   FeatureVPCLMULQDQ,
   FeatureVPOPCNTDQ,
-  FeatureGFNI
+  FeatureGFNI,
+  FeatureCLWB
 ]>;
 
 class IcelakeProc<string Name> : ProcModel<Name, SkylakeServerModel,
@@ -953,21 +987,6 @@ def : ProcessorModel<"x86-64", SandyBridgeModel, [
   FeatureSlowIncDec,
   FeatureMacroFusion
 ]>;
-
-//===----------------------------------------------------------------------===//
-// Register File Description
-//===----------------------------------------------------------------------===//
-
-include "X86RegisterInfo.td"
-include "X86RegisterBanks.td"
-
-//===----------------------------------------------------------------------===//
-// Instruction Descriptions
-//===----------------------------------------------------------------------===//
-
-include "X86InstrInfo.td"
-
-def X86InstrInfo : InstrInfo;
 
 //===----------------------------------------------------------------------===//
 // Calling Conventions

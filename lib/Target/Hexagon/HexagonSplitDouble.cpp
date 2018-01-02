@@ -536,7 +536,7 @@ void HexagonSplitDoubleRegs::collectIndRegsForLoop(const MachineLoop *L,
   Rs.insert(CmpR2);
 
   DEBUG({
-    dbgs() << "For loop at BB#" << HB->getNumber() << " ind regs: ";
+    dbgs() << "For loop at " << printMBBReference(*HB) << " ind regs: ";
     dump_partition(dbgs(), Rs, *TRI);
     dbgs() << '\n';
   });
@@ -1163,7 +1163,7 @@ bool HexagonSplitDoubleRegs::runOnMachineFunction(MachineFunction &MF) {
   DEBUG(dbgs() << "Splitting double registers in function: "
         << MF.getName() << '\n');
 
-  if (skipFunction(*MF.getFunction()))
+  if (skipFunction(MF.getFunction()))
     return false;
 
   auto &ST = MF.getSubtarget<HexagonSubtarget>();

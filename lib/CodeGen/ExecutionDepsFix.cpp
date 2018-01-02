@@ -200,7 +200,7 @@ void ExecutionDepsFix::enterBasicBlock(MachineBasicBlock *MBB) {
         LiveRegs[rx].Def = -1;
       }
     }
-    DEBUG(dbgs() << "BB#" << MBB->getNumber() << ": entry\n");
+    DEBUG(dbgs() << printMBBReference(*MBB) << ": entry\n");
     return;
   }
 
@@ -246,7 +246,7 @@ void ExecutionDepsFix::enterBasicBlock(MachineBasicBlock *MBB) {
     }
   }
   DEBUG(
-      dbgs() << "BB#" << MBB->getNumber()
+      dbgs() << printMBBReference(*MBB)
              << (!isBlockDone(MBB) ? ": incomplete\n" : ": all preds known\n"));
 }
 
@@ -617,7 +617,7 @@ bool ExecutionDepsFix::isBlockDone(MachineBasicBlock *MBB) {
 }
 
 bool ExecutionDepsFix::runOnMachineFunction(MachineFunction &mf) {
-  if (skipFunction(*mf.getFunction()))
+  if (skipFunction(mf.getFunction()))
     return false;
   MF = &mf;
   TII = MF->getSubtarget().getInstrInfo();

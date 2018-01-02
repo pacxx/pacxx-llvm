@@ -830,8 +830,8 @@ AArch64LoadStoreOpt::mergePairedInsns(MachineBasicBlock::iterator I,
   if (SExtIdx != -1) {
     // Generate the sign extension for the proper result of the ldp.
     // I.e., with X1, that would be:
-    // %w1<def> = KILL %w1, %x1<imp-def>
-    // %x1<def> = SBFMXri %x1<kill>, 0, 31
+    // %w1 = KILL %w1, implicit-def %x1
+    // %x1 = SBFMXri killed %x1, 0, 31
     MachineOperand &DstMO = MIB->getOperand(SExtIdx);
     // Right now, DstMO has the extended register, since it comes from an
     // extended opcode.
@@ -1759,7 +1759,7 @@ bool AArch64LoadStoreOpt::optimizeBlock(MachineBasicBlock &MBB,
 }
 
 bool AArch64LoadStoreOpt::runOnMachineFunction(MachineFunction &Fn) {
-  if (skipFunction(*Fn.getFunction()))
+  if (skipFunction(Fn.getFunction()))
     return false;
 
   Subtarget = &static_cast<const AArch64Subtarget &>(Fn.getSubtarget());

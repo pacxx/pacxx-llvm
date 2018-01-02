@@ -20,7 +20,7 @@
 #include "PPCTargetMachine.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/CodeGen/LiveIntervalAnalysis.h"
+#include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -90,21 +90,21 @@ protected:
         // This pass is run after register coalescing, and so we're looking for
         // a situation like this:
         //   ...
-        //   %5<def> = COPY %9; VSLRC:%5,%9
+        //   %5 = COPY %9; VSLRC:%5,%9
         //   %5<def,tied1> = XSMADDADP %5<tied0>, %17, %16,
-        //                         %rm<imp-use>; VSLRC:%5,%17,%16
+        //                         implicit %rm; VSLRC:%5,%17,%16
         //   ...
         //   %9<def,tied1> = XSMADDADP %9<tied0>, %17, %19,
-        //                         %rm<imp-use>; VSLRC:%9,%17,%19
+        //                         implicit %rm; VSLRC:%9,%17,%19
         //   ...
         // Where we can eliminate the copy by changing from the A-type to the
         // M-type instruction. Specifically, for this example, this means:
         //   %5<def,tied1> = XSMADDADP %5<tied0>, %17, %16,
-        //                         %rm<imp-use>; VSLRC:%5,%17,%16
+        //                         implicit %rm; VSLRC:%5,%17,%16
         // is replaced by:
         //   %16<def,tied1> = XSMADDMDP %16<tied0>, %18, %9,
-        //                         %rm<imp-use>; VSLRC:%16,%18,%9
-        // and we remove: %5<def> = COPY %9; VSLRC:%5,%9
+        //                         implicit %rm; VSLRC:%16,%18,%9
+        // and we remove: %5 = COPY %9; VSLRC:%5,%9
 
         SlotIndex FMAIdx = LIS->getInstructionIndex(MI);
 
@@ -150,10 +150,10 @@ protected:
         // walking the MIs we may as well test liveness here.
         //
         // FIXME: There is a case that occurs in practice, like this:
-        //   %9<def> = COPY %f1; VSSRC:%9
+        //   %9 = COPY %f1; VSSRC:%9
         //   ...
-        //   %6<def> = COPY %9; VSSRC:%6,%9
-        //   %7<def> = COPY %9; VSSRC:%7,%9
+        //   %6 = COPY %9; VSSRC:%6,%9
+        //   %7 = COPY %9; VSSRC:%7,%9
         //   %9<def,tied1> = XSMADDASP %9<tied0>, %1, %4; VSSRC:
         //   %6<def,tied1> = XSMADDASP %6<tied0>, %1, %2; VSSRC:
         //   %7<def,tied1> = XSMADDASP %7<tied0>, %1, %3; VSSRC:
@@ -343,7 +343,7 @@ protected:
 
 public:
     bool runOnMachineFunction(MachineFunction &MF) override {
-      if (skipFunction(*MF.getFunction()))
+      if (skipFunction(MF.getFunction()))
         return false;
 
       // If we don't have VSX then go ahead and return without doing

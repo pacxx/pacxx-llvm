@@ -172,6 +172,8 @@ BitVector SIRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   reserveRegisterTuples(Reserved, AMDGPU::TTMP6_TTMP7);
   reserveRegisterTuples(Reserved, AMDGPU::TTMP8_TTMP9);
   reserveRegisterTuples(Reserved, AMDGPU::TTMP10_TTMP11);
+  reserveRegisterTuples(Reserved, AMDGPU::TTMP12_TTMP13);
+  reserveRegisterTuples(Reserved, AMDGPU::TTMP14_TTMP15);
 
   const SISubtarget &ST = MF.getSubtarget<SISubtarget>();
 
@@ -1512,7 +1514,7 @@ unsigned SIRegisterInfo::getRegPressureLimit(const TargetRegisterClass *RC,
   const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
 
   unsigned Occupancy = ST.getOccupancyWithLocalMemSize(MFI->getLDSSize(),
-                                                       *MF.getFunction());
+                                                       MF.getFunction());
   switch (RC->getID()) {
   default:
     return AMDGPURegisterInfo::getRegPressureLimit(RC, MF);

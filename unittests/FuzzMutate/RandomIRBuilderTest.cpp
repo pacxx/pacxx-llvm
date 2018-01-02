@@ -200,4 +200,70 @@ TEST(RandomIRBuilderTest, InsertValueArray) {
   }
 }
 
+TEST(RandomIRBuilderTest, Invokes) {
+  // Check that we never generate load or store after invoke instruction
+
+  LLVMContext Ctx;
+  const char *SourceCode =
+      "declare i32* @f()"
+      "declare i32 @personality_function()"
+      "define i32* @test() personality i32 ()* @personality_function {\n"
+      "entry:\n"
+      "  %val = invoke i32* @f()\n"
+      "          to label %normal unwind label %exceptional\n"
+      "normal:\n"
+      "  ret i32* %val\n"
+      "exceptional:\n"
+      "  %landing_pad4 = landingpad token cleanup\n"
+      "  ret i32* undef\n"
+      "}";
+  auto M = parseAssembly(SourceCode, Ctx);
+
+
+  std::vector<Type *> Types = {Type::getInt8Ty(Ctx)};
+  RandomIRBuilder IB(Seed, Types);
+
+  // Get first basic block of the test function
+  Function &F = *M->getFunction("test");
+  BasicBlock &BB = *F.begin();
+
+  Instruction *Invoke = &*BB.begin();
+
+  // Find source but never insert new load after invoke
+  for (int i = 0; i < 10; ++i) {
+    (void)IB.findOrCreateSource(BB, {Invoke}, {}, fuzzerop::anyIntType());
+    ASSERT_TRUE(!verifyModule(*M, &errs()));
+  }
+}
+
+TEST(RandomIRBuilderTest, FirstClassTypes) {
+  // Check that we never insert new source as a load from non first class
+  // or unsized type.
+
+  LLVMContext Ctx;
+  const char *SourceCode = "%Opaque = type opaque\n"
+                           "define void @test(i8* %ptr) {\n"
+                           "entry:\n"
+                           "  %tmp = bitcast i8* %ptr to i32* (i32*)*\n"
+                           "  %tmp1 = bitcast i8* %ptr to %Opaque*\n"
+                           "  ret void\n"
+                           "}";
+  auto M = parseAssembly(SourceCode, Ctx);
+
+  std::vector<Type *> Types = {Type::getInt8Ty(Ctx)};
+  RandomIRBuilder IB(Seed, Types);
+
+  Function &F = *M->getFunction("test");
+  BasicBlock &BB = *F.begin();
+  // Non first class type
+  Instruction *FuncPtr = &*BB.begin();
+  // Unsized type
+  Instruction *OpaquePtr = &*std::next(BB.begin());
+
+  for (int i = 0; i < 10; ++i) {
+    Value *V = IB.findOrCreateSource(BB, {FuncPtr, OpaquePtr});
+    ASSERT_FALSE(isa<LoadInst>(V));
+  }
+}
+
 }

@@ -17,6 +17,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/DataTypes.h"
+#include "llvm/Support/LowLevelTypeImpl.h"
 #include <cassert>
 
 namespace llvm {
@@ -28,6 +29,7 @@ class GlobalValue;
 class MachineBasicBlock;
 class MachineInstr;
 class MachineRegisterInfo;
+class MCCFIInstruction;
 class MDNode;
 class ModuleSlotTracker;
 class TargetMachine;
@@ -85,24 +87,30 @@ private:
   /// before MachineInstr::tieOperands().
   unsigned char TiedTo : 4;
 
-  /// IsDef/IsImp/IsKill/IsDead flags - These are only valid for MO_Register
-  /// operands.
-
   /// IsDef - True if this is a def, false if this is a use of the register.
+  /// This is only valid on register operands.
   ///
   bool IsDef : 1;
 
   /// IsImp - True if this is an implicit def or use, false if it is explicit.
+  /// This is only valid on register opderands.
   ///
   bool IsImp : 1;
 
-  /// IsKill - True if this instruction is the last use of the register on this
-  /// path through the function.  This is only valid on uses of registers.
-  bool IsKill : 1;
+  /// IsDeadOrKill
+  /// For uses: IsKill - True if this instruction is the last use of the
+  /// register on this path through the function.
+  /// For defs: IsDead - True if this register is never used by a subsequent
+  /// instruction.
+  /// This is only valid on register operands.
+  bool IsDeadOrKill : 1;
 
-  /// IsDead - True if this register is never used by a subsequent instruction.
-  /// This is only valid on definitions of registers.
-  bool IsDead : 1;
+  /// IsRenamable - True if this register may be renamed, i.e. it does not
+  /// generate a value that is somehow read in a way that is not represented by
+  /// the Machine IR (e.g. to meet an ABI or ISA requirement).  This is only
+  /// valid on physical register operands.  Virtual registers are assumed to
+  /// always be renamable regardless of the value of this field.
+  bool IsRenamable : 1;
 
   /// IsUndef - True if this register operand reads an "undef" value, i.e. the
   /// read value doesn't matter.  This flag can be set on both use and def
@@ -116,7 +124,7 @@ private:
   /// the same register.  In that case, the instruction may depend on those
   /// operands reading the same dont-care value.  For example:
   ///
-  ///   %1<def> = XOR %2<undef>, %2<undef>
+  ///   %1 = XOR undef %2, undef %2
   ///
   /// Any register can be used for %2, and its value doesn't matter, but
   /// the two operands must be the same register.
@@ -226,11 +234,56 @@ public:
   ///
   void clearParent() { ParentMI = nullptr; }
 
+  /// Print a subreg index operand.
+  /// MO_Immediate operands can also be subreg idices. If it's the case, the
+  /// subreg index name will be printed. MachineInstr::isOperandSubregIdx can be
+  /// called to check this.
+  static void printSubregIdx(raw_ostream &OS, uint64_t Index,
+                             const TargetRegisterInfo *TRI);
+
+  /// Print operand target flags.
+  static void printTargetFlags(raw_ostream& OS, const MachineOperand &Op);
+
+  /// Print a MCSymbol as an operand.
+  static void printSymbol(raw_ostream &OS, MCSymbol &Sym);
+
+  /// Print a stack object reference.
+  static void printStackObjectReference(raw_ostream &OS, unsigned FrameIndex,
+                                        bool IsFixed, StringRef Name);
+
+  /// Print the offset with explicit +/- signs.
+  static void printOperandOffset(raw_ostream &OS, int64_t Offset);
+
+  /// Print an IRSlotNumber.
+  static void printIRSlotNumber(raw_ostream &OS, int Slot);
+
+  /// Print the MachineOperand to \p os.
+  /// Providing a valid \p TRI and \p IntrinsicInfo results in a more
+  /// target-specific printing. If \p TRI and \p IntrinsicInfo are null, the
+  /// function will try to pick it up from the parent.
   void print(raw_ostream &os, const TargetRegisterInfo *TRI = nullptr,
              const TargetIntrinsicInfo *IntrinsicInfo = nullptr) const;
-  void print(raw_ostream &os, ModuleSlotTracker &MST,
-             const TargetRegisterInfo *TRI = nullptr,
-             const TargetIntrinsicInfo *IntrinsicInfo = nullptr) const;
+
+  /// More complex way of printing a MachineOperand.
+  /// \param TypeToPrint specifies the generic type to be printed on uses and
+  /// defs. It can be determined using MachineInstr::getTypeToPrint.
+  /// \param PrintDef - whether we want to print `def` on an operand which
+  /// isDef. Sometimes, if the operand is printed before '=', we don't print
+  /// `def`.
+  /// \param ShouldPrintRegisterTies - whether we want to print register ties.
+  /// Sometimes they are easily determined by the instruction's descriptor
+  /// (MachineInstr::hasComplexRegiterTies can determine if it's needed).
+  /// \param TiedOperandIdx - if we need to print register ties this needs to
+  /// provide the index of the tied register. If not, it will be ignored.
+  /// \param TRI - provide more target-specific information to the printer.
+  /// Unlike the previous function, this one will not try and get the
+  /// information from it's parent.
+  /// \param IntrinsicInfo - same as \p TRI.
+  void print(raw_ostream &os, ModuleSlotTracker &MST, LLT TypeToPrint,
+             bool PrintDef, bool ShouldPrintRegisterTies,
+             unsigned TiedOperandIdx, const TargetRegisterInfo *TRI,
+             const TargetIntrinsicInfo *IntrinsicInfo) const;
+
   void dump() const;
 
   //===--------------------------------------------------------------------===//
@@ -303,18 +356,20 @@ public:
 
   bool isDead() const {
     assert(isReg() && "Wrong MachineOperand accessor");
-    return IsDead;
+    return IsDeadOrKill & IsDef;
   }
 
   bool isKill() const {
     assert(isReg() && "Wrong MachineOperand accessor");
-    return IsKill;
+    return IsDeadOrKill & !IsDef;
   }
 
   bool isUndef() const {
     assert(isReg() && "Wrong MachineOperand accessor");
     return IsUndef;
   }
+
+  bool isRenamable() const;
 
   bool isInternalRead() const {
     assert(isReg() && "Wrong MachineOperand accessor");
@@ -388,18 +443,24 @@ public:
   void setIsKill(bool Val = true) {
     assert(isReg() && !IsDef && "Wrong MachineOperand mutator");
     assert((!Val || !isDebug()) && "Marking a debug operation as kill");
-    IsKill = Val;
+    IsDeadOrKill = Val;
   }
 
   void setIsDead(bool Val = true) {
     assert(isReg() && IsDef && "Wrong MachineOperand mutator");
-    IsDead = Val;
+    IsDeadOrKill = Val;
   }
 
   void setIsUndef(bool Val = true) {
     assert(isReg() && "Wrong MachineOperand mutator");
     IsUndef = Val;
   }
+
+  void setIsRenamable(bool Val = true);
+
+  /// Set IsRenamable to true if there are no extra register allocation
+  /// requirements placed on this operand by the parent instruction's opcode.
+  void setIsRenamableIfNoExtraRegAllocReq();
 
   void setIsInternalRead(bool Val = true) {
     assert(isReg() && "Wrong MachineOperand mutator");
@@ -645,14 +706,15 @@ public:
                                   bool isUndef = false,
                                   bool isEarlyClobber = false,
                                   unsigned SubReg = 0, bool isDebug = false,
-                                  bool isInternalRead = false) {
+                                  bool isInternalRead = false,
+                                  bool isRenamable = false) {
     assert(!(isDead && !isDef) && "Dead flag on non-def");
     assert(!(isKill && isDef) && "Kill flag on def");
     MachineOperand Op(MachineOperand::MO_Register);
     Op.IsDef = isDef;
     Op.IsImp = isImp;
-    Op.IsKill = isKill;
-    Op.IsDead = isDead;
+    Op.IsDeadOrKill = isKill | isDead;
+    Op.IsRenamable = isRenamable;
     Op.IsUndef = isUndef;
     Op.IsInternalRead = isInternalRead;
     Op.IsEarlyClobber = isEarlyClobber;
@@ -831,7 +893,7 @@ template <> struct DenseMapInfo<MachineOperand> {
 };
 
 inline raw_ostream &operator<<(raw_ostream &OS, const MachineOperand &MO) {
-  MO.print(OS, nullptr);
+  MO.print(OS);
   return OS;
 }
 

@@ -537,9 +537,9 @@ TEST_F(TypeIndexIteratorTest, ManyMembers) {
 
 TEST_F(TypeIndexIteratorTest, ProcSym) {
   ProcSym GS(SymbolRecordKind::GlobalProcSym);
-  GS.FunctionType = TypeIndex(0x40);
+  GS.FunctionType = TypeIndex::Float32();
   ProcSym LS(SymbolRecordKind::ProcSym);
-  LS.FunctionType = TypeIndex(0x41);
+  LS.FunctionType = TypeIndex::Float64();
   writeSymbolRecords(GS, LS);
   checkTypeReferences(0, GS.FunctionType);
   checkTypeReferences(1, LS.FunctionType);
@@ -547,9 +547,18 @@ TEST_F(TypeIndexIteratorTest, ProcSym) {
 
 TEST_F(TypeIndexIteratorTest, DataSym) {
   DataSym DS(SymbolRecordKind::GlobalData);
-  DS.Type = TypeIndex(0x40);
+  DS.Type = TypeIndex::Float32();
   writeSymbolRecords(DS);
   checkTypeReferences(0, DS.Type);
+}
+
+TEST_F(TypeIndexIteratorTest, RegisterSym) {
+  RegisterSym Reg(SymbolRecordKind::RegisterSym);
+  Reg.Index = TypeIndex::UInt32();
+  Reg.Register = RegisterId::EAX;
+  Reg.Name = "Target";
+  writeSymbolRecords(Reg);
+  checkTypeReferences(0, Reg.Index);
 }
 
 TEST_F(TypeIndexIteratorTest, CallerSym) {
@@ -570,3 +579,4 @@ TEST_F(TypeIndexIteratorTest, CallerSym) {
   checkTypeReferences(1, TypeIndex(4), TypeIndex(5), TypeIndex(6));
   checkTypeReferences(2, TypeIndex(7), TypeIndex(8), TypeIndex(9));
 }
+
