@@ -565,6 +565,8 @@ TEST_F(CloneModule, GlobalDebugInfo) {
   // Find debug info expression assigned to global
   SmallVector<DIGlobalVariableExpression *, 1> GVs;
   NewGV->getDebugInfo(GVs);
+  for (auto x : GVs)
+    x->dump(); 
   EXPECT_EQ(GVs.size(), 1U);
 
   DIGlobalVariableExpression *GVExpr = GVs[0];
