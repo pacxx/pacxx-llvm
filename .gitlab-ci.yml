@@ -6,7 +6,7 @@ before_script:
 build:
   image: hpc2se/pacxx-ci:ubuntu-16.04
   script:
-    - pacxx-standard-test
+    - with-ci-ccache -- pacxx-standard-test
 
   tags:
     - epic
