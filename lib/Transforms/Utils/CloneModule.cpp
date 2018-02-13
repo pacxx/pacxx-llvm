@@ -68,7 +68,6 @@ std::unique_ptr<Module> llvm::CloneModule(
                                             I->getThreadLocalMode(),
                                             I->getType()->getAddressSpace());
     GV->copyAttributesFrom(&*I);
-    GV->copyMetadata(&*I, 0);
     VMap[&*I] = GV;
   }
 
