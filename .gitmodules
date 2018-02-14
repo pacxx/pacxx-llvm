@@ -10,3 +10,6 @@
 [submodule "tools/rv"]
 	path = tools/rv
 	url = ../pacxx-rv.git
+[submodule "projects/lld"]
+	path = projects/lld
+	url = ../pacxx-lld.git

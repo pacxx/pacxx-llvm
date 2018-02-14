@@ -49,6 +49,7 @@ autoconf/autom4te.cache
 !projects/*
 projects/libcxxabi
 projects/openmp
+!projects/lld
 !projects/*.*
 !projects/Makefile
 runtimes/*
