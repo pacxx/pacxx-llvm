@@ -2,7 +2,10 @@ language: c++
 
 addons:
   apt:
+    sources:
+      - ubuntu-toolchain-r-test    
     packages:
+      - g++-5
       - libtbb2
       - libtbb-dev
       - ninja-build
