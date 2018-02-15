@@ -1,15 +1,6 @@
 language: c++
-addons:
-    apt:
-    sources:
-      - ubuntu-toolchain-r-test
-    packages:
-      - g++-5
-      - libtbb2
-      - libtbb-dev
-      - ninja-build
+install: libtbb2 libtbb-dev ninja-build 
 compiler:  
-      - g++-5
       - clang
 
 before_script:  
