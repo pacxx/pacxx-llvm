@@ -1,12 +1,12 @@
 language: c++
 
 compiler:  
-      - gcc
+      - gcc-5
       - clang
 
 before_script:  
       - mkdir build
       - cd build
-      - cmake ..
+      - cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLVM_ENABLE_RTTI=ON -DLLVM_ENABLE_CXX1Y=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3" -G Ninja
 
-script: make  
+script: ninja 
