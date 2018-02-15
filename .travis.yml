@@ -1,5 +1,12 @@
 language: c++
-install: libtbb2 libtbb-dev ninja-build 
+
+addons:
+  apt:
+    packages:
+      - libtbb2
+      - libtbb-dev
+      - ninja-build
+
 compiler:  
       - clang
 
