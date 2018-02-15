@@ -555,6 +555,7 @@ TEST_F(CloneModule, Subprogram) {
 
 TEST_F(CloneModule, GlobalMetadata) {
   GlobalVariable *NewGV = NewM->getGlobalVariable("gv");
+  NewGV->dump();
   EXPECT_NE(nullptr, NewGV->getMetadata(LLVMContext::MD_type));
 }
 
