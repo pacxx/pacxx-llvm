@@ -1,3 +1,0 @@
-[submodule "projects/libcxx"]
-	path = projects/libcxx
-	url = https://github.com/llvm-mirror/libcxx
