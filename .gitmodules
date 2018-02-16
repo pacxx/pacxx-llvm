@@ -1,15 +1,3 @@
 [submodule "projects/libcxx"]
 	path = projects/libcxx
 	url = https://github.com/llvm-mirror/libcxx
-[submodule "tools/clang"]
-	path = tools/clang
-        url = ../pacxx-clang.git
-[submodule "projects/pacxxrt"]
-	path = projects/pacxxrt
-        url = ../pacxx-runtime.git
-[submodule "tools/rv"]
-	path = tools/rv
-	url = ../pacxx-rv.git
-[submodule "projects/lld"]
-	path = projects/lld
-	url = ../pacxx-lld.git
